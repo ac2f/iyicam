@@ -1,0 +1,46 @@
+id = "syntec"
+name = "Syntec mm"
+description = "Syntec router / milling controllers (6MA, 21MA, ...), ATC with tool length offsets"
+extension = "nc"
+
+[options]
+decimals = 3
+integer_point = true
+g_leading_zero = true
+drill_cycles = true
+dwell_units = "ms"
+line_ending = "crlf"
+
+[blocks]
+header = """
+%
+O{program_number}
+({project_name} {date} {time})
+G90 G54 G17 {unit_code} G40 G49 G80
+G00 Z{safe_z}
+"""
+tool_change = """
+M05
+G91 G28 Z0.
+G90
+T{tool_number} M06
+G43 H{tool_number} Z{safe_z}
+S{spindle_speed} {spindle_dir_code}
+{coolant_code}
+"""
+toolpath_start = "({toolpath_name})"
+rapid = "{G} {X} {Y} {Z}"
+linear = "{G} {X} {Y} {Z} {F}"
+arc = "{G} {X} {Y} {Z} {I} {J} {F}"
+drill = "G98 G81 {X} {Y} {Z} {R} {F}"
+drill_peck = "G98 G83 {X} {Y} {Z} {R} {Q} {F}"
+dwell = "G04 P{dwell}"
+footer = """
+M05
+M09
+G91 G28 Z0.
+G90
+G00 X{home_x} Y{home_y}
+M30
+%
+"""

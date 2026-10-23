@@ -1,0 +1,40 @@
+# Weihong NcStudio router controllers (single spindle).
+# Multi tool jobs are written as one file per tool.
+id = "ncstudio"
+name = "NcStudio (Weihong) mm"
+description = "Weihong NcStudio / NK series routers, single spindle, one file per tool"
+extension = "nc"
+
+[options]
+decimals = 3
+trailing_zeros = true
+line_ending = "crlf"
+comments = false
+split_by_tool = true
+arc_xy_always = true
+
+[blocks]
+header = """
+G90G54G17{unit_code}
+G0Z{safe_z}
+"""
+first_tool_change = """
+S{spindle_speed}{spindle_dir_code}
+"""
+tool_change = """
+M5
+G0Z{safe_z}
+M0
+S{spindle_speed}{spindle_dir_code}
+"""
+toolpath_start = ""
+rapid = "{G}{X}{Y}{Z}"
+linear = "{G}{X}{Y}{Z}{F}"
+arc = "{G}{X}{Y}{Z}{I}{J}{F}"
+dwell = "G4P{dwell}"
+footer = """
+G0Z{safe_z}
+M5
+G0X{home_x}Y{home_y}
+M30
+"""

@@ -1,0 +1,51 @@
+id = "fanuc"
+name = "Fanuc / ISO mm"
+description = "Fanuc compatible ISO G-code with tool length compensation and canned cycles"
+extension = "nc"
+
+[options]
+decimals = 3
+integer_point = true
+g_leading_zero = true
+line_numbers = true
+line_number_start = 10
+line_number_step = 10
+drill_cycles = true
+dwell_units = "ms"
+
+[blocks]
+header = """
+%
+O{program_number} ({project_name})
+(DATE {date} {time})
+(MATERIAL {sheet_width} X {sheet_height} X {material_thickness})
+(TOOLS {tools})
+{unit_code} G17 G40 G49 G80 G90
+"""
+tool_change = """
+M05
+M09
+G91 G28 Z0.
+G90
+T{tool_number} M06
+({tool_name} D{tool_diameter})
+G54 S{spindle_speed} {spindle_dir_code}
+G43 H{tool_number} Z{safe_z}
+{coolant_code}
+"""
+toolpath_start = "({toolpath_name})"
+rapid = "{G} {X} {Y} {Z}"
+linear = "{G} {X} {Y} {Z} {F}"
+arc = "{G} {X} {Y} {Z} {I} {J} {F}"
+drill = "G98 G81 {X} {Y} {Z} {R} {F}"
+drill_peck = "G98 G83 {X} {Y} {Z} {R} {Q} {F}"
+dwell = "G04 P{dwell}"
+footer = """
+M05
+M09
+G91 G28 Z0.
+G28 X0. Y0.
+G90
+M30
+%
+"""

@@ -1,0 +1,20 @@
+# Weihong NcStudio with an automatic tool changer: one file, T codes.
+id = "ncstudio_atc"
+extends = "ncstudio"
+name = "NcStudio (Weihong) ATC mm"
+description = "Weihong NcStudio routers with automatic tool changer"
+
+[options]
+split_by_tool = false
+
+[blocks]
+first_tool_change = """
+T{tool_number}M6
+S{spindle_speed}{spindle_dir_code}
+"""
+tool_change = """
+M5
+G0Z{safe_z}
+T{tool_number}M6
+S{spindle_speed}{spindle_dir_code}
+"""
