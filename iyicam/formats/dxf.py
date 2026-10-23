@@ -17,6 +17,19 @@ UNIT_SCALE = {0: 1.0, 1: 25.4, 2: 304.8, 4: 1.0, 5: 10.0, 6: 1000.0, 8: 25.4e-6,
               10: 914.4, 13: 0.001, 14: 100.0}
 
 
+UNIT_NAMES = {0: "unitless", 1: "inches", 2: "feet", 4: "millimetres", 5: "centimetres", 6: "metres",
+              8: "microinches", 9: "mils", 10: "yards", 13: "microns", 14: "decimetres"}
+
+
+def detect_units(path: str | Path) -> tuple[int, str]:
+    """``($INSUNITS code, readable name)`` of a DXF file."""
+    try:
+        code = int(ezdxf.readfile(str(path)).header.get("$INSUNITS", 0))
+    except Exception:
+        return 0, "unknown"
+    return code, UNIT_NAMES.get(code, f"code {code}")
+
+
 def _scale(doc, override: float | None) -> float:
     if override:
         return override

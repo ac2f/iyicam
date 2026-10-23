@@ -5,14 +5,14 @@ import math
 
 import numpy as np
 
-from ..core import clip, vectorops
-from ..core.geom import Contour, cross, unit
+from ..core import arcfit, clip, vectorops
+from ..core.geom import Bezier, Contour, Line, cross, unit
 from ..core.params import Param
 from ..core.document import ToolpathDef
 from .builder import MoveBuilder
 from .moves import Toolpath
 from .operation import OpContext, Operation
-from .ordering import nearest_order
+from .ordering import containment_levels, nearest_order
 
 
 def _simplify3(pts: list[tuple[float, float, float]], tol: float) -> list[tuple[float, float, float]]:
@@ -45,61 +45,149 @@ def _simplify3(pts: list[tuple[float, float, float]], tol: float) -> list[tuple[
     return [tuple(map(float, p)) for p in P[keep]]
 
 
-def sample_boundary(poly: list[tuple[float, float]], step: float):
-    """Points along a closed polygon with inward (left) normals, plus fans at reflex corners."""
-    n = len(poly)
-    pts, nrm = [], []
-    for i in range(n):
-        a = poly[i]
-        b = poly[(i + 1) % n]
-        d = (b[0] - a[0], b[1] - a[1])
-        L = math.hypot(*d)
-        if L < 1e-12:
+def prepare_contours(contours: list[Contour], tol: float = 0.02) -> tuple[list[Contour], bool]:
+    """Closed contours oriented so the carved region is on their left.
+
+    Dense polylines (e.g. flattened curves from DXF files) are refitted with arcs
+    first: the inscribed circle test needs smooth tangents, not fake corners.
+    Returns the contours and whether any of them had to be refitted.
+    """
+    out = []
+    refitted = False
+    for c in contours:
+        if not c.closed or not c.segs:
             continue
-        u = (d[0] / L, d[1] / L)
-        nl = (-u[1], u[0])
-        # fan at the start vertex when the boundary turns right (reflex for the region)
-        p0 = poly[i - 1]
-        dprev = unit((a[0] - p0[0], a[1] - p0[1]))
-        turn = cross(dprev, u)
-        if turn < -1e-9:
-            a0 = math.atan2(dprev[0], -dprev[1])  # left normal of previous edge
-            a1 = math.atan2(nl[1], nl[0])
-            sweep = (a0 - a1) % (2 * math.pi)
-            k = max(1, int(sweep / 0.15))
+        if len(c.segs) > 8 and all(isinstance(sg, Line) for sg in c.segs):
+            c = arcfit.fit_contour(c.flatten(), True, tol, keep_start=True)
+            refitted = True
+        out.append(c)
+    levels = containment_levels(out)
+    return [c if c.is_ccw() == (lv % 2 == 0) else c.reversed() for c, lv in zip(out, levels)], refitted
+
+
+class Samples:
+    """Boundary samples with inward normals and their position along the boundary."""
+
+    def __init__(self):
+        self.p: list = []
+        self.n: list = []
+        self.loop: list[int] = []
+        self.run: list[int] = []   # smooth stretch between real corners (-1 = on a corner)
+        self.s: list[float] = []   # arc length position
+        self.lengths: list[float] = []
+
+    def arrays(self):
+        return (np.asarray(self.p, float).reshape(-1, 2), np.asarray(self.n, float).reshape(-1, 2),
+                np.asarray(self.loop, int), np.asarray(self.run, int), np.asarray(self.s, float))
+
+
+def sample_boundary(c: Contour, step: float, out: Samples | None = None, loop: int = 0,
+                    smooth_deg: float = 8.0) -> Samples:
+    """Points on the exact curve with exact inward (left) normals.
+
+    Joints whose tangents differ by less than ``smooth_deg`` count as smooth.
+    Convex corners get a sample on the vertex (the carving runs up into the
+    corner) and reflex corners a fan of normals sweeping round the vertex.
+    """
+    out = out or Samples()
+    smooth = math.radians(smooth_deg)
+    segs = c.segs
+    run = 0
+    acc = 0.0
+    first = len(out.run)
+    start_is_corner = False
+    for i, sg in enumerate(segs):
+        t_in = segs[i - 1].tangent_at(1.0)
+        t_out = sg.tangent_at(0.0)
+        turn = math.atan2(cross(t_in, t_out), t_in[0] * t_out[0] + t_in[1] * t_out[1])
+        a = sg.a
+        n_in, n_out = (-t_in[1], t_in[0]), (-t_out[1], t_out[0])
+        if abs(turn) > smooth:
+            run += 1
+            if i == 0:
+                start_is_corner = True
+        if turn < -smooth:
+            a0 = math.atan2(n_in[1], n_in[0])
+            k = max(2, int(-turn / 0.12) + 1)
             for j in range(1, k):
-                ang = a0 - sweep * j / k
-                pts.append(a)
-                nrm.append((math.cos(ang), math.sin(ang)))
+                ang = a0 + turn * j / k
+                out.p.append(a)
+                out.n.append((math.cos(ang), math.sin(ang)))
+                out.loop.append(loop)
+                out.run.append(-1)
+                out.s.append(acc)
+        elif turn > smooth:
+            bis = unit((n_in[0] + n_out[0], n_in[1] + n_out[1]))
+            if bis != (0.0, 0.0):
+                out.p.append(a)
+                out.n.append(bis)
+                out.loop.append(loop)
+                out.run.append(-1)
+                out.s.append(acc)
+        L = sg.length()
         m = max(1, math.ceil(L / step))
+        if isinstance(sg, Bezier):
+            # arc length table: uniform spacing without an expensive inversion per sample
+            ts = np.linspace(0.0, 1.0, 97)
+            tp = np.array([sg.point_at(t) for t in ts])
+            cum = np.concatenate([[0.0], np.cumsum(np.hypot(*np.diff(tp, axis=0).T))])
+            L = float(cum[-1])
         for j in range(m):
-            t = j / m
-            pts.append((a[0] + d[0] * t, a[1] + d[1] * t))
-            nrm.append(nl)
-    return np.asarray(pts, float), np.asarray(nrm, float)
+            f = (j + 0.5) / m
+            t = float(np.interp(L * f, cum, ts)) if isinstance(sg, Bezier) else f
+            tg = sg.tangent_at(t)
+            out.p.append(sg.point_at(t))
+            out.n.append((-tg[1], tg[0]))
+            out.loop.append(loop)
+            out.run.append(run)
+            out.s.append(acc + L * f)
+        acc += L
+    if not start_is_corner and run > 0:
+        # the stretch before the first corner continues after the last one
+        for k in range(first, len(out.run)):
+            if out.run[k] == run:
+                out.run[k] = 0
+    out.lengths.append(acc)
+    return out
 
 
-def inscribed_radii(P: np.ndarray, N: np.ndarray, Q: np.ndarray, rmax: float, chunk: int = 64) -> np.ndarray:
-    """Radius of the largest circle tangent at each P (normal N) containing no point of Q."""
-    out = np.empty(len(P))
-    for s in range(0, len(P), chunk):
-        p = P[s:s + chunk]
-        n = N[s:s + chunk]
-        q = Q
+def inscribed_radii(P: Samples, Q: Samples, rmax: float, window: float = 0.0, chunk: int = 64) -> np.ndarray:
+    """Radius of the largest circle tangent at each P sample that contains no Q sample.
+
+    Q samples closer than ``window`` along the same smooth stretch are ignored:
+    tiny tangent jumps where fitted arcs meet would otherwise pinch the circle.
+    """
+    Pp, Pn, Pl, Pr, Ps = P.arrays()
+    Qp, _, Ql, Qr, Qs = Q.arrays()
+    lengths = np.asarray(Q.lengths, float)
+    out = np.empty(len(Pp))
+    for s0 in range(0, len(Pp), chunk):
+        sl = slice(s0, s0 + chunk)
+        p, n = Pp[sl], Pn[sl]
         if math.isfinite(rmax):
             lo = p.min(axis=0) - 2 * rmax
             hi = p.max(axis=0) + 2 * rmax
-            m = np.all((Q >= lo) & (Q <= hi), axis=1)
-            q = Q[m]
+            m = np.all((Qp >= lo) & (Qp <= hi), axis=1)
+        else:
+            m = np.ones(len(Qp), bool)
+        q = Qp[m]
         if len(q) == 0:
-            out[s:s + chunk] = rmax
+            out[sl] = rmax
             continue
         d = q[None, :, :] - p[:, None, :]
         dn = np.einsum("ijk,ik->ij", d, n)
         d2 = np.einsum("ijk,ijk->ij", d, d)
+        valid = dn > 1e-9
+        if window > 0:
+            same = (Pl[sl][:, None] == Ql[m][None, :]) & (Pr[sl][:, None] == Qr[m][None, :]) & \
+                   (Pr[sl][:, None] >= 0)
+            ds = np.abs(Ps[sl][:, None] - Qs[m][None, :])
+            Lp = lengths[Pl[sl]][:, None]
+            ds = np.minimum(ds, Lp - ds)
+            valid &= ~(same & (ds < window))
         with np.errstate(divide="ignore", invalid="ignore"):
-            r = np.where(dn > 1e-9, d2 / (2 * dn), np.inf)
-        out[s:s + chunk] = np.minimum(r.min(axis=1), rmax)
+            r = np.where(valid, d2 / (2 * np.where(valid, dn, 1.0)), np.inf)
+        out[sl] = np.minimum(r.min(axis=1), rmax)
     return out
 
 
@@ -137,6 +225,7 @@ class VCarveOp(Operation):
         reg = vectorops.region(closed, ctx.tolerance)
         if not reg:
             return []
+        loops_src, refitted = prepare_contours(closed)
         start = v["start_depth"]
         tan = math.tan(tool.half_angle())
         r0 = tool.tip_diameter / 2
@@ -144,15 +233,19 @@ class VCarveOp(Operation):
         rmax = r0 + flat * tan if flat > 0 else math.inf
         rlim = min(rmax, tool.radius)
         step = v["resolution"]
-        Q = np.concatenate([sample_boundary(p, step / 2)[0] for p in reg])
+        Q = Samples()
+        for k, c in enumerate(loops_src):
+            sample_boundary(c, step / 2, Q, k)
         loops = []
         too_wide = False
-        for poly in reg:
-            P, N = sample_boundary(poly, step)
-            if len(P) == 0:
+        for k, src in enumerate(loops_src):
+            S = sample_boundary(src, step, None, k)
+            if not S.p:
                 continue
-            R = inscribed_radii(P, N, Q, rmax)
-            if np.any(R > tool.radius + 1e-6):
+            P, N = S.arrays()[:2]
+            # circles larger than the cap are clamped anyway, which also bounds the search
+            R = inscribed_radii(S, Q, rlim + 0.01, window=1.0 if refitted else max(4 * step, 0.3))
+            if rmax > tool.radius and np.any(R > tool.radius + 1e-6):
                 too_wide = True
             R = np.minimum(R, rlim)
             C = P + N * R[:, None]

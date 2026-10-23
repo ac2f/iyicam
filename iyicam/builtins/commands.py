@@ -499,7 +499,7 @@ def commands() -> list[Command]:
             Param("rotate_copies", "Rotate copies", "bool", True)], min_selection=1),
         # selection
         Command("select.all", "Select All", _select_all, SELECT, shortcut="Ctrl+A"),
-        Command("select.invert", "Invert Selection", _invert, SELECT, shortcut="Ctrl+I"),
+        Command("select.invert", "Invert Selection", _invert, SELECT, shortcut="Ctrl+Shift+I"),
         Command("select.open", "Select Open Vectors", _select_open, SELECT),
         Command("select.similar", "Select Similar...", _select_similar, SELECT,
                 [Param("tolerance", "Tolerance", "length", 0.1, min=0.0)], min_selection=1),

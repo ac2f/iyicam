@@ -1,0 +1,679 @@
+"""Main application window."""
+from __future__ import annotations
+
+import html
+import json
+import traceback
+from pathlib import Path
+
+from PySide6.QtCore import QByteArray, QRectF, Qt, QUrl
+from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QImage, QKeySequence
+from PySide6.QtWidgets import (QApplication, QDialog, QDockWidget, QFileDialog, QLabel, QMainWindow, QMenu,
+                               QMessageBox, QProgressDialog, QTabWidget, QToolBar, QVBoxLayout)
+
+from .. import __version__
+from ..cam.moves import PathStats, format_time
+from ..core.document import VectorObject, new_id, toolpath_from_dict, toolpath_to_dict
+from ..core.geom import BBox, Transform
+from ..core.params import Param
+from .canvas import Canvas
+from .console import Console
+from .controller import Controller
+from .dialogs import (CommandDialog, ExportDialog, ImportDialog, MaterialDialog, NestingDialog, PluginsDialog,
+                      PostEditorDialog, PreferencesDialog, ToolDatabaseDialog, ToolpathDialog, buttons)
+from .forms import ParamForm
+from .icons import icon
+from .panels import LayersPanel, PropertiesPanel, SheetsPanel, ToolpathsPanel
+from .tools import TOOLS
+
+TOOL_KEYS = {"select": "S", "nodes": "N", "polyline": "P", "line": "L", "rectangle": "R", "circle": "C",
+             "ellipse": "E", "polygon": "G", "star": "", "arc": "A", "text": "T", "measure": "M"}
+TOOL_LABELS = {"select": "Select / Transform", "nodes": "Edit Nodes", "polyline": "Polyline / Bezier",
+               "line": "Line", "rectangle": "Rectangle", "circle": "Circle", "ellipse": "Ellipse",
+               "polygon": "Polygon", "star": "Star", "arc": "Arc (3 points)", "text": "Text", "measure": "Measure"}
+
+
+class MainWindow(QMainWindow):
+    def __init__(self, ctrl: Controller, plugin_manager=None):
+        super().__init__()
+        self.ctrl = ctrl
+        self.pm = plugin_manager
+        self.setWindowTitle("iyiCAM")
+        self.resize(1400, 900)
+        self.canvas = Canvas(ctrl)
+        self.canvas.context_menu_hook = self._canvas_menu
+        self.setCentralWidget(self.canvas)
+        self._build_docks()
+        self._build_toolbar()
+        self._build_status()
+        self.build_menus()
+        ctrl.message.connect(lambda m: self.statusBar().showMessage(m, 6000))
+        ctrl.changed.connect(self._update_title)
+        ctrl.project_replaced.connect(self._update_title)
+        self.canvas.tool_changed.connect(self._tool_changed)
+        self._update_title()
+        if ctrl.settings.window_state:
+            try:
+                self.restoreState(QByteArray.fromBase64(ctrl.settings.window_state.encode()))
+            except Exception:
+                pass
+        for _, ext in list(ctrl.registry.gui_extensions):
+            self._safe(ext, self)
+        ctrl.registry.emit("gui_ready", self)
+
+    # -- layout ------------------------------------------------------------------------------------
+    def _build_docks(self) -> None:
+        c = self.ctrl
+        self.layers_panel = LayersPanel(c)
+        self.sheets_panel = SheetsPanel(c)
+        tabs = QTabWidget()
+        tabs.addTab(self.layers_panel, "Layers")
+        tabs.addTab(self.sheets_panel, "Sheets")
+        self.project_dock = self._dock("Project", tabs, Qt.LeftDockWidgetArea)
+        self.props_panel = PropertiesPanel(c)
+        self.props_dock = self._dock("Selection", self.props_panel, Qt.LeftDockWidgetArea)
+        self.toolpaths_panel = ToolpathsPanel(c, self)
+        self.toolpaths_dock = self._dock("Toolpaths", self.toolpaths_panel, Qt.RightDockWidgetArea)
+        self.console = Console(c, self)
+        self.console_dock = self._dock("Python Console", self.console, Qt.BottomDockWidgetArea)
+        self.console_dock.hide()
+        self.resizeDocks([self.project_dock, self.toolpaths_dock], [270, 300], Qt.Horizontal)
+
+    def _dock(self, title: str, widget, area) -> QDockWidget:
+        d = QDockWidget(title, self)
+        d.setObjectName(title.replace(" ", "_"))
+        d.setWidget(widget)
+        self.addDockWidget(area, d)
+        return d
+
+    def _build_toolbar(self) -> None:
+        tb = QToolBar("Drawing")
+        tb.setObjectName("DrawingToolbar")
+        tb.setOrientation(Qt.Vertical)
+        self.addToolBar(Qt.LeftToolBarArea, tb)
+        self.tool_group = QActionGroup(self)
+        self.tool_actions: dict[str, QAction] = {}
+        for name, cls in TOOLS.items():
+            a = QAction(icon(name), TOOL_LABELS.get(name, name.title()), self)
+            a.setCheckable(True)
+            key = TOOL_KEYS.get(name)
+            if key:
+                a.setShortcut(QKeySequence(key))
+                a.setToolTip(f"{a.text()} ({key})")
+            a.triggered.connect(lambda checked=False, n=name: self.set_tool(n))
+            self.tool_group.addAction(a)
+            tb.addAction(a)
+            self.tool_actions[name] = a
+            if name in ("nodes", "text"):
+                tb.addSeparator()
+        self.tool_actions["select"].setChecked(True)
+
+    def _build_status(self) -> None:
+        self.coords = QLabel()
+        self.coords.setMinimumWidth(220)
+        self.prompt = QLabel()
+        self.statusBar().addWidget(self.prompt, 1)
+        self.statusBar().addPermanentWidget(self.coords)
+        self.canvas.prompt.connect(self.prompt.setText)
+        self.canvas.cursor_moved.connect(self._coords)
+        self.prompt.setText(self.canvas.tool.prompt)
+
+    def _coords(self, x: float, y: float) -> None:
+        u = self.ctrl.units
+        self.coords.setText(f"X {u.to_display(x):.{u.decimals}f}   Y {u.to_display(y):.{u.decimals}f}{u.suffix}")
+
+    def _tool_changed(self, name: str) -> None:
+        a = self.tool_actions.get(name)
+        if a is not None and not a.isChecked():
+            a.setChecked(True)
+
+    def set_tool(self, name: str) -> None:
+        self.canvas.set_tool(TOOLS[name](self.canvas))
+
+    # -- menus --------------------------------------------------------------------------------------
+    def _act(self, menu: QMenu, text: str, slot, shortcut=None, checkable=False, checked=False) -> QAction:
+        a = menu.addAction(text)
+        a.triggered.connect(lambda checked_=False: self._safe(slot) if not checkable else self._safe(slot, checked_))
+        if shortcut:
+            a.setShortcut(QKeySequence(shortcut))
+        if checkable:
+            a.setCheckable(True)
+            a.setChecked(checked)
+        return a
+
+    def build_menus(self) -> None:
+        mb = self.menuBar()
+        mb.clear()
+        c = self.ctrl
+        s = c.settings
+        m = mb.addMenu("&File")
+        self._act(m, "&New...", self.new_project, QKeySequence.New)
+        self._act(m, "&Open...", self.open_project, QKeySequence.Open)
+        self.recent_menu = m.addMenu("Open &Recent")
+        self.recent_menu.aboutToShow.connect(self._fill_recent)
+        self._act(m, "&Save", self.save_project, QKeySequence.Save)
+        self._act(m, "Save &As...", self.save_project_as, QKeySequence.SaveAs)
+        m.addSeparator()
+        self._act(m, "&Import Vectors...", self.import_vectors, "Ctrl+I")
+        self._act(m, "&Export Vectors...", self.export_vectors)
+        m.addSeparator()
+        self._act(m, "Save &G-code...", self.export_gcode, "Ctrl+Shift+E")
+        self._act(m, "Job &Report...", self.job_report)
+        m.addSeparator()
+        self._act(m, "&Quit", self.close, QKeySequence.Quit)
+
+        m = mb.addMenu("&Edit")
+        self.undo_action = self._act(m, "&Undo", c.undo, QKeySequence.Undo)
+        self.redo_action = self._act(m, "&Redo", c.redo, QKeySequence.Redo)
+        m.aboutToShow.connect(self._update_undo)
+        m.addSeparator()
+        self._act(m, "&Delete", self.delete, QKeySequence.Delete)
+        self._act(m, "D&uplicate", self.duplicate, "Ctrl+D")
+        self._act(m, "&Copy", self.copy, QKeySequence.Copy)
+        self._act(m, "&Paste", self.paste, QKeySequence.Paste)
+        m.addSeparator()
+        self._command_menus(m, "Edit")
+        m.addSeparator()
+        self._act(m, "&Preferences...", lambda: PreferencesDialog(c, self).exec())
+
+        m = mb.addMenu("&View")
+        self._act(m, "Zoom &Extents", self.canvas.zoom_extents, "F")
+        self._act(m, "Zoom &Selection", self.canvas.zoom_selection, "Shift+F")
+        m.addSeparator()
+        self._act(m, "Show &Toolpaths", lambda v: self._toggle("show_toolpaths", v), None, True, s.show_toolpaths)
+        self._act(m, "Show Tool &Width", lambda v: self._toggle("show_tool_width", v), None, True, s.show_tool_width)
+        self._act(m, "Show &Directions", lambda v: self._toggle("show_directions", v), None, True, s.show_directions)
+        self.sim_action = self._act(m, "Show Si&mulation", self._toggle_sim, None, True, self.canvas.show_sim)
+        m.addSeparator()
+        self._act(m, "Snap to &Grid", lambda v: self._toggle("snap_grid", v), "F7", True, s.snap_grid)
+        self._act(m, "Snap to &Vectors", lambda v: self._toggle("snap_objects", v), "F8", True, s.snap_objects)
+        m.addSeparator()
+        for d in (self.project_dock, self.props_dock, self.toolpaths_dock, self.console_dock):
+            m.addAction(d.toggleViewAction())
+
+        m = mb.addMenu("&Draw")
+        for name, a in self.tool_actions.items():
+            m.addAction(a)
+
+        m = mb.addMenu("&Vectors")
+        self._command_menus(m, "Vectors")
+
+        m = mb.addMenu("&Toolpaths")
+        new = m.addMenu("&New Toolpath")
+        for op in c.registry.operations.values():
+            self._act(new, op.label + "...", lambda o=op.id: self.new_toolpath(o))
+        self._act(m, "&Recalculate All", self.recalculate, "F5")
+        m.addSeparator()
+        self._act(m, "&Material Setup...", lambda: MaterialDialog(c, self).exec(), "Ctrl+Shift+M")
+        self._act(m, "&Tool Database...", lambda: ToolDatabaseDialog(c, self).exec())
+        m.addSeparator()
+        self._act(m, "&Simulate", self.simulate, "F6")
+        self._act(m, "Clear Simulation", self.clear_simulation)
+        m.addSeparator()
+        self._act(m, "Save Toolpath &Template...", self.save_toolpath_template)
+        self._act(m, "Load Toolpath Template...", self.load_toolpath_template)
+        m.addSeparator()
+        self._act(m, "Save &G-code...", self.export_gcode)
+        self._act(m, "&Post-processors...", lambda: PostEditorDialog(c, self).exec())
+
+        m = mb.addMenu("&Nesting")
+        self._act(m, "&Nest Parts...", self.nest, "Ctrl+Shift+N")
+
+        m = mb.addMenu("&Plugins")
+        if self.pm is not None:
+            self._act(m, "Plugin &Manager...", lambda: PluginsDialog(c, self.pm, self).exec())
+        self._act(m, "Python &Console", lambda: self.console_dock.setVisible(not self.console_dock.isVisible()),
+                  "Ctrl+`")
+        m.addSeparator()
+        self._command_menus(m, "Plugins")
+        for top in sorted({cmd.menu.split("/")[0] for cmd in c.registry.commands.values()}
+                          - {"Edit", "Vectors", "Plugins"}):
+            self._command_menus(mb.addMenu(top), top)
+
+        m = mb.addMenu("&Help")
+        self._act(m, "&Keyboard Shortcuts", self.shortcuts_help)
+        self._act(m, "&About iyiCAM", self.about)
+
+    def _command_menus(self, menu: QMenu, top: str) -> None:
+        subs: dict[str, QMenu] = {}
+        for cmd in self.ctrl.registry.commands.values():
+            parts = cmd.menu.split("/")
+            if parts[0] != top:
+                continue
+            target = menu
+            path = ""
+            for name in parts[1:]:
+                path += "/" + name
+                if path not in subs:
+                    subs[path] = target.addMenu(name)
+                target = subs[path]
+            a = self._act(target, cmd.label, lambda c_=cmd: self.run_command(c_), cmd.shortcut)
+            a.setToolTip(cmd.tooltip)
+
+    def rebuild_plugin_ui(self) -> None:
+        self.build_menus()
+        self.ctrl.toolpaths_changed.emit()
+
+    def _update_undo(self) -> None:
+        u = self.ctrl.undo_stack
+        self.undo_action.setEnabled(u.can_undo)
+        self.redo_action.setEnabled(u.can_redo)
+        self.undo_action.setText(f"&Undo {u.undo_label}".strip())
+        self.redo_action.setText(f"&Redo {u.redo_label}".strip())
+
+    def _toggle(self, key: str, value: bool) -> None:
+        setattr(self.ctrl.settings, key, value)
+        self.canvas._tp_cache = None
+        self.canvas.update()
+
+    def _toggle_sim(self, value: bool) -> None:
+        self.canvas.show_sim = value
+        self.canvas.update()
+
+    def _fill_recent(self) -> None:
+        self.recent_menu.clear()
+        for f in self.ctrl.settings.recent_files:
+            self._act(self.recent_menu, f, lambda f_=f: self.open_project(f_))
+
+    def _canvas_menu(self, gpos) -> None:
+        m = QMenu(self)
+        c = self.ctrl
+        if c.selection:
+            self._act(m, "Edit Nodes", lambda: self.set_tool("nodes"))
+            self._act(m, "Duplicate", self.duplicate)
+            self._act(m, "Delete", self.delete)
+            m.addSeparator()
+            for cid in ("edit.offset", "edit.join", "edit.weld", "corner.fillet", "corner.dogbone",
+                        "edit.reverse", "arrange.align", "xform.mirror", "xform.rotate"):
+                cmd = c.registry.commands.get(cid)
+                if cmd is not None:
+                    self._act(m, cmd.label, lambda c_=cmd: self.run_command(c_))
+            m.addSeparator()
+            tp = m.addMenu("New Toolpath")
+            for op in c.registry.operations.values():
+                self._act(tp, op.label + "...", lambda o=op.id: self.new_toolpath(o))
+        else:
+            self._act(m, "Paste", self.paste)
+            self._act(m, "Zoom Extents", self.canvas.zoom_extents)
+        m.exec(gpos)
+
+    # -- helpers ------------------------------------------------------------------------------------
+    def _safe(self, fn, *args):
+        try:
+            return fn(*args)
+        except Exception as exc:
+            traceback.print_exc()
+            QMessageBox.critical(self, "iyiCAM", f"{type(exc).__name__}: {exc}")
+            return None
+
+    def _update_title(self) -> None:
+        p = self.ctrl.project
+        name = p.path.name if p.path else p.name
+        self.setWindowTitle(f"{name}{' *' if self.ctrl.dirty else ''} — iyiCAM {__version__}")
+
+    def confirm_discard(self) -> bool:
+        if not self.ctrl.dirty:
+            return True
+        r = QMessageBox.question(self, "iyiCAM", "Save changes to the current project?",
+                                 QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel)
+        if r == QMessageBox.Save:
+            return self.save_project()
+        return r == QMessageBox.Discard
+
+    # -- file ---------------------------------------------------------------------------------------
+    def new_project(self) -> None:
+        if not self.confirm_discard():
+            return
+        dlg = QDialog(self)
+        dlg.setWindowTitle("New Project")
+        lay = QVBoxLayout(dlg)
+        form = ParamForm([Param("width", "Width (X)", "length", 600.0, min=1.0),
+                          Param("height", "Height (Y)", "length", 400.0, min=1.0),
+                          Param("thickness", "Thickness", "length", 18.0, min=0.01)], None, self.ctrl.units)
+        lay.addWidget(form)
+        lay.addWidget(buttons(dlg, "Create"))
+        if dlg.exec():
+            v = form.values()
+            self.ctrl.new_project(v["width"], v["height"], v["thickness"])
+
+    def open_project(self, path: str | None = None) -> None:
+        if not self.confirm_discard():
+            return
+        if not path:
+            path, _ = QFileDialog.getOpenFileName(self, "Open project", "", "iyiCAM project (*.icam);;All files (*)")
+        if path:
+            try:
+                self.ctrl.open_project(path)
+            except (OSError, ValueError, KeyError) as exc:
+                QMessageBox.warning(self, "Open project", f"Cannot open {path}:\n{exc}")
+
+    def save_project(self) -> bool:
+        if self.ctrl.project.path is None:
+            return self.save_project_as()
+        self.ctrl.save_project()
+        self.statusBar().showMessage(f"Saved {self.ctrl.project.path}", 4000)
+        return True
+
+    def save_project_as(self) -> bool:
+        fn, _ = QFileDialog.getSaveFileName(self, "Save project", f"{self.ctrl.project.name}.icam",
+                                            "iyiCAM project (*.icam)")
+        if not fn:
+            return False
+        self.ctrl.save_project(fn)
+        self._update_title()
+        return True
+
+    def import_vectors(self, path: str | None = None, options: dict | None = None) -> list[VectorObject]:
+        reg = self.ctrl.registry
+        if not path:
+            exts = sorted({e for imp in reg.importers.values() for e in imp.extensions})
+            filt = "Vector files (" + " ".join(f"*.{e}" for e in exts) + ");;" + ";;".join(
+                f"{imp.label} (" + " ".join(f"*.{e}" for e in imp.extensions) + ")" for imp in reg.importers.values())
+            path, _ = QFileDialog.getOpenFileName(self, "Import vectors", "", filt)
+            if not path:
+                return []
+        imp = reg.importer_for(Path(path).suffix)
+        if imp is None:
+            QMessageBox.warning(self, "Import", f"No importer for {Path(path).suffix}")
+            return []
+        if options is None:
+            dlg = ImportDialog(self.ctrl, path, self)
+            if not dlg.exec():
+                return []
+            options = dlg.values()
+        kw = {}
+        ext = Path(path).suffix.lower().lstrip(".")
+        if ext == "dxf":
+            u = options.get("units", "auto")
+            kw = {"join_tolerance": options.get("join", 0.05), "keep_layers": options.get("keep_layers", True),
+                  "unit_scale": None if u == "auto" else float(u)}
+        elif ext == "svg":
+            kw = {"keep_layers": options.get("keep_layers", True), "scale": options.get("scale", 100.0) / 100.0}
+        c = self.ctrl
+        with c.edit(f"Import {Path(path).name}"):
+            objs = imp.func(path, c.project, c.sheet, layer_id=c.layer_id, **kw)
+            if options.get("center") and objs:
+                bb = BBox()
+                for o in objs:
+                    bb = bb.union(o.bbox())
+                T = Transform.translate(c.sheet.width / 2 - bb.center[0], c.sheet.height / 2 - bb.center[1])
+                for o in objs:
+                    o.transform(T)
+        c.select([o.id for o in objs])
+        self.canvas.zoom_extents()
+        self.statusBar().showMessage(f"Imported {len(objs)} vector(s) from {Path(path).name}", 5000)
+        return objs
+
+    def export_vectors(self) -> None:
+        reg = self.ctrl.registry
+        filt = ";;".join(f"{e.label} (*.{e.extension})" for e in reg.exporters.values())
+        fn, chosen = QFileDialog.getSaveFileName(self, "Export vectors", self.ctrl.project.name, filt)
+        if not fn:
+            return
+        ext = Path(fn).suffix.lower().lstrip(".")
+        exp = reg.exporters.get(ext)
+        if exp is None:
+            exp = next((e for e in reg.exporters.values() if f"*.{e.extension}" in chosen), None)
+            if exp is None:
+                return
+            fn += "." + exp.extension
+        objs = self.ctrl.selected_objects() or None
+        exp.func(fn, self.ctrl.project, self.ctrl.sheet, objs)
+        self.statusBar().showMessage(f"Exported {fn}", 5000)
+
+    # -- editing ------------------------------------------------------------------------------------
+    def run_command(self, cmd) -> None:
+        values = None
+        if cmd.params:
+            dlg = CommandDialog(self.ctrl, cmd, self)
+            if not dlg.exec():
+                return
+            values = dlg.values()
+        self.ctrl.run_command(cmd, values)
+
+    def delete(self) -> None:
+        """Delete key: the active tool decides (node editing deletes nodes, not vectors)."""
+        if hasattr(self.canvas.tool, "delete_nodes"):
+            self.canvas.tool.delete_nodes()
+        else:
+            self.ctrl.delete_selection()
+        self.canvas.update()
+
+    def duplicate(self) -> None:
+        objs = self.ctrl.selected_objects()
+        if objs:
+            g = self.ctrl.settings.grid or 10.0
+            copies = [o.copy() for o in objs]
+            for o in copies:
+                o.transform(Transform.translate(g, -g))
+            self.ctrl.add_vectors(copies, "Duplicate")
+
+    def copy(self) -> None:
+        from ..core.document import vector_to_dict
+        objs = self.ctrl.selected_objects()
+        if objs:
+            QApplication.clipboard().setText(json.dumps({"iyicam-vectors": [vector_to_dict(o) for o in objs]}))
+
+    def paste(self) -> None:
+        from ..core.document import vector_from_dict
+        try:
+            data = json.loads(QApplication.clipboard().text())["iyicam-vectors"]
+        except (ValueError, KeyError, TypeError):
+            return
+        objs = []
+        for d in data:
+            o = vector_from_dict(d)
+            o.id = new_id()
+            if self.ctrl.project.layer(o.layer_id) is None:
+                o.layer_id = self.ctrl.layer_id
+            objs.append(o)
+        if objs:
+            self.ctrl.add_vectors(objs, "Paste")
+
+    # -- toolpaths ----------------------------------------------------------------------------------
+    def new_toolpath(self, op_id: str) -> None:
+        dlg = ToolpathDialog(self.ctrl, op_id, None, self)
+        if dlg.exec():
+            self.ctrl.add_toolpath(dlg.result())
+            self._report(dlg.result().id)
+
+    def edit_toolpath(self, tid: str) -> None:
+        t = self.ctrl.project.toolpath(tid)
+        if t is None:
+            return
+        if t.op not in self.ctrl.registry.operations:
+            QMessageBox.warning(self, "Toolpath", f"The toolpath type '{t.op}' is not available (missing plugin?).")
+            return
+        dlg = ToolpathDialog(self.ctrl, t.op, t, self)
+        if dlg.exec():
+            self.ctrl.replace_toolpath(dlg.result())
+            self._report(tid)
+
+    def _report(self, tid: str) -> None:
+        t = self.ctrl.project.toolpath(tid)
+        res = self.ctrl.results_for(t) if t else []
+        errors = [r.error for r in res if r.error]
+        warns = list(dict.fromkeys(w for r in res for w in r.warnings if "Traceback" not in w))
+        n = sum(len(r.toolpaths) for r in res)
+        if errors:
+            QMessageBox.warning(self, "Toolpath", "\n".join(errors))
+        elif warns:
+            self.statusBar().showMessage(f"{t.name}: " + "; ".join(warns), 10000)
+        elif n == 0:
+            self.statusBar().showMessage(f"{t.name}: nothing to machine on this sheet", 6000)
+
+    def recalculate(self) -> None:
+        self.ctrl.recalculate()
+
+    def save_toolpath_template(self) -> None:
+        tps = self.ctrl.project.toolpaths
+        if not tps:
+            return
+        fn, _ = QFileDialog.getSaveFileName(self, "Save toolpath template", "toolpaths.icamtpl",
+                                            "Toolpath template (*.icamtpl)")
+        if fn:
+            layers = {l.id: l.name for l in self.ctrl.project.layers}
+            data = []
+            for t in tps:
+                d = toolpath_to_dict(t)
+                d["selection"]["layer_names"] = [layers.get(i, "") for i in t.selection.layer_ids]
+                d["selection"]["vectors"] = []
+                data.append(d)
+            Path(fn).write_text(json.dumps({"format": "iyicam-toolpaths", "toolpaths": data}, indent=1),
+                                encoding="utf-8")
+
+    def load_toolpath_template(self) -> None:
+        fn, _ = QFileDialog.getOpenFileName(self, "Load toolpath template", "", "Toolpath template (*.icamtpl)")
+        if not fn:
+            return
+        data = json.loads(Path(fn).read_text(encoding="utf-8"))
+        p = self.ctrl.project
+        with self.ctrl.edit("Load toolpath template", geometry=False):
+            for d in data.get("toolpaths", []):
+                names = d.get("selection", {}).get("layer_names", [])
+                t = toolpath_from_dict(d)
+                t.id = new_id()
+                t.sheet_ids = None
+                t.selection.layer_ids = [p.ensure_layer(n).id for n in names if n]
+                t.selection.mode = "layers"
+                p.toolpaths.append(t)
+        self.ctrl.recalculate()
+
+    def export_gcode(self) -> None:
+        if self.ctrl.stale:
+            self.ctrl.recalculate()
+        if not self.ctrl.project.toolpaths:
+            QMessageBox.information(self, "Save G-code", "Create a toolpath first (Toolpaths ▸ New Toolpath).")
+            return
+        ExportDialog(self.ctrl, self).exec()
+
+    def simulate(self) -> None:
+        from ..cam.simulate import shade, simulate
+        c = self.ctrl
+        if c.stale:
+            c.recalculate()
+        tps = c.sheet_toolpaths()
+        if not tps:
+            QMessageBox.information(self, "Simulate", "There are no calculated toolpaths on this sheet.")
+            return
+        sh = c.sheet
+        prog = QProgressDialog("Simulating material removal...", "Cancel", 0, 100, self)
+        prog.setWindowModality(Qt.WindowModal)
+        prog.setMinimumDuration(400)
+
+        def progress(k, n):
+            prog.setValue(int(100 * k / max(1, n)))
+            QApplication.processEvents()
+
+        hm = simulate(tps, sh.width, sh.height, c.project.sheet_thickness(sh), c.settings.sim_resolution,
+                      progress, prog.wasCanceled)
+        prog.close()
+        rgb = shade(hm)
+        h, w, _ = rgb.shape
+        img = QImage(rgb.tobytes(), w, h, 3 * w, QImage.Format_RGB888).copy()
+        self.canvas.sim_image = img
+        self.canvas.sim_rect = QRectF(hm.x0 - hm.res / 2, hm.y0 - hm.res / 2, w * hm.res, h * hm.res)
+        self.canvas.show_sim = True
+        self.sim_action.setChecked(True)
+        self.canvas.update()
+        st = PathStats()
+        for tp in tps:
+            st = st.merge(tp.stats(c.project.material.rapid_rate))
+        self.statusBar().showMessage(f"Simulation done (resolution {hm.res:.2f} mm). Estimated machining time "
+                                     f"{format_time(st.time_s)}", 8000)
+
+    def clear_simulation(self) -> None:
+        self.canvas.sim_image = None
+        self.canvas.show_sim = False
+        self.sim_action.setChecked(False)
+        self.canvas.update()
+
+    def nest(self) -> None:
+        c = self.ctrl
+        if not (c.selected_objects() or c.sheet.vectors):
+            QMessageBox.information(self, "Nesting", "There are no vectors to nest.")
+            return
+        dlg = NestingDialog(c, self)
+        if dlg.exec():
+            out = dlg.run()
+            r = out.result
+            util = ", ".join(f"{u * 100:.1f}%" for u in r.utilization)
+            msg = f"Placed {out.placed} part(s) on {r.sheets} sheet(s) (usage {util})."
+            if out.unplaced:
+                msg += f"\n{out.unplaced} part(s) did not fit."
+            QMessageBox.information(self, "Nesting", msg)
+            self.canvas.zoom_extents()
+
+    def job_report(self) -> None:
+        c = self.ctrl
+        p = c.project
+        if c.stale:
+            c.recalculate()
+        fn, _ = QFileDialog.getSaveFileName(self, "Job report", f"{p.name}_report.html", "HTML (*.html)")
+        if not fn:
+            return
+        Path(fn).write_text(job_report_html(c), encoding="utf-8")
+        QDesktopServices.openUrl(QUrl.fromLocalFile(fn))
+
+    # -- help -----------------------------------------------------------------------------------------
+    def shortcuts_help(self) -> None:
+        rows = [f"<tr><td><b>{TOOL_KEYS[n]}</b></td><td>{TOOL_LABELS[n]}</td></tr>" for n in TOOL_KEYS if TOOL_KEYS[n]]
+        extra = [("F", "Zoom extents"), ("Shift+F", "Zoom selection"), ("Mouse wheel", "Zoom at cursor"),
+                 ("Middle drag / Space+drag", "Pan"), ("Esc", "Back to the select tool"), ("Del", "Delete"),
+                 ("Arrows", "Nudge (Shift x10, Ctrl x0.1)"), ("F5", "Recalculate toolpaths"), ("F6", "Simulate"),
+                 ("F7 / F8", "Snap to grid / vectors"), ("Ctrl+D", "Duplicate"), ("Ctrl+J", "Join vectors"),
+                 ("Ctrl+Shift+O", "Offset"), ("Ctrl+G / Ctrl+Shift+G", "Group / ungroup")]
+        rows += [f"<tr><td><b>{k}</b></td><td>{v}</td></tr>" for k, v in extra]
+        QMessageBox.information(self, "Keyboard shortcuts", "<table>" + "".join(rows) + "</table>")
+
+    def about(self) -> None:
+        QMessageBox.about(self, "About iyiCAM",
+                          f"<h3>iyiCAM {__version__}</h3><p>Modular 2D / 2.5D CAM for CNC routers.</p>"
+                          "<p>Vector layers, sheets, toolpaths (profile, pocket, drill, engrave, V-carve), "
+                          "true shape nesting, template post-processors and a Python plugin API.</p>")
+
+    def closeEvent(self, ev) -> None:
+        if not self.confirm_discard():
+            ev.ignore()
+            return
+        s = self.ctrl.settings
+        s.window_state = bytes(self.saveState().toBase64()).decode()
+        try:
+            s.save()
+        except OSError:
+            pass
+        ev.accept()
+
+
+def job_report_html(ctrl) -> str:
+    p = ctrl.project
+    u = ctrl.units
+    m = p.material
+    e = html.escape
+    out = [f"<html><head><meta charset='utf-8'><title>{e(p.name)}</title>"
+           "<style>body{font-family:sans-serif;margin:24px}table{border-collapse:collapse}"
+           "td,th{border:1px solid #bbb;padding:4px 8px;text-align:left}th{background:#eee}</style></head><body>",
+           f"<h1>{e(p.name)}</h1>",
+           f"<p>Material thickness {u.fmt(m.thickness)}, Z zero at the {m.z_zero}, XY origin "
+           f"{m.xy_origin.replace('_', ' ')}, safe Z {u.fmt(m.safe_z)}.</p>"]
+    for s in p.sheets:
+        tps = ctrl.sheet_toolpaths(s)
+        out.append(f"<h2>{e(s.name)} — {u.fmt(s.width)} x {u.fmt(s.height)} x "
+                   f"{u.fmt(p.sheet_thickness(s))}</h2>")
+        if not tps:
+            out.append("<p>No toolpaths.</p>")
+            continue
+        out.append("<table><tr><th>#</th><th>Toolpath</th><th>Tool</th><th>Spindle</th><th>Feed / plunge</th>"
+                   "<th>Depth</th><th>Cut length</th><th>Time</th></tr>")
+        total = PathStats()
+        for i, tp in enumerate(tps, 1):
+            st = tp.stats(m.rapid_rate)
+            total = total.merge(st)
+            t = tp.tool
+            out.append(f"<tr><td>{i}</td><td>{e(tp.name)}</td><td>T{t.number} {e(t.describe())}</td>"
+                       f"<td>{t.spindle_speed}</td><td>{t.feed_rate:g} / {t.plunge_rate:g}</td>"
+                       f"<td>{u.fmt(-st.zmin)}</td><td>{u.fmt(st.feed_length)}</td><td>{format_time(st.time_s)}</td></tr>")
+        out.append(f"<tr><th colspan=6>Total</th><th>{u.fmt(total.feed_length)}</th>"
+                   f"<th>{format_time(total.time_s)}</th></tr></table>")
+    out.append("</body></html>")
+    return "\n".join(out)

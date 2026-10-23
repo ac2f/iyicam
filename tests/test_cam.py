@@ -288,3 +288,18 @@ def test_tool_geometry():
     ball = Tool(type="ball_nose", diameter=6)
     assert ball.radius_at_depth(3) == pytest.approx(3)
     assert ball.radius_at_depth(1) == pytest.approx(math.sqrt(9 - 4))
+
+
+@pytest.mark.parametrize("dense", [False, True])
+def test_vcarve_path_has_no_spikes(dense):
+    """Curved shapes (exact or as dense polylines from DXF) give a smooth centre line."""
+    from iyicam.core.geom import Contour
+    ell = shapes.ellipse((50, 50), 30, 8)
+    if dense:
+        ell = Contour.polyline(ell.flatten(0.01), True)
+    p, s, objs = make_project([ell])
+    tp = run(p, s, add_tp(p, "vcarve", vbit(90), {}, objs)).toolpaths[0]
+    pts = path_points(tp, 0.2)
+    jumps = [abs(b[2] - a[2]) for a, b in zip(pts, pts[1:]) if math.dist(a[:2], b[:2]) < 0.25]
+    assert max(jumps) < 0.6
+    assert min(z for _, _, z in pts) == pytest.approx(-8, abs=0.1)

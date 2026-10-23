@@ -17,6 +17,11 @@ class UndoStack:
             self._undo.pop(0)
         self._redo.clear()
 
+    def rollback(self, project: Project) -> None:
+        """Restore the last checkpoint and forget it (a failed or cancelled action)."""
+        if self._undo:
+            project.load_state(self._undo.pop()[1])
+
     def discard_last(self) -> None:
         """Forget the last checkpoint (e.g. when the action was cancelled)."""
         if self._undo:

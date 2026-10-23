@@ -1,0 +1,160 @@
+"""Command line interface for batch work (no GUI needed).
+
+    python -m iyicam posts
+    python -m iyicam info job.icam
+    python -m iyicam gcode job.icam --post mach3 --sheet all -o out/job.tap
+    python -m iyicam import drawing.dxf -o job.icam --thickness 18
+    python -m iyicam nest job.icam --width 2800 --height 2100 --spacing 8 -o nested.icam
+"""
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+from .builtins import ensure_registered, load_user_posts
+from .cam.job import compute_all, sheet_toolpaths
+from .cam.moves import PathStats, format_time
+from .core import paths
+from .core.document import Project
+from .core.registry import REGISTRY
+from .plugins.manager import PluginManager
+
+COMMANDS = ("posts", "info", "gcode", "import", "nest", "plugins")
+
+
+def _setup(plugins: bool = True) -> None:
+    ensure_registered(REGISTRY)
+    try:
+        load_user_posts(REGISTRY)
+    except Exception as exc:
+        print(f"warning: user posts: {exc}", file=sys.stderr)
+    if plugins:
+        for info in PluginManager(REGISTRY, [paths.plugins_dir()]).load_all():
+            if info.error:
+                print(f"warning: plugin {info.key} failed to load", file=sys.stderr)
+
+
+def cmd_posts(a) -> int:
+    for p in sorted(REGISTRY.posts.values(), key=lambda p: p.id):
+        print(f"{p.id:16s} {p.name:32s} *.{p.extension:4s} {p.description}")
+    return 0
+
+
+def cmd_plugins(a) -> int:
+    pm = PluginManager(REGISTRY, [paths.plugins_dir()])
+    for i in pm.discover():
+        print(f"{i.key:20s} {'enabled' if i.enabled else 'disabled'} {i.path or i.entry_point}")
+    return 0
+
+
+def cmd_info(a) -> int:
+    p = Project.load(a.project)
+    res = compute_all(p)
+    print(f"{p.name}: {len(p.sheets)} sheet(s), {len(p.layers)} layer(s), {len(p.toolpaths)} toolpath(s)")
+    for i, s in enumerate(p.sheets, 1):
+        st = PathStats()
+        for tp in sheet_toolpaths(p, res, s):
+            st = st.merge(tp.stats(p.material.rapid_rate))
+        print(f"  sheet {i} '{s.name}' {s.width:g} x {s.height:g}: {len(s.vectors)} vectors, "
+              f"machining {format_time(st.time_s)}")
+    for (tid, sid), r in res.items():
+        t = p.toolpath(tid)
+        for w in ([r.error] if r.error else []) + r.warnings:
+            print(f"  ! {t.name}: {w.splitlines()[0]}")
+    return 0
+
+
+def cmd_gcode(a) -> int:
+    from .post.export import write_gcode
+    p = Project.load(a.project)
+    post = REGISTRY.posts.get(a.post)
+    if post is None:
+        print(f"unknown post '{a.post}', see 'iyicam posts'", file=sys.stderr)
+        return 2
+    res = compute_all(p)
+    for r in res.values():
+        if r.error:
+            print(f"error: {r.error}", file=sys.stderr)
+    sheets = p.sheets if a.sheet == "all" else [p.sheets[int(a.sheet) - 1]]
+    out = Path(a.output) if a.output else Path(a.project).with_suffix("." + post.extension)
+    written = []
+    for i, s in enumerate(sheets, 1):
+        tps = sheet_toolpaths(p, res, s)
+        if not tps:
+            continue
+        path = out if len(sheets) == 1 else out.with_name(f"{out.stem}_{i}{out.suffix}")
+        written += write_gcode(path, p, s, tps, post)
+    for w in written:
+        print(w)
+    return 0 if written else 1
+
+
+def cmd_import(a) -> int:
+    p = Project(Path(a.file).stem)
+    p.material.thickness = a.thickness
+    imp = REGISTRY.importer_for(Path(a.file).suffix)
+    if imp is None:
+        print(f"no importer for {a.file}", file=sys.stderr)
+        return 2
+    objs = imp.func(a.file, p, p.sheets[0])
+    bb = p.sheets[0].bbox()
+    if not bb.empty:
+        p.sheets[0].width = max(p.sheets[0].width, bb.xmax + 10)
+        p.sheets[0].height = max(p.sheets[0].height, bb.ymax + 10)
+    p.save(a.output)
+    print(f"{len(objs)} vectors -> {a.output}")
+    return 0
+
+
+def cmd_nest(a) -> int:
+    from .nesting.nest import NestSettings
+    from .nesting.parts import nest_objects
+    p = Project.load(a.project)
+    objs = [v for s in p.sheets for v in s.vectors]
+    step = a.rotation
+    rots = [0.0] if step <= 0 else [k * step for k in range(int(round(360 / step)))]
+    st = NestSettings(a.width, a.height, a.margin, a.spacing, rots, a.gravity, iterations=a.iterations)
+    out = nest_objects(p, objs, st, {o.id: a.quantity for o in objs}, [p.sheets[0]])
+    p.save(a.output)
+    print(f"placed {out.placed}, unplaced {out.unplaced}, sheets {out.result.sheets}, usage "
+          + ", ".join(f"{u * 100:.1f}%" for u in out.result.utilization))
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(prog="iyicam", description="iyiCAM command line tools")
+    ap.add_argument("--no-plugins", action="store_true", help="do not load user plugins")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("posts", help="list post-processors")
+    sub.add_parser("plugins", help="list plugins")
+    s = sub.add_parser("info", help="summarise a project")
+    s.add_argument("project")
+    s = sub.add_parser("gcode", help="calculate toolpaths and write G-code")
+    s.add_argument("project")
+    s.add_argument("--post", default="mach3")
+    s.add_argument("--sheet", default="1", help="sheet number or 'all'")
+    s.add_argument("-o", "--output")
+    s = sub.add_parser("import", help="create a project from a DXF / SVG file")
+    s.add_argument("file")
+    s.add_argument("-o", "--output", required=True)
+    s.add_argument("--thickness", type=float, default=18.0)
+    s = sub.add_parser("nest", help="nest every vector of a project")
+    s.add_argument("project")
+    s.add_argument("-o", "--output", required=True)
+    s.add_argument("--width", type=float, default=2800.0)
+    s.add_argument("--height", type=float, default=2100.0)
+    s.add_argument("--margin", type=float, default=10.0)
+    s.add_argument("--spacing", type=float, default=8.0)
+    s.add_argument("--rotation", type=float, default=90.0, help="rotation step in degrees (0 = none)")
+    s.add_argument("--gravity", default="left", choices=["left", "bottom", "compact"])
+    s.add_argument("--iterations", type=int, default=1)
+    s.add_argument("--quantity", type=int, default=1)
+    a = ap.parse_args(argv)
+    _setup(not a.no_plugins)
+    return {"posts": cmd_posts, "plugins": cmd_plugins, "info": cmd_info, "gcode": cmd_gcode,
+            "import": cmd_import, "nest": cmd_nest}[a.cmd](a)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
