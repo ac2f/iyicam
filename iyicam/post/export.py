@@ -25,6 +25,7 @@ def write_gcode(path: str | Path, project: Project, sheet: Sheet, toolpaths: lis
     if not path.suffix:
         path = path.with_suffix("." + post.extension)
     files = post_toolpaths(project, sheet, toolpaths, post, path.stem, program_number)
+    path.parent.mkdir(parents=True, exist_ok=True)
     written = []
     for suffix, text in files:
         out = path.with_name(path.stem + suffix + path.suffix)

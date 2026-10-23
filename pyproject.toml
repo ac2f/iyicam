@@ -8,7 +8,6 @@ version = "0.1.0"
 description = "Modular 2D/2.5D CAM for CNC routers: vectors, layers, sheets, toolpaths, nesting and post-processors"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
 dependencies = [
     "pyclipper>=1.3",
     "numpy>=1.24",
