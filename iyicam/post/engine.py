@@ -406,7 +406,8 @@ class PostProcessor:
             return
         max_sw = math.radians(o["arc_max_sweep"])
         if o["arcs"] == "r":
-            max_sw = min(max_sw, math.pi)
+            # R words are ill-conditioned near 180 degrees: keep each arc to a quarter circle
+            max_sw = min(max_sw, math.pi / 2)
         n = max(1, math.ceil(abs(sweep) / max_sw - 1e-9))
         a0 = math.atan2(sy - m.cy, sx - m.cx)
         for i in range(1, n + 1):

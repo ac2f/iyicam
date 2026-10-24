@@ -362,9 +362,9 @@ class Canvas(QWidget):
             self._tp_cache = []
             ctrl = self.ctrl
             idx = {t.id: i for i, t in enumerate(ctrl.project.toolpaths)}
-            for tp in ctrl.sheet_toolpaths():
+            for tp in ctrl.sheet_toolpaths() + list(ctrl.backplot):
                 feed, rapid, drills = toolpath_paths(tp)
-                color = TP_COLORS[idx.get(tp.def_id, 0) % len(TP_COLORS)]
+                color = "#8e44ad" if tp.op == "gcode" else TP_COLORS[idx.get(tp.def_id, 0) % len(TP_COLORS)]
                 st = tp.stats()
                 width = tp.tool.radius_at_depth(-st.zmin) * 2 if tp.tool.is_tapered else tp.tool.diameter
                 self._tp_cache.append((feed, rapid, drills, color, width))

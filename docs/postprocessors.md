@@ -40,7 +40,7 @@ G4 P5
 | `g_leading_zero` | `false` | `G01` instead of `G1` |
 | `arcs` | `"ijk"` | `ijk`, `r` or `none` (arcs written as short lines) |
 | `ijk` | `"incremental"` | `incremental` (centre relative to the start) or `absolute` |
-| `arc_max_sweep` | `180` | larger arcs are split (degrees) |
+| `arc_max_sweep` | `180` | larger arcs are split (degrees); with `arcs = "r"` at most 90 |
 | `arc_min_radius`, `arc_max_radius` | `0.01`, `5000` | outside this range arcs become lines |
 | `arc_tolerance` | `0.005` | chord tolerance when arcs are turned into lines |
 | `helical` | `true` | allow G2/G3 with a Z change |

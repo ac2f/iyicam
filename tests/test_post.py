@@ -137,7 +137,7 @@ def test_arc_r_mode_and_splitting():
     post = PostProcessor({"id": "r", "options": {"arcs": "r", "arc_max_sweep": 360}})
     text = post.generate(PostJob([tp], p, s))
     rlines = [l for l in text.splitlines() if re.search(r"R-?\d", l)]
-    assert len(rlines) == 3  # 180 + (270 split into two 135 degree arcs)
+    assert len(rlines) == 5  # R arcs are split into quarter circles: 180 -> 2, 270 -> 3
     assert all("I" not in l for l in rlines)
     post = PostProcessor({"id": "n", "options": {"arcs": "none"}})
     text = post.generate(PostJob([tp], p, s))

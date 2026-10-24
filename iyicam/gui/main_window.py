@@ -159,6 +159,7 @@ class MainWindow(QMainWindow):
         self._act(m, "&Export Vectors...", self.export_vectors)
         m.addSeparator()
         self._act(m, "Save &G-code...", self.export_gcode, "Ctrl+Shift+E")
+        self._act(m, "Open G-code (&Backplot)...", self.open_gcode)
         self._act(m, "Job &Report...", self.job_report)
         m.addSeparator()
         self._act(m, "&Quit", self.close, QKeySequence.Quit)
@@ -212,6 +213,7 @@ class MainWindow(QMainWindow):
         m.addSeparator()
         self._act(m, "&Simulate", self.simulate, "F6")
         self._act(m, "Clear Simulation", self.clear_simulation)
+        self._act(m, "Clear G-code Backplot", self.clear_backplot)
         m.addSeparator()
         self._act(m, "Save Toolpath &Template...", self.save_toolpath_template)
         self._act(m, "Load Toolpath Template...", self.load_toolpath_template)
@@ -610,7 +612,7 @@ class MainWindow(QMainWindow):
         c = self.ctrl
         if c.stale:
             c.recalculate()
-        tps = c.sheet_toolpaths()
+        tps = c.sheet_toolpaths() + list(c.backplot)
         if not tps:
             QMessageBox.information(self, "Simulate", "There are no calculated toolpaths on this sheet.")
             return
@@ -639,6 +641,40 @@ class MainWindow(QMainWindow):
             st = st.merge(tp.stats(c.project.material.rapid_rate))
         self.statusBar().showMessage(f"Simulation done (resolution {hm.res:.2f} mm). Estimated machining time "
                                      f"{format_time(st.time_s)}", 8000)
+
+    def open_gcode(self, path: str | None = None) -> list:
+        """Show an existing G-code file over the sheet (uses the material setup to map coordinates)."""
+        from ..cam.gcode_reader import ReadOptions, read_gcode
+        from ..post.engine import ORIGINS
+        if not path:
+            path, _ = QFileDialog.getOpenFileName(self, "Open G-code", "",
+                                                  "G-code (*.nc *.tap *.ngc *.gcode *.cnc *.txt *.u00 *.eia);;"
+                                                  "All files (*)")
+            if not path:
+                return []
+        c = self.ctrl
+        m, sh = c.project.material, c.sheet
+        fx, fy = ORIGINS.get(m.xy_origin, (0.0, 0.0))
+        tools = {t.number: t for t in c.tools.tools}
+        opt = ReadOptions(fx * sh.width, fy * sh.height,
+                          c.project.sheet_thickness(sh) if m.z_zero == "bottom" else 0.0, tools)
+        try:
+            text = Path(path).read_text(encoding="latin-1", errors="replace")
+        except OSError as exc:
+            QMessageBox.warning(self, "Open G-code", str(exc))
+            return []
+        c.backplot = read_gcode(text, opt)
+        c.toolpaths_changed.emit()
+        st = PathStats()
+        for tp in c.backplot:
+            st = st.merge(tp.stats(m.rapid_rate))
+        self.statusBar().showMessage(f"{Path(path).name}: {len(c.backplot)} tool(s), cut length "
+                                     f"{c.units.fmt(st.feed_length)}, estimated {format_time(st.time_s)}", 10000)
+        return c.backplot
+
+    def clear_backplot(self) -> None:
+        self.ctrl.backplot = []
+        self.ctrl.toolpaths_changed.emit()
 
     def clear_simulation(self) -> None:
         self.canvas.sim_image = None

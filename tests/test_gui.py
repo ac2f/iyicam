@@ -272,3 +272,16 @@ def test_edit_tabs_tool(win):
     QTest.mouseClick(cv, Qt.LeftButton, Qt.NoModifier, at(cv, *first))  # remove
     assert len(ctrl.project.toolpath(t.id).params["tab_points"]) == 4
     assert ctrl.sheet_toolpaths()
+
+
+def test_open_gcode_backplot(win, tmp_path):
+    f = tmp_path / "x.nc"
+    f.write_text("G21 G90\nT1 M6\nG0 X10 Y10 Z5\nG1 Z-2 F500\nG2 X30 Y10 I10 J0\nG1 X30 Y40\nG0 Z5\nM30\n")
+    tps = win.open_gcode(str(f))
+    assert len(tps) == 1 and tps[0].stats().feed_length > 40
+    win.canvas.grab()
+    win.ctrl.settings.sim_resolution = 1.0
+    win.simulate()
+    assert win.canvas.sim_image is not None
+    win.clear_backplot()
+    assert not win.ctrl.backplot

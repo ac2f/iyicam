@@ -39,6 +39,7 @@ class Controller(QObject):
         self.layer_id = self.project.layers[0].id
         self.selection: list[str] = []
         self.results: dict[tuple[str, str], ComputeResult] = {}
+        self.backplot: list = []  # toolpaths read from an existing G-code file (display / simulation only)
         self.stale = False
         self.dirty = False
         self.last_compute_s = 0.0
