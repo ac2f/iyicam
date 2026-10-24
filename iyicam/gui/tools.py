@@ -968,5 +968,84 @@ class TrimTool(CanvasTool):
         self.say(self.prompt)
 
 
+class TabTool(CanvasTool):
+    """Add / remove manual tab positions of one profile toolpath."""
+
+    name = "tabs"
+    prompt = "Edit tabs: click on a vector to add a tab, click a tab to remove it. Esc when done."
+    cursor = Qt.CrossCursor
+
+    def __init__(self, canvas, tdef_id: str):
+        super().__init__(canvas)
+        self.tdef_id = tdef_id
+
+    def tdef(self):
+        return self.ctrl.project.toolpath(self.tdef_id)
+
+    def activate(self) -> None:
+        t = self.tdef()
+        if t is not None and t.params.get("tab_mode") != "manual":
+            self._store(self._seed(t))
+
+    def _seed(self, t) -> list[list[float]]:
+        """Start from the automatic positions so switching to manual changes nothing."""
+        p = t.params
+        pts = []
+        if not p.get("tabs"):
+            return pts
+        for o in self.ctrl.project.vectors_for(t, self.ctrl.sheet):
+            for c in o.contours:
+                if not c.closed:
+                    continue
+                L = c.length()
+                if L < max(p.get("tab_min_length", 40.0), 2 * p.get("tab_length", 8.0)):
+                    continue
+                n = max(1, round(L / max(1.0, p.get("tab_spacing", 300.0)))) if p.get("tab_mode") == "spacing" \
+                    else max(1, int(p.get("tab_count", 4)))
+                pts += [list(c.point_at_length((k + 0.5) * L / n)) for k in range(n)]
+        return pts
+
+    def _store(self, pts: list) -> None:
+        import copy
+        t = self.tdef()
+        if t is None:
+            return
+        new = copy.deepcopy(t)
+        new.params.update({"tab_points": pts, "tabs": True, "tab_mode": "manual"})
+        self.ctrl.replace_toolpath(new)
+
+    def press(self, ev, w):
+        t = self.tdef()
+        if ev.button() != Qt.LeftButton or t is None:
+            return
+        pts = [list(p) for p in t.params.get("tab_points") or []]
+        pos = ev.position()
+        for k, p in enumerate(pts):
+            q = self.s(tuple(p))
+            if math.hypot(q.x() - pos.x(), q.y() - pos.y()) <= 8:
+                del pts[k]
+                self._store(pts)
+                return
+        best, bd = None, self.canvas.px(15)
+        for o in self.ctrl.project.vectors_for(t, self.ctrl.sheet):
+            for c in o.contours:
+                _, _, q, d = c.nearest(w)
+                if d < bd:
+                    best, bd = q, d
+        if best is not None:
+            pts.append(list(best))
+            self._store(pts)
+
+    def paint(self, p):
+        t = self.tdef()
+        if t is None:
+            return
+        p.setPen(QPen(QColor("#7f2704"), 1))
+        p.setBrush(QBrush(QColor("#fd8d3c")))
+        for pt in t.params.get("tab_points") or []:
+            q = self.s(tuple(pt))
+            p.drawRect(QRectF(q.x() - 5, q.y() - 5, 10, 10))
+
+
 TOOLS = {cls.name: cls for cls in (SelectTool, NodeTool, PolylineTool, LineTool, RectTool, CircleTool,
                                     EllipseTool, PolygonTool, StarTool, ArcTool, TextTool, MeasureTool, TrimTool)}

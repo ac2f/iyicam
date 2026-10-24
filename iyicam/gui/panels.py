@@ -357,6 +357,11 @@ class ToolpathsPanel(QWidget):
         m.addAction("Delete", self.delete)
         m.addSeparator()
         m.addAction("Select its vectors", self.select_vectors)
+        ids = self.selected_ids()
+        t = self.ctrl.project.toolpath(ids[0]) if ids else None
+        op = self.ctrl.registry.operations.get(t.op) if t else None
+        if op is not None and any(p.name == "tab_mode" for p in op.params()):
+            m.addAction("Edit tabs on the drawing", lambda: self.window.edit_tabs(t.id))
         m.addAction("Save as template...", self.window.save_toolpath_template)
         m.addAction("Load template...", self.window.load_toolpath_template)
         m.exec(self.tree.mapToGlobal(pos))

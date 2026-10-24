@@ -343,3 +343,16 @@ def test_rest_machining_with_nothing_left_warns():
     p, s, objs = make_project([shapes.circle((50, 50), 30)])
     res = compute_toolpath(p, add_tp(p, "pocket", end_mill(3), {"rest_from": 12}, objs), s)
     assert not res.toolpaths and any("Nothing is left" in w for w in res.warnings)
+
+
+def test_profile_manual_tabs():
+    part = shapes.rectangle(0, 0, 200, 100)
+    p, s, objs = make_project([part], thickness=12)
+    params = {"tabs": True, "tab_mode": "manual", "tab_points": [[100, 0], [200, 50], [500, 500]],
+              "tab_length": 10, "tab_height": 4, "overcut": 0.0}
+    tp = run(p, s, add_tp(p, "profile", end_mill(6), params, objs)).toolpaths[0]
+    feeds = [m for m in tp.moves if isinstance(m, (Feed, ArcMove))]
+    on_tab = [m for i, m in enumerate(feeds[1:], 1) if abs(m.z + 8) < 1e-6 and abs(feeds[i - 1].z + 8) < 1e-6]
+    assert len(on_tab) == 2 * 2  # two tabs (the far point is ignored) on the passes at -9 and -12
+    mids = {(round(m.x), round(m.y)) for m in on_tab}
+    assert any(abs(x - 95) <= 1 or abs(x - 105) <= 1 for x, y in mids)

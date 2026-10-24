@@ -253,3 +253,22 @@ def test_trace_bitmap(win, tmp_path):
                                      "min_area": 8, "center": True})
     assert len(objs) == 1 and len(objs[0].contours) == 1
     assert objs[0].contours[0].area() == pytest.approx(math.pi * 25 ** 2, rel=0.03)
+
+
+def test_edit_tabs_tool(win):
+    from iyicam.core.document import Selection, ToolpathDef
+    cv, ctrl = win.canvas, win.ctrl
+    obj = VectorObject([shapes.rectangle(100, 100, 200, 100)], ctrl.layer_id)
+    ctrl.add_vectors([obj])
+    t = ToolpathDef("p", "profile", ctrl.tools.tools[1].copy(), {"tabs": True, "tab_count": 4},
+                    Selection("vectors", [obj.id]))
+    ctrl.add_toolpath(t)
+    win.edit_tabs(t.id)
+    pts = ctrl.project.toolpath(t.id).params["tab_points"]
+    assert len(pts) == 4 and ctrl.project.toolpath(t.id).params["tab_mode"] == "manual"
+    QTest.mouseClick(cv, Qt.LeftButton, Qt.NoModifier, at(cv, 110, 100))  # add on the bottom edge
+    assert len(ctrl.project.toolpath(t.id).params["tab_points"]) == 5
+    first = ctrl.project.toolpath(t.id).params["tab_points"][0]
+    QTest.mouseClick(cv, Qt.LeftButton, Qt.NoModifier, at(cv, *first))  # remove
+    assert len(ctrl.project.toolpath(t.id).params["tab_points"]) == 4
+    assert ctrl.sheet_toolpaths()

@@ -10,7 +10,7 @@ from ..core.params import Param
 from .builder import MoveBuilder
 from .operation import OpContext, Operation, depth_levels, depth_params, final_depth, stepdown
 from .ordering import containment_levels, leveled_order
-from .pathutil import PathWalker, emit_profile, machinable, pl_max_breaks
+from .pathutil import PathWalker, emit_profile, machinable, nearest_on_polys, pl_max_breaks
 from .moves import Toolpath
 
 NEG_INF = -1e9
@@ -91,8 +91,10 @@ class ProfileOp(Operation):
                   group="Profile"),
             Param("tabs", "Add tabs / bridges", "bool", False, group="Tabs"),
             Param("tab_mode", "Tab placement", "choice", "count",
-                  choices=[("count", "Number per vector"), ("spacing", "Distance between tabs")],
-                  group="Tabs", visible={"tabs": True}),
+                  choices=[("count", "Number per vector"), ("spacing", "Distance between tabs"),
+                           ("manual", "Positions picked on the drawing")],
+                  group="Tabs", visible={"tabs": True},
+                  help="Manual positions are edited with 'Edit Tabs' in the toolpath list"),
             Param("tab_count", "Tabs per vector", "int", 4, min=1, max=200, group="Tabs",
                   visible={"tabs": True, "tab_mode": "count"}),
             Param("tab_spacing", "Tab spacing", "length", 300.0, min=1.0, group="Tabs",
@@ -129,6 +131,7 @@ class ProfileOp(Operation):
             return []
         surface = -start
         side = v["side"]
+        self._tool_r = (tool.radius_at_depth(final - start) if tool.is_tapered else tool.radius) + v["allowance"]
         closed = [c for c in ctx.contours if c.closed]
         opened = [machinable(c, tol) for c in ctx.contours if not c.closed]
         items: list[CutItem] = []
@@ -214,9 +217,21 @@ class ProfileOp(Operation):
         return entry if it.contour.closed else it.contour.end
 
     # ---------------------------------------------------------------------------
-    def _tabs(self, L: float, final: float) -> TabPlan | None:
+    def _tabs(self, walker: PathWalker, final: float, tool_r: float) -> TabPlan | None:
         v = self.values
-        if not v["tabs"] or L < max(v["tab_min_length"], v["tab_length"] * 2):
+        L = walker.length
+        if not v["tabs"]:
+            return None
+        top = -final + v["tab_height"]
+        if v["tab_mode"] == "manual":
+            reach = tool_r + v["tab_length"] + 1.0
+            centres = []
+            for pt in v.get("tab_points") or []:
+                i, t, d = nearest_on_polys(tuple(pt), walker.segs)
+                if d <= reach:
+                    centres.append(walker.cum[i] + t * (walker.cum[i + 1] - walker.cum[i]))
+            return TabPlan(L, centres, v["tab_length"], top, -final, v["tab_3d"]) if centres else None
+        if L < max(v["tab_min_length"], v["tab_length"] * 2):
             return None
         if v["tab_mode"] == "spacing":
             n = max(1, round(L / max(1.0, v["tab_spacing"])))
@@ -225,7 +240,6 @@ class ProfileOp(Operation):
         if n * v["tab_length"] >= L * 0.8:
             n = max(1, int(L * 0.8 / v["tab_length"]))
         centres = [(k + 0.5) * L / n for k in range(n)]
-        top = -final + v["tab_height"]
         return TabPlan(L, centres, v["tab_length"], top, -final, v["tab_3d"])
 
     def _cut_closed(self, mb: MoveBuilder, c: Contour, levels: list[float], surface: float,
@@ -235,7 +249,7 @@ class ProfileOp(Operation):
         L = walker.length
         if L < 1e-6:
             return
-        tabs = self._tabs(L, final)
+        tabs = self._tabs(walker, final, self._tool_r)
         lead = v["lead"] if it.wall_right is not None else "none"
         lead_len = v["lead_length"]
         overlap = v["overlap"]

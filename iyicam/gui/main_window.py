@@ -556,6 +556,10 @@ class MainWindow(QMainWindow):
         elif n == 0:
             self.statusBar().showMessage(f"{t.name}: nothing to machine on this sheet", 6000)
 
+    def edit_tabs(self, tid: str) -> None:
+        from .tools import TabTool
+        self.canvas.set_tool(TabTool(self.canvas, tid))
+
     def recalculate(self) -> None:
         self.ctrl.recalculate()
 
