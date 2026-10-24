@@ -188,6 +188,8 @@ class MainWindow(QMainWindow):
         self._act(m, "Show &Directions", lambda v: self._toggle("show_directions", v), None, True, s.show_directions)
         self.sim_action = self._act(m, "Show Si&mulation", self._toggle_sim, None, True, self.canvas.show_sim)
         m.addSeparator()
+        self._act(m, "Clear &Guides", self.canvas.clear_guides)
+        m.addSeparator()
         self._act(m, "Snap to &Grid", lambda v: self._toggle("snap_grid", v), "F7", True, s.snap_grid)
         self._act(m, "Snap to &Vectors", lambda v: self._toggle("snap_objects", v), "F8", True, s.snap_objects)
         m.addSeparator()

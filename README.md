@@ -26,7 +26,8 @@ with Python plugins.
 - Drawing tools: polyline / bezier (click or drag), line, rectangle, circle, ellipse, polygon,
   star, 3-point arc, text (any installed font), measure, **trim** (cut away the piece of a vector
   between crossings)
-- Snapping to nodes, midpoints, arc centres, sheet corners and the grid
+- Rulers and draggable guide lines; snapping to nodes, midpoints, arc centres, sheet corners,
+  guides and the grid
 - Selection with move / scale / rotate handles, window and crossing selection, nudging
 - **Node editing**: drag nodes and bezier handles, insert / delete nodes, convert spans
   (line / arc / bezier), set the start point, break, close, reverse

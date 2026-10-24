@@ -44,6 +44,7 @@ class Canvas(QWidget):
         self.show_sim = False
         self.tool = None
         self.context_menu_hook = None
+        self._guide_drag: list | None = None  # [kind, index or None, value]
         ctrl.changed.connect(self._doc_changed)
         ctrl.selection_changed.connect(self.update)
         ctrl.toolpaths_changed.connect(self._tp_changed)
@@ -227,6 +228,8 @@ class Canvas(QWidget):
                 d = dist(p, q)
                 if d < bd:
                     best, bd, kind = q, d, "sheet"
+        if best is None:
+            best, kind = self._snap_guides(p, tol)
         if best is not None:
             self.snap_marker = (best, kind)
             return best
@@ -236,6 +239,50 @@ class Canvas(QWidget):
             self.snap_marker = (q, "grid")
             return q
         return p
+
+    # -- guides ----------------------------------------------------------------------------------------
+    RULER = 18
+
+    def guides(self) -> list[list]:
+        return self.ctrl.project.metadata.get("guides", {}).get(self.ctrl.sheet_id, [])
+
+    def set_guides(self, guides: list[list]) -> None:
+        with self.ctrl.edit("Guides", geometry=False):
+            self.ctrl.project.metadata.setdefault("guides", {})[self.ctrl.sheet_id] = guides
+
+    def _snap_guides(self, p: Pt, tol: float):
+        hs = [v for k, v in self.guides() if k == "h"]
+        vs = [v for k, v in self.guides() if k == "v"]
+        gx = min(vs, key=lambda v: abs(v - p[0]), default=None)
+        gy = min(hs, key=lambda v: abs(v - p[1]), default=None)
+        nx = gx is not None and abs(gx - p[0]) <= tol
+        ny = gy is not None and abs(gy - p[1]) <= tol
+        if nx and ny:
+            return (gx, gy), "node"
+        if nx:
+            return (gx, p[1]), "guide"
+        if ny:
+            return (p[0], gy), "guide"
+        return None, ""
+
+    def _ruler_hit(self, pos: QPointF) -> str | None:
+        if pos.y() < self.RULER and pos.x() >= self.RULER:
+            return "h"
+        if pos.x() < self.RULER and pos.y() >= self.RULER:
+            return "v"
+        return None
+
+    def _guide_value(self, kind: str, pos: QPointF) -> float:
+        x, y = self.screen_to_world(pos)
+        v = y if kind == "h" else x
+        s = self.ctrl.settings
+        if s.snap_grid and s.grid > 0:
+            v = round(v / s.grid) * s.grid
+        return v
+
+    def clear_guides(self) -> None:
+        if self.guides():
+            self.set_guides([])
 
     # -- painting -------------------------------------------------------------------------------------
     def grid_step(self) -> float:
@@ -298,6 +345,7 @@ class Canvas(QWidget):
             for c in o.contours:
                 if c.segs:
                     self._paint_start(p, c, self.ctrl.settings.show_directions or len(sel) < 50)
+        self._paint_guides(p)
         # tool overlay
         if self.tool is not None:
             self.tool.paint(p)
@@ -315,7 +363,70 @@ class Canvas(QWidget):
                 p.drawPolygon([q + QPointF(0, -6), q + QPointF(6, 4), q + QPointF(-6, 4)])
             else:
                 p.drawRect(QRectF(q.x() - 5, q.y() - 5, 10, 10))
+        self._paint_rulers(p)
         p.end()
+
+    def _paint_guides(self, p: QPainter) -> None:
+        items = [(k, v, False) for k, v in self.guides()]
+        if self._guide_drag is not None:
+            kind, idx, val = self._guide_drag
+            if idx is not None:
+                items = [it for i, it in enumerate(items) if i != idx]
+            items.append((kind, val, True))
+        for kind, v, active in items:
+            p.setPen(QPen(QColor("#0097a7" if not active else "#e65100"), 1, Qt.DashLine))
+            if kind == "h":
+                y = self.world_to_screen(0, v).y()
+                p.drawLine(QPointF(0, y), QPointF(self.width(), y))
+            else:
+                x = self.world_to_screen(v, 0).x()
+                p.drawLine(QPointF(x, 0), QPointF(x, self.height()))
+
+    def _paint_rulers(self, p: QPainter) -> None:
+        R = self.RULER
+        W, H = self.width(), self.height()
+        u = self.ctrl.units
+        p.fillRect(QRectF(0, 0, W, R), QColor("#eceff1"))
+        p.fillRect(QRectF(0, 0, R, H), QColor("#eceff1"))
+        p.setPen(QPen(QColor("#90a4ae"), 1))
+        p.drawLine(QPointF(R, R), QPointF(W, R))
+        p.drawLine(QPointF(R, R), QPointF(R, H))
+        g = self.grid_step()
+        while g * self.scale < 40:  # labelled ticks need room
+            g *= 5 if str(g)[0] in "12" else 2
+        font = p.font()
+        font.setPixelSize(9)
+        p.setFont(font)
+        x0, y0 = self.screen_to_world(QPointF(R, H))
+        x1, y1 = self.screen_to_world(QPointF(W, R))
+        for i in range(math.floor(x0 / g), math.ceil(x1 / g) + 1):
+            x = self.world_to_screen(i * g, 0).x()
+            if x < R:
+                continue
+            p.drawLine(QPointF(x, R - 6), QPointF(x, R))
+            p.drawText(QPointF(x + 2, R - 7), f"{u.to_display(i * g):g}")
+            xm = self.world_to_screen((i + 0.5) * g, 0).x()
+            p.drawLine(QPointF(xm, R - 3), QPointF(xm, R))
+        for j in range(math.floor(y0 / g), math.ceil(y1 / g) + 1):
+            y = self.world_to_screen(0, j * g).y()
+            if y < R:
+                continue
+            p.drawLine(QPointF(R - 6, y), QPointF(R, y))
+            p.save()
+            p.translate(R - 7, y - 2)
+            p.rotate(-90)
+            p.drawText(QPointF(0, 0), f"{u.to_display(j * g):g}")
+            p.restore()
+            ym = self.world_to_screen(0, (j + 0.5) * g).y()
+            p.drawLine(QPointF(R - 3, ym), QPointF(R, ym))
+        # cursor position
+        q = self.world_to_screen(*self.mouse_world)
+        p.setPen(QPen(QColor("#d84315"), 1))
+        if q.x() > R:
+            p.drawLine(QPointF(q.x(), 0), QPointF(q.x(), R))
+        if q.y() > R:
+            p.drawLine(QPointF(0, q.y()), QPointF(R, q.y()))
+        p.fillRect(QRectF(0, 0, R, R), QColor("#cfd8dc"))
 
     def _paint_grid(self, p: QPainter, sh) -> None:
         g = self.grid_step()
@@ -428,6 +539,22 @@ class Canvas(QWidget):
             self._pan_from = ev.position()
             self.setCursor(Qt.ClosedHandCursor)
             return
+        kind = self._ruler_hit(ev.position()) if ev.button() == Qt.LeftButton else None
+        if kind is not None:
+            # pick up an existing guide under the cursor (along the ruler) or start a new one
+            # an existing guide is picked up where it meets the other ruler: horizontal guides on
+            # the left ruler, vertical guides on the top ruler
+            pos = ev.position()
+            idx = None
+            for i, (k, v) in enumerate(self.guides()):
+                q = self.world_to_screen(v, v)
+                if k != kind and abs((q.y() if k == "h" else q.x()) - (pos.y() if k == "h" else pos.x())) < 4:
+                    idx, kind = i, k
+            if idx is None:
+                self._guide_drag = [kind, None, self._guide_value(kind, pos)]
+            else:
+                self._guide_drag = [kind, idx, self.guides()[idx][1]]
+            return
         self.tool.press(ev, self._world(ev))
         self.update()
 
@@ -442,6 +569,10 @@ class Canvas(QWidget):
             self.update()
             return
         self.cursor_moved.emit(*w)
+        if self._guide_drag is not None:
+            self._guide_drag[2] = self._guide_value(self._guide_drag[0], ev.position())
+            self.update()
+            return
         self.tool.move(ev, w)
         self.update()
 
@@ -449,6 +580,22 @@ class Canvas(QWidget):
         if self._pan_from is not None and ev.button() in (Qt.MiddleButton, Qt.LeftButton):
             self._pan_from = None
             self.setCursor(self.tool.cursor)
+            return
+        if self._guide_drag is not None:
+            kind, idx, val = self._guide_drag
+            self._guide_drag = None
+            guides = [list(g) for g in self.guides()]
+            if ev.position().x() < self.RULER or ev.position().y() < self.RULER:
+                if idx is not None:  # dragged back onto a ruler: delete
+                    del guides[idx]
+                    self.set_guides(guides)
+            else:
+                if idx is None:
+                    guides.append([kind, val])
+                else:
+                    guides[idx][1] = val
+                self.set_guides(guides)
+            self.update()
             return
         self.tool.release(ev, self._world(ev))
         self.update()

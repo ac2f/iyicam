@@ -1,6 +1,7 @@
 """Project document: sheets, vector layers, vectors, material setup and toolpath definitions."""
 from __future__ import annotations
 
+import copy
 import json
 import uuid
 from dataclasses import dataclass, field
@@ -341,7 +342,7 @@ def project_to_dict(p: Project) -> dict:
                     "thickness": s.thickness, "vectors": [vector_to_dict(v) for v in s.vectors]}
                    for s in p.sheets],
         "toolpaths": [toolpath_to_dict(t) for t in p.toolpaths],
-        "metadata": p.metadata,
+        "metadata": copy.deepcopy(p.metadata),  # snapshots (undo) must not share it
     }
 
 

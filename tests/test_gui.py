@@ -306,3 +306,27 @@ def test_text_on_curve(win):
     for c in obj.contours:
         for x, y in c.flatten(0.1):
             assert 88 < math.hypot(x - 300, y - 200) < 101  # letters stand on the circle, inside it
+
+
+def test_rulers_and_guides(win):
+    cv, ctrl = win.canvas, win.ctrl
+    ctrl.settings.snap_grid = False
+    start = QPoint(at(cv, 200, 0).x(), cv.RULER // 2)
+    end = at(cv, 200, 150)
+    QTest.mousePress(cv, Qt.LeftButton, Qt.NoModifier, start)
+    QTest.mouseMove(cv, end)
+    QTest.mouseRelease(cv, Qt.LeftButton, Qt.NoModifier, end)
+    gs = cv.guides()
+    assert len(gs) == 1 and gs[0][0] == "h" and gs[0][1] == pytest.approx(150, abs=1)
+    y = gs[0][1]
+    assert cv.snap((123.0, y + cv.px(3))) == pytest.approx((123.0, y))
+    cv.grab()  # rulers and guides paint
+    # pick it up on the left ruler and drop it back onto the ruler: deleted
+    on_left = QPoint(cv.RULER // 2, int(cv.world_to_screen(0, y).y()))
+    QTest.mousePress(cv, Qt.LeftButton, Qt.NoModifier, on_left)
+    QTest.mouseRelease(cv, Qt.LeftButton, Qt.NoModifier, on_left)
+    assert not cv.guides()
+    ctrl.undo()
+    assert len(cv.guides()) == 1
+    ctrl.undo()
+    assert not cv.guides()
