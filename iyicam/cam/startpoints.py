@@ -130,9 +130,35 @@ def corners(walker: PathWalker, tight: float = 0.0, angle: float = 12.0) -> list
         if t1[0] * t2[0] + t1[1] * t2[1] < lim:
             s = walker.cum[i + 1] % L if L > 0 else 0.0
             out.append((s, s))
+    # runs of tight arcs around one centre; a loop that is nothing but such a run is a small round
+    # shape (a small hole), not a corner
+    if all((isinstance(sg, Arc) and sg.radius < tight) or sg.length() < 0.1 * tight for sg in walker.segs):
+        return [sp for sp in out if sp[0] == sp[1]]
+    run: list[int] = []
+    runs = []
+    centre = None
     for i, seg in enumerate(walker.segs):
         if isinstance(seg, Arc) and seg.radius < tight:
-            out.append((walker.cum[i], walker.cum[i + 1]))
+            if run and run[-1] == i - 1 and math.dist(centre, seg.center) < 1e-3:
+                run.append(i)
+            else:
+                run = [i]
+                runs.append(run)
+            centre = seg.center
+        elif run and run[-1] == i - 1 and seg.length() < 0.1 * tight:
+            run.append(i)  # a sliver left by arc fitting does not break the run
+    if len(runs) > 1 and walker.closed and runs[0][0] == 0 and runs[-1][-1] == n - 1:
+        a, b = (next(walker.segs[i] for i in r if isinstance(walker.segs[i], Arc)) for r in (runs[0], runs[-1]))
+        if math.dist(a.center, b.center) < 1e-3:
+            runs[0] = runs.pop() + runs[0]  # the run wraps around the start of the loop
+    for r in runs:
+        if len(set(r)) == n:
+            continue  # the whole loop is one small round shape: nowhere is a corner
+        a, b = walker.cum[r[0]], walker.cum[r[-1] + 1]
+        if r[0] > r[-1]:  # wrapped: two spans
+            out += [(a, L), (0.0, b)]
+        else:
+            out.append((a, b))
     return out
 
 

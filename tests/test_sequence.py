@@ -362,3 +362,13 @@ def test_finish_pass_on_loose_parts_is_reported():
     res = compute_toolpath(p, add_tp(p, "profile", end_mill(6), {"through": True, "finish_pass": 0.5,
                                                                    "tabs": True}, objs), s)
     assert not any("already cut free" in w for w in res.warnings)
+
+
+def test_small_round_holes_are_not_corners():
+    """A hole whose tool path is one small circle has no corner: any start on it is fine."""
+    part = [shapes.rectangle(10, 10, 80, 60), shapes.circle((30, 40), 7), shapes.circle((70, 40), 9)]
+    p, s, objs = make_project([part], size=(100, 80))
+    t = add_tp(p, "profile", end_mill(6), {"through": True}, objs)
+    t.sequence = {"smart_starts": True}
+    cuts = compute_toolpath(p, t, s).toolpaths[0].cuts
+    assert len(cuts) == 3 and all(c["ok"] for c in cuts)
