@@ -58,6 +58,8 @@ class PocketOp(Operation):
             Param("allowance", "Wall allowance", "length", 0.0, group="Pocket"),
             Param("finish_wall", "Wall finish allowance", "length", 0.0, min=0.0, group="Pocket",
                   help="Leave this much on the wall and remove it with a final full depth pass"),
+            Param("rest_from", "Rest machining after tool Ø (0 = off)", "length", 0.0, min=0.0, group="Pocket",
+                  help="Only machine the corners a larger tool of this diameter could not reach"),
             Param("order", "Cut order", "choice", "inside_out",
                   choices=[("inside_out", "From the centre outwards"), ("outside_in", "From the wall inwards")],
                   group="Pocket", visible={"strategy": "offset"}),
@@ -106,7 +108,16 @@ class PocketOp(Operation):
             pattern = self._raster(inner, so, r, tol)
         else:
             pattern = self._offset(inner, so, r, tol)
-        pattern = self._add_cleanup(pattern, inner, r, tol)
+        rest_from = v["rest_from"] or 0.0
+        if rest_from > 2 * r + 1e-6:
+            pattern = self._rest(pattern, region, r, rest_from / 2, v["allowance"] + fin, tol)
+            if not pattern:
+                ctx.warn("Nothing is left for rest machining: the larger tool reaches everywhere")
+                return []
+        else:
+            if rest_from > 0:
+                ctx.warn("Rest machining needs a previous tool larger than this one; machining everything")
+            pattern = self._add_cleanup(pattern, inner, r, tol)
         if v["direction"] == "conventional":
             pattern = [PatternPath(p.contour.reversed() if p.contour.closed else p.contour, p.group)
                        for p in pattern]
@@ -176,6 +187,27 @@ class PocketOp(Operation):
             return paths
         bounds = [PatternPath(arcfit.fit_contour(p, True, tol), -1 if mode == "first" else 1) for p in inner]
         return bounds + paths if mode == "first" else paths + bounds
+
+    def _rest(self, pattern: list[PatternPath], region: list[clip.Poly], r: float, big_r: float, allow: float,
+              tol: float) -> list[PatternPath]:
+        """Keep only the parts of the pattern near material a tool of radius ``big_r`` left behind."""
+        removed = clip.offset(clip.offset(region, -(big_r + allow), arc_tol=tol / 2), big_r, arc_tol=tol / 2)
+        target = clip.offset(region, -allow, arc_tol=tol / 2) if allow else region
+        rest = clip.boolean(target, removed, "difference")
+        e = max(0.01, 4 * tol)  # drop slivers that only come from polygon approximation
+        rest = clip.offset(clip.offset(rest, -e), e)
+        if clip.area(rest) < (0.05 * r) ** 2:
+            return []
+        zone = clip.offset(rest, r + 0.25, arc_tol=tol / 2)
+        out: list[PatternPath] = []
+        for pp in pattern:
+            pts = pp.contour.flatten(tol)
+            if pp.contour.closed:
+                pts = pts + [pts[0]]
+            for piece in clip.clip_lines([pts], zone):
+                if len(piece) > 2 or (len(piece) == 2 and dist(piece[0], piece[1]) > 1e-6):
+                    out.append(PatternPath(arcfit.fit_contour(piece, False, tol), pp.group))
+        return [p for p in out if p.contour.segs]
 
     def _add_cleanup(self, pattern: list[PatternPath], inner: list[clip.Poly], r: float,
                      tol: float) -> list[PatternPath]:

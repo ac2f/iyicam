@@ -390,6 +390,8 @@ class MainWindow(QMainWindow):
                   "unit_scale": None if u == "auto" else float(u)}
         elif ext == "svg":
             kw = {"keep_layers": options.get("keep_layers", True), "scale": options.get("scale", 100.0) / 100.0}
+        elif ext in ("plt", "hpgl", "hpg"):
+            kw = {"join_tolerance": options.get("join", 0.05), "scale": options.get("scale", 100.0) / 100.0}
         c = self.ctrl
         with c.edit(f"Import {Path(path).name}"):
             objs = imp.func(path, c.project, c.sheet, layer_id=c.layer_id, **kw)

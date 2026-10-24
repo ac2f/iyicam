@@ -999,6 +999,8 @@ class ImportDialog(QDialog):
             params = [Param("units", f"Units (file says: {name})", "choice", "auto", choices=self.UNITS),
                       Param("join", "Join gaps up to", "length", 0.05, min=0.0)] + params
         else:
+            if Path(path).suffix.lower() in (".plt", ".hpgl", ".hpg"):
+                params.append(Param("join", "Join gaps up to", "length", 0.05, min=0.0))
             params.append(Param("scale", "Scale", "percent", 100.0, min=0.001))
         params.append(Param("center", "Centre on the sheet", "bool", False))
         lay = QVBoxLayout(self)

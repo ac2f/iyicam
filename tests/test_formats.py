@@ -93,3 +93,18 @@ def test_svg_roundtrip(tmp_path):
     a1 = sorted(c.area() for o in objs for c in o.contours)
     a2 = sorted(c.area() for o in back for c in o.contours)
     assert a2 == pytest.approx(a1, rel=1e-4)
+
+
+def test_hpgl_import(tmp_path):
+    from iyicam.formats.hpgl import import_hpgl
+    f = tmp_path / "a.plt"
+    f.write_text("IN;SP1;PU0,0;PD4000,0,4000,4000;PD0,4000,0,0;PU8000,2000;CI400;"
+                 "PU6000,0;PR;PD400,0,0,400;PA;PU;")
+    p, s, _ = make_project([])
+    objs = import_hpgl(f, p, s)
+    closed = sorted((c for o in objs for c in o.contours if c.closed), key=lambda c: c.area())
+    assert len(closed) == 2
+    assert closed[0].area() == pytest.approx(math.pi * 100, rel=1e-6)
+    assert closed[1].area() == pytest.approx(100 * 100)
+    opened = [c for o in objs for c in o.contours if not c.closed]
+    assert len(opened) == 1 and opened[0].length() == pytest.approx(20)

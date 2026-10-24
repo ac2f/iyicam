@@ -303,3 +303,43 @@ def test_vcarve_path_has_no_spikes(dense):
     jumps = [abs(b[2] - a[2]) for a, b in zip(pts, pts[1:]) if math.dist(a[:2], b[:2]) < 0.25]
     assert max(jumps) < 0.6
     assert min(z for _, _, z in pts) == pytest.approx(-8, abs=0.1)
+
+
+@pytest.mark.parametrize("profile", ["linear", "smooth"])
+def test_fluting_ramps_in_and_out(profile):
+    ln = shapes.line((0, 0), (100, 0))
+    p, s, objs = make_project([ln])
+    tp = run(p, s, add_tp(p, "fluting", end_mill(6, type="ball_nose"),
+                          {"cut_depth": 4, "ramp_start": 20, "ramp_end": 20, "profile": profile}, objs)).toolpaths[0]
+    pts = path_points(tp, 0.5)
+
+    def z_at(x):
+        return min((abs(px - x), pz) for px, py, pz in pts if pz < 0.5)[1]
+
+    assert z_at(0.5) > -0.2 and z_at(99.5) > -0.2
+    assert z_at(50) == pytest.approx(-4)
+    assert z_at(10) == pytest.approx(-2, abs=0.1)
+
+
+def test_rest_machining_only_cleans_corners():
+    sq = shapes.rectangle(0, 0, 60, 60)
+    p, s, objs = make_project([sq])
+    small = end_mill(3, stepover=1.2)
+    tp = run(p, s, add_tp(p, "pocket", small, {"cut_depth": 3, "stepdown": 3, "rest_from": 12}, objs)).toolpaths[0]
+    corners = [(0, 0), (60, 0), (60, 60), (0, 60)]
+    cut = [(x, y) for x, y, z in path_points(tp) if z < -0.01]
+    assert cut
+    for x, y in cut:
+        assert min(math.dist((x, y), c) for c in corners) < 9.0
+    # together with a 12 mm tool the corners are now as sharp as a 3 mm tool allows
+    big = clip.offset(clip.offset([sq.flatten()], -6), 6)
+    swept = clip.offset_lines([[(x, y) for x, y in cut]], 1.5)
+    reach = clip.offset(clip.offset([sq.flatten()], -1.5), 1.5)
+    missing = clip.boolean(clip.boolean(reach, big, "difference"), swept, "difference")
+    assert sum(polygon_area(m) for m in missing) < 0.5
+
+
+def test_rest_machining_with_nothing_left_warns():
+    p, s, objs = make_project([shapes.circle((50, 50), 30)])
+    res = compute_toolpath(p, add_tp(p, "pocket", end_mill(3), {"rest_from": 12}, objs), s)
+    assert not res.toolpaths and any("Nothing is left" in w for w in res.warnings)
