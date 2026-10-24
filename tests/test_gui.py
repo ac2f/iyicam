@@ -294,3 +294,15 @@ def test_feeds_dialog_applies_to_tool(win):
     new = dlg.apply_to(t)
     assert new.feed_rate > 0 and new.id == t.id
     assert "Chip load" in dlg.result_label.text()
+
+
+def test_text_on_curve(win):
+    ctrl = win.ctrl
+    circ = VectorObject([shapes.circle((300, 200), 100)], ctrl.layer_id)
+    ctrl.add_vectors([circ])
+    obj = win.text_on_curve({"text": "ABC", "font": "DejaVu Sans", "height": 10.0, "spacing": 1.0,
+                             "offset": 0.0, "align": "center"})
+    assert obj is not None and len(obj.contours) >= 4  # A (2), B (3), C (1)
+    for c in obj.contours:
+        for x, y in c.flatten(0.1):
+            assert 88 < math.hypot(x - 300, y - 200) < 101  # letters stand on the circle, inside it

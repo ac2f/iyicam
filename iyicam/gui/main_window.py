@@ -161,6 +161,7 @@ class MainWindow(QMainWindow):
         self._act(m, "Save &G-code...", self.export_gcode, "Ctrl+Shift+E")
         self._act(m, "Open G-code (&Backplot)...", self.open_gcode)
         self._act(m, "Job &Report...", self.job_report)
+        self._act(m, "Export &Image...", self.export_image)
         m.addSeparator()
         self._act(m, "&Quit", self.close, QKeySequence.Quit)
 
@@ -199,6 +200,7 @@ class MainWindow(QMainWindow):
 
         m = mb.addMenu("&Vectors")
         self._act(m, "Trace &Bitmap...", self.trace_bitmap)
+        self._act(m, "Text on &Curve...", self.text_on_curve)
         m.addSeparator()
         self._command_menus(m, "Vectors")
 
@@ -460,6 +462,44 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Traced {len(contours)} contour(s)", 5000)
         return [obj]
 
+    def text_on_curve(self, values: dict | None = None) -> VectorObject | None:
+        """Lay text along the selected vector."""
+        from .qtgeom import text_on_curve
+        sel = self.ctrl.selected_objects()
+        if len(sel) != 1 or not sel[0].contours:
+            QMessageBox.information(self, "Text on curve", "Select one vector to put the text on.")
+            return None
+        if values is None:
+            params = [Param("text", "Text", "str", "iyiCAM"), Param("font", "Font", "font", "DejaVu Sans"),
+                      Param("height", "Capital height", "length", 20.0, min=0.1),
+                      Param("spacing", "Extra letter spacing", "length", 0.0),
+                      Param("offset", "Distance from the vector", "length", 0.0,
+                            help="Positive moves the text to the left of the vector direction"),
+                      Param("align", "Position", "choice", "center",
+                            choices=[("start", "From the start"), ("center", "Centred"), ("end", "To the end")]),
+                      Param("reverse", "Run along the reversed vector", "bool", False),
+                      Param("bold", "Bold", "bool", False), Param("italic", "Italic", "bool", False)]
+            dlg = QDialog(self)
+            dlg.setWindowTitle("Text on Curve")
+            lay = QVBoxLayout(dlg)
+            form = ParamForm(params, None, self.ctrl.units)
+            lay.addWidget(form)
+            lay.addWidget(buttons(dlg, "Create"))
+            if not dlg.exec():
+                return None
+            values = form.values()
+        curve = sel[0].contours[0]
+        if values.get("reverse"):
+            curve = curve.reversed()
+        cs = text_on_curve(values["text"], values["font"], values["height"], curve, values.get("bold", False),
+                           values.get("italic", False), values.get("spacing", 0.0), values.get("offset", 0.0),
+                           values.get("align", "center"))
+        if not cs:
+            return None
+        obj = VectorObject(cs, self.ctrl.layer_id, values["text"][:24])
+        self.ctrl.add_vectors([obj], "Text on curve")
+        return obj
+
     def export_vectors(self) -> None:
         reg = self.ctrl.registry
         filt = ";;".join(f"{e.label} (*.{e.extension})" for e in reg.exporters.values())
@@ -697,6 +737,12 @@ class MainWindow(QMainWindow):
                 msg += f"\n{out.unplaced} part(s) did not fit."
             QMessageBox.information(self, "Nesting", msg)
             self.canvas.zoom_extents()
+
+    def export_image(self) -> None:
+        fn, _ = QFileDialog.getSaveFileName(self, "Export image", f"{self.ctrl.project.name}.png",
+                                            "PNG image (*.png);;JPEG image (*.jpg)")
+        if fn:
+            self.canvas.grab().save(fn)
 
     def job_report(self) -> None:
         c = self.ctrl

@@ -142,18 +142,26 @@ def image_to_gray(path: str):
     return arr.astype(float)
 
 
-def text_contours(text: str, family: str, height: float, bold: bool = False, italic: bool = False,
-                  spacing: float = 0.0, line_spacing: float = 1.4, align: str = "left") -> list[Contour]:
-    """Outline contours of ``text`` with capital letters ``height`` mm tall, baseline at y = 0."""
+def _font(family: str, height: float, bold: bool, italic: bool, spacing: float) -> tuple[QFont, QFontMetricsF, float]:
+    """Font at 100 pt plus the mm-per-font-unit factor giving capitals ``height`` mm tall."""
     font = QFont(family)
     font.setPointSizeF(100.0)
     font.setBold(bold)
     font.setItalic(italic)
-    if spacing:
-        font.setLetterSpacing(QFont.AbsoluteSpacing, spacing / max(1e-9, height) * 70.0)
     fm = QFontMetricsF(font)
     cap = fm.capHeight() or fm.ascent() * 0.7
     k = height / cap
+    if spacing:
+        font.setLetterSpacing(QFont.AbsoluteSpacing, spacing / k)
+        fm = QFontMetricsF(font)
+    return font, fm, k
+
+
+def text_contours(text: str, family: str, height: float, bold: bool = False, italic: bool = False,
+                  spacing: float = 0.0, line_spacing: float = 1.4, align: str = "left") -> list[Contour]:
+    """Outline contours of ``text`` with capital letters ``height`` mm tall, baseline at y = 0."""
+    from ..core.geom import Transform
+    font, fm, k = _font(family, height, bold, italic, spacing)
     path = QPainterPath()
     lines = text.split("\n")
     widths = [fm.horizontalAdvance(l) for l in lines]
@@ -161,7 +169,36 @@ def text_contours(text: str, family: str, height: float, bold: bool = False, ita
     for i, (ln, w) in enumerate(zip(lines, widths)):
         dx = {"left": 0.0, "center": (wmax - w) / 2, "right": wmax - w}.get(align, 0.0)
         path.addText(dx, i * fm.height() * line_spacing / 1.2, font, ln)
-    contours = path_to_contours(path, True)
+    return [c.transformed(Transform.scale(k, k)) for c in path_to_contours(path, True)]
+
+
+def text_on_curve(text: str, family: str, height: float, curve: Contour, bold: bool = False,
+                  italic: bool = False, spacing: float = 0.0, offset: float = 0.0,
+                  align: str = "center") -> list[Contour]:
+    """Characters placed along ``curve``; ``offset`` moves the baseline to the left of the curve."""
     from ..core.geom import Transform
-    T = Transform.scale(k, k)
-    return [c.transformed(T) for c in contours]
+    font, fm, k = _font(family, height, bold, italic, 0.0)
+    advances = [fm.horizontalAdvance(ch) * k + spacing for ch in text]
+    total = sum(advances) - (spacing if text else 0.0)
+    L = curve.length()
+    s = {"start": 0.0, "center": (L - total) / 2, "end": L - total}.get(align, 0.0)
+    if not curve.closed:
+        s = max(0.0, s)
+    out: list[Contour] = []
+    for ch, adv in zip(text, advances):
+        width = adv - spacing
+        mid = s + width / 2
+        if curve.closed:
+            mid %= L
+        if ch.strip():
+            path = QPainterPath()
+            path.addText(0, 0, font, ch)
+            glyph = [c.transformed(Transform.scale(k, k)) for c in path_to_contours(path, True)]
+            p = curve.point_at_length(min(max(mid, 0.0), L))
+            t = curve.tangent_at_length(min(max(mid, 0.0), L))
+            ang = math.atan2(t[1], t[0])
+            base = (p[0] - t[1] * offset, p[1] + t[0] * offset)
+            T = Transform.translate(*base) @ Transform.rotate(ang) @ Transform.translate(-width / 2, 0.0)
+            out += [c.transformed(T) for c in glyph]
+        s += adv
+    return out

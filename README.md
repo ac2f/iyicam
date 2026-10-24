@@ -34,7 +34,7 @@ with Python plugins.
   close, group / ungroup / explode, fillet, chamfer, **dog-bone / T-bone** corners, smooth
   (fit arcs), simplify, convert to polyline, delete duplicates, move / position / rotate /
   scale / set size / mirror, align, distribute, rectangular and circular arrays, **copy along a
-  vector**, bounding box, select open / similar / invert
+  vector**, **text on a curve**, bounding box, select open / similar / invert
 - **Vector Doctor**: finds open, nearly closed, tiny, duplicate and self-crossing vectors and fixes
   what it can
 - **Bitmap tracing**: turn logos and scanned drawings (PNG, JPG, BMP, ...) into vectors
