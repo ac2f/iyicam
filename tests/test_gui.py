@@ -341,3 +341,68 @@ def test_rulers_and_guides(win):
     assert len(cv.guides()) == 1
     ctrl.undo()
     assert not cv.guides()
+
+
+def _parts_with_profile(win, n=3):
+    from iyicam.core.document import Selection, ToolpathDef
+    from iyicam.core.tooling import Tool
+    ctrl = win.ctrl
+    objs = [VectorObject([shapes.rectangle(50 + i * 120, 100, 100, 80)], ctrl.layer_id, f"P{i}") for i in range(n)]
+    ctrl.add_vectors(objs)
+    t = ToolpathDef("Cut out", "profile", Tool("EM6", "end_mill", 6.0, 1, stepdown=6.0),
+                    {"through": True}, Selection("vectors", [o.id for o in objs]))
+    ctrl.add_toolpath(t)
+    win.canvas.zoom_extents()
+    QApplication.processEvents()
+    return ctrl, t, objs
+
+
+def test_cut_order_dialog_and_picking_the_order(win):
+    from iyicam.gui.sequence_dialogs import CutOrderDialog
+    ctrl, t, objs = _parts_with_profile(win)
+    keys = [f"{o.id}:0" for o in objs]
+    dlg = CutOrderDialog(ctrl, t.id, win)
+    dlg.strategy.setCurrentIndex(dlg.strategy.findData("rows_br"))  # from the right
+    assert ctrl.cut_order(t.id) == keys[::-1]
+    assert dlg.list.count() == 3 and dlg.list.item(0).text().endswith("P2")
+    dlg.list.setCurrentRow(2)
+    dlg._move(-1)
+    assert ctrl.cut_order(t.id) == [keys[2], keys[0], keys[1]] and t.sequence["auto_order"] is False
+    # pick the order on the drawing from #1: click inside P1 then P2
+    dlg.start_at.setValue(1)
+    dlg._pick()
+    cv = win.canvas
+    for o in (objs[1], objs[2]):
+        QTest.mouseClick(cv, Qt.LeftButton, Qt.NoModifier, at(cv, *o.bbox().center))
+    QTest.keyClick(cv, Qt.Key_Return)
+    assert ctrl.cut_order(t.id) == [keys[1], keys[2], keys[0]]
+    assert [c["key"] for c in ctrl.sheet_toolpaths()[0].cuts] == [keys[1], keys[2], keys[0]]
+    ctrl.undo()
+    ctrl.recalculate()
+    assert ctrl.cut_order(t.id) == [keys[2], keys[0], keys[1]]
+    win.canvas.grab()  # paints the cut numbers
+
+
+def test_start_points_dialog_and_tool(win):
+    from iyicam.gui.sequence_dialogs import StartPointsDialog
+    ctrl, t, objs = _parts_with_profile(win)
+    starts = [o.contours[0].start for o in objs]
+    dlg = StartPointsDialog(ctrl, t.id, win)
+    dlg._now()  # optimise once: new nodes away from the corners, undoable
+    moved = [o.contours[0].start for o in objs]
+    assert all(m != s for m, s in zip(moved, starts))
+    assert all(len(o.contours[0].segs) == 5 for o in objs)
+    ctrl.undo()
+    assert [o.contours[0].start for o in ctrl.sheet.vectors] == starts
+    # the start point tool puts a start (and a node) where you click and keeps it there
+    win.set_tool("start")
+    cv = win.canvas
+    o = ctrl.sheet.vectors[0]
+    QTest.mouseClick(cv, Qt.LeftButton, Qt.NoModifier, at(cv, 50, 150))
+    assert o.contours[0].start == pytest.approx((50, 150), abs=0.5) and o.locked_starts == [0]
+    dlg.smart.setChecked(True)  # automatic: the other start points move, the hand-set one stays
+    assert o.contours[0].start == pytest.approx((50, 150), abs=0.5)
+    cut = next(c for c in ctrl.sheet_toolpaths()[0].cuts if c["key"] == f"{o.id}:0")
+    assert cut["start"] == pytest.approx((47, 150), abs=0.5)
+    QTest.mouseClick(cv, Qt.RightButton, Qt.NoModifier, at(cv, 50, 150))
+    assert o.locked_starts == []

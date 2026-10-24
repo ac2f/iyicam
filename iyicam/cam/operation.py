@@ -20,6 +20,10 @@ class OpContext:
     objects: list[VectorObject]
     tolerance: float = 0.005
     warnings: list[str] = field(default_factory=list)
+    previous: list = field(default_factory=list)  # toolpaths machined before this one on the sheet
+    force_smart: bool = False                      # pick smart start points for this calculation
+    order: list[str] | None = None                 # out: the cut order (vector contour keys)
+    start_updates: dict | None = field(default_factory=dict)  # out: better vector start points
 
     @property
     def tool(self) -> Tool:

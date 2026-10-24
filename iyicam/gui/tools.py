@@ -1047,5 +1047,143 @@ class TabTool(CanvasTool):
             p.drawRect(QRectF(q.x() - 5, q.y() - 5, 10, 10))
 
 
+class StartPointTool(CanvasTool):
+    """Click on a vector to start its cut there (a new node is made); the start is then kept
+    as it is by smart start points. Right click releases a start point again."""
+
+    name = "start"
+    prompt = ("Start point: click on a vector where its cut should start (a node is added there). "
+              "Right click a start point to release it to smart start points. Esc when done.")
+    cursor = Qt.CrossCursor
+
+    def _nearest(self, w: Pt):
+        best, bd = None, self.canvas.px(12)
+        for o in self.canvas.visible_objects():
+            if not o.bbox().inflated(bd).contains(w):
+                continue
+            for ci, c in enumerate(o.contours):
+                if not c.closed:
+                    continue
+                _, _, q, d = c.nearest(w)
+                if d < bd:
+                    best, bd = (o, ci, q), d
+        return best
+
+    def move(self, ev, w):
+        hit = self._nearest(w)
+        self.canvas.hover_id = hit[0].id if hit else None
+
+    def press(self, ev, w):
+        hit = self._nearest(w)
+        if hit is None:
+            return
+        o, ci, q = hit
+        if ev.button() == Qt.RightButton:
+            if ci in o.locked_starts:
+                with self.ctrl.edit("Release start point", geometry=False):
+                    o.locked_starts.remove(ci)
+                self.ctrl.stale = True
+                self.ctrl.recalculate()
+            return
+        if ev.button() == Qt.LeftButton:
+            self.ctrl.set_start_point(o.id, ci, q)
+
+    def paint(self, p):
+        for o in self.canvas.visible_objects():
+            for ci, c in enumerate(o.contours):
+                if not c.closed or not c.segs:
+                    continue
+                q = self.s(c.start)
+                locked = ci in o.locked_starts
+                p.setPen(QPen(QColor("#4a1486" if locked else "#08519c"), 1.2))
+                p.setBrush(QBrush(QColor("#9e9ac8" if locked else "#6baed6")))
+                if locked:
+                    p.drawRect(QRectF(q.x() - 4, q.y() - 4, 8, 8))
+                else:
+                    p.drawEllipse(q, 3.5, 3.5)
+
+
+class OrderTool(CanvasTool):
+    """Pick cuts one after the other: they are cut in this order from position ``index`` on."""
+
+    name = "order"
+    cursor = Qt.PointingHandCursor
+
+    def __init__(self, canvas, tdef_id: str, index: int = 0):
+        super().__init__(canvas)
+        self.tdef_id = tdef_id
+        self.index = max(0, index)
+        self.picked: list[str] = []
+        self.prompt = (f"Cut order from #{self.index + 1}: click the vectors in the order they should be cut. "
+                       "Enter (or double click) applies, Backspace takes the last one back, Esc cancels.")
+
+    def _keys(self) -> dict[str, tuple]:
+        t = self.ctrl.project.toolpath(self.tdef_id)
+        if t is None:
+            return {}
+        return {f"{o.id}:{i}": (o, c) for o in self.ctrl.project.vectors_for(t, self.ctrl.sheet)
+                for i, c in enumerate(o.contours) if c.segs}
+
+    def _at(self, w: Pt) -> str | None:
+        """The vector contour at ``w``: the nearest line, else the smallest closed one around it."""
+        from ..core.geom import point_in_polygon
+        keys = self._keys()
+        best, bd = None, self.canvas.px(12)
+        for k, (o, c) in keys.items():
+            d = c.nearest(w)[3]
+            if d < bd:
+                best, bd = k, d
+        if best is not None:
+            return best
+        around = [(abs(c.area()), k) for k, (o, c) in keys.items()
+                  if c.closed and c.bbox().contains(w) and point_in_polygon(w, c.flatten(0.1))]
+        return min(around)[1] if around else None
+
+    def press(self, ev, w):
+        if ev.button() != Qt.LeftButton:
+            return
+        k = self._at(w)
+        if k is not None and k not in self.picked:
+            self.picked.append(k)
+            self.say(f"{len(self.picked)} picked: next is #{self.index + len(self.picked) + 1}. Enter applies.")
+            self.canvas.update()
+
+    def double_click(self, ev, w):
+        self.apply()
+
+    def key(self, ev) -> bool:
+        if ev.key() in (Qt.Key_Return, Qt.Key_Enter):
+            self.apply()
+            return True
+        if ev.key() == Qt.Key_Backspace and self.picked:
+            self.picked.pop()
+            self.canvas.update()
+            return True
+        return False
+
+    def apply(self) -> None:
+        if self.picked:
+            self.ctrl.set_manual_order(self.tdef_id, self.index, self.picked)
+            self.picked = []
+        self.canvas.cancel_tool()
+
+    def paint(self, p):
+        keys = self._keys()
+        font = p.font()
+        font.setPixelSize(12)
+        font.setBold(True)
+        p.setFont(font)
+        for n, k in enumerate(self.picked):
+            if k not in keys:
+                continue
+            c = keys[k][1]
+            q = self.s(c.start)
+            p.setPen(QPen(QColor("#a50f15"), 1.5))
+            p.setBrush(QBrush(QColor("#fcbba1")))
+            p.drawEllipse(q, 11, 11)
+            p.drawText(QRectF(q.x() - 11, q.y() - 11, 22, 22), Qt.AlignCenter, str(self.index + n + 1))
+
+
 TOOLS = {cls.name: cls for cls in (SelectTool, NodeTool, PolylineTool, LineTool, RectTool, CircleTool,
-                                    EllipseTool, PolygonTool, StarTool, ArcTool, TextTool, MeasureTool, TrimTool)}
+                                    EllipseTool, PolygonTool, StarTool, ArcTool, TextTool, MeasureTool, TrimTool,
+                                    StartPointTool)}

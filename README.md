@@ -6,17 +6,17 @@ material setup, profile / pocket / drill / engrave / V-carve toolpaths, true
 shape nesting and template post-processors — and everything is extensible
 with Python plugins.
 
-> **Türkçe özet:** iyiCAM, CNC router'lar için ArtCAM'in 2D tarafına alternatif,
-> modüler bir CAM yazılımıdır. Vektör katmanları, sheet'ler, malzeme/derinlik
-> ayarı, kontür (profil), cep, delme, gravür, V-oyma ve kakma (inlay) takım yolları, döner eksen (A) sarma, döşeme (tiling), MDF kapak sihirbazı, tek çizgi (orta hat) yazı ve izleme, köprüler
-> (tab), rampa ve giriş/çıkış yayları, gerçek şekil nesting, NcStudio / Mach3 /
-> Mach4 / Fanuc / LinuxCNC / Syntec postprocessor'ları, takım veritabanı ve
-> kesme hızı hesaplayıcı, malzeme kaldırma simülasyonu, G-kod görüntüleme,
-> bitmap'ten vektöre izleme, vektör doktoru, kırpma aracı ve Python eklenti
-> sistemi içerir. Arayüz
-> İngilizcedir. Kurulum ve kullanım aşağıdadır; eklenti yazımı için
-> [docs/plugins.md](docs/plugins.md), postprocessor düzenleme için
-> [docs/postprocessors.md](docs/postprocessors.md) dosyalarına bakın.
+> **Türkçe özet:** iyiCAM, CNC router'lar için ArtCAM'in 2D tarafına alternatif, modüler bir CAM
+> yazılımıdır. Vektör katmanları, sheet'ler, malzeme/derinlik ayarı, kontür (profil), cep, delme,
+> gravür, V-oyma ve kakma (inlay) takım yolları, döner eksen (A) sarma, döşeme (tiling), MDF kapak
+> sihirbazı, tek çizgi (orta hat) yazı ve izleme, kesim sırası stratejileri ve akıllı başlangıç
+> noktaları, köprüler (tab), rampa ve giriş/çıkış yayları, gerçek şekil nesting, NcStudio / Mach3
+> / Mach4 / Fanuc / LinuxCNC / Syntec postprocessor'ları, takım veritabanı ve kesme hızı
+> hesaplayıcı, malzeme kaldırma simülasyonu, G-kod görüntüleme, bitmap'ten vektöre izleme, vektör
+> doktoru, kırpma aracı ve Python eklenti sistemi içerir. Arayüz İngilizcedir. Kurulum ve kullanım
+> aşağıdadır; eklenti yazımı için [docs/plugins.md](docs/plugins.md), postprocessor düzenleme için
+> [docs/postprocessors.md](docs/postprocessors.md), kesim sırası ve akıllı başlangıç noktaları
+> için [docs/cut_order.md](docs/cut_order.md) dosyalarına bakın.
 
 ## Features
 
@@ -73,6 +73,13 @@ with Python plugins.
 - **Fluting**: follow vectors with linear or S-curve depth ramps at both ends
 - **Rotary axis wrapping**: draw on the unrolled cylinder, get A-axis G-code with inverse time
   (G93) or corrected feed rates
+- **Cut order**: shortest travel, rows / columns / diagonals from any corner, zig-zag sweeps,
+  smallest parts first, centre out or edges in; automatic or frozen, picked on the drawing from any
+  position. Inside-first and loose-scrap rules guarantee nothing is cut once it is free
+  ([docs/cut_order.md](docs/cut_order.md))
+- **Smart start points**: in solid material clear of everything cut before, off the corners, as a
+  new node on the vector; start points set by hand are kept; moving one recalculates only that cut
+  and the ones after it
 - **Tiling**: machine sheets longer than the machine in bands, one G-code file per tile
 - Time estimates, warnings, height-map **material removal simulation**, HTML job report
 - **G-code backplot**: open any G-code file, see it over the sheet and simulate it
@@ -156,6 +163,7 @@ iyicam/
   core/        geometry kernel (geom, clip, arcfit), shapes, vector operations, document
                model, parameters, commands, registry, tool library, undo
   cam/         moves, toolpath strategies (profile, pocket, drill, engrave, vcarve, inlay),
+               cut order (sequence) and smart start points,
                ordering, job calculation, simulation
   post/        post-processor engine, TOML loader, built-in posts, G-code export
   nesting/     no-fit polygon nesting and part grouping

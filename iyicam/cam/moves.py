@@ -130,6 +130,7 @@ class Toolpath:
     safe_z: float = 10.0
     color: str = ""
     warnings: list[str] = field(default_factory=list)
+    cuts: list[dict] = field(default_factory=list)  # one entry per cut: key, index, start, entry, moves, ...
 
     def start_point(self) -> tuple[float, float, float] | None:
         for m in self.moves:

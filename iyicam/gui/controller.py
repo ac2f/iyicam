@@ -257,13 +257,14 @@ class Controller(QObject):
             tps[i], tps[i + delta] = tps[i + delta], tps[i]
         self.toolpaths_changed.emit()
 
-    def recalculate(self, only: set[str] | None = None) -> dict:
+    def recalculate(self, only: set[str] | None = None, force_smart: set[str] | None = None,
+                    apply_starts: bool = True) -> dict:
         from PySide6.QtCore import Qt
         from PySide6.QtWidgets import QApplication
         t0 = time.perf_counter()
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            res = compute_all(self.project, self.registry, only)
+            res = compute_all(self.project, self.registry, only, self.results, force_smart)
         finally:
             QApplication.restoreOverrideCursor()
         if only is None:
@@ -273,8 +274,120 @@ class Controller(QObject):
         else:
             self.results = {k: v for k, v in self.results.items() if k[0] not in only}
             self.results.update(res)
+        self._store_orders(res)
+        if apply_starts and self._apply_start_updates(res, force_smart or set()):
+            # the vectors now carry the start points; toolpaths sharing them follow
+            return self.recalculate(only, apply_starts=False)
         self.toolpaths_changed.emit()
         return res
+
+    # -- cut order and start points -------------------------------------------------------------
+    def _store_orders(self, res: dict) -> None:
+        """Remember the calculated order: it is what a frozen order or a manual edit starts from."""
+        for t in self.project.toolpaths:
+            orders = [res[(t.id, s.id)].order for s in sheets_for(self.project, t)
+                      if (t.id, s.id) in res and res[(t.id, s.id)].order is not None]
+            if orders:
+                t.sequence["order"] = [k for o in orders for k in o]
+
+    def _apply_start_updates(self, res: dict, forced: set[str]) -> bool:
+        """Write smart start points into the vectors (a new node where needed)."""
+        from ..core import vectorops
+        from ..core.geom import dist
+        updates = {}
+        for (tid, _), r in res.items():
+            t = self.project.toolpath(tid)
+            if t is not None and r.start_updates and (t.sequence.get("smart_starts") or tid in forced):
+                updates.update(r.start_updates)
+        if not updates:
+            return False
+        if forced:
+            self.undo_stack.checkpoint(self.project, "Optimise start points")
+        changed = 0
+        for key, q in updates.items():
+            vid, ci = key.rsplit(":", 1)
+            o = self.find_vector(vid)
+            ci = int(ci)
+            if o is None or ci >= len(o.contours) or ci in o.locked_starts:
+                continue
+            c = vectorops.set_start_point(o.contours[ci], q)
+            if dist(c.start, o.contours[ci].start) > 1e-3:
+                o.contours[ci] = c
+                changed += 1
+        if not changed:
+            if forced:
+                self.undo_stack.discard_last()
+            return False
+        self.dirty = True
+        self.changed.emit()
+        if forced:
+            self.message.emit(f"Moved {changed} start point(s)")
+        return True
+
+    def find_vector(self, vid: str) -> VectorObject | None:
+        for s in self.project.sheets:
+            o = s.vector(vid)
+            if o is not None:
+                return o
+        return None
+
+    def set_sequence(self, tid: str, **changes) -> None:
+        """Change cut order / start point settings of a toolpath and recalculate it."""
+        t = self.project.toolpath(tid)
+        if t is None:
+            return
+        with self.edit("Cut order settings", geometry=False):
+            t.sequence.update(changes)
+        self.recalculate({tid})
+
+    def reorder_now(self, tid: str) -> None:
+        """Order the cuts with the toolpath's strategy once (a frozen order stays frozen)."""
+        self.set_sequence(tid, order=[])
+
+    def optimise_starts(self, tids: set[str]) -> None:
+        """Move the start points of the toolpaths' vectors to the best places, once."""
+        self.recalculate(set(tids), force_smart=set(tids))
+
+    def cut_order(self, tid: str, sheet: Sheet | None = None) -> list[str]:
+        """Cut keys of a toolpath on a sheet, in machining order."""
+        t = self.project.toolpath(tid)
+        s = sheet or self.sheet
+        if t is None:
+            return []
+        on_sheet = {f"{o.id}:{i}" for o in self.project.vectors_for(t, s) for i in range(len(o.contours))}
+        return [k for k in t.sequence.get("order", []) if k in on_sheet]
+
+    def set_manual_order(self, tid: str, index: int, picked: list[str]) -> None:
+        """Cut ``picked`` from position ``index`` (0 based) of this sheet's order on; freezes the order."""
+        from ..cam.sequence import manual_from
+        t = self.project.toolpath(tid)
+        if t is None:
+            return
+        mine = self.cut_order(tid)
+        new_mine = manual_from(mine, index, picked)
+        it = iter(new_mine)
+        mine_set = set(mine)
+        order = [next(it) if k in mine_set else k for k in t.sequence.get("order", [])]
+        self.set_sequence(tid, order=order, auto_order=False)
+
+    def set_start_point(self, vid: str, ci: int, point, lock: bool = True) -> None:
+        """Start a vector contour at ``point`` (a new node where there is none) and keep it there."""
+        from ..core import vectorops
+        o = self.find_vector(vid)
+        if o is None or not 0 <= ci < len(o.contours) or not o.contours[ci].closed:
+            return
+        with self.edit("Set start point"):
+            o.contours[ci] = vectorops.set_start_point(o.contours[ci], point)
+            if lock and ci not in o.locked_starts:
+                o.locked_starts.append(ci)
+
+    def unlock_starts(self, ids: list[str]) -> None:
+        objs = [o for o in (self.find_vector(i) for i in ids) if o is not None and o.locked_starts]
+        if not objs:
+            return
+        with self.edit("Unlock start points"):
+            for o in objs:
+                o.locked_starts = []
 
     def _auto_recalculate(self) -> None:
         if self.stale:

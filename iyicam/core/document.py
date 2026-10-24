@@ -40,6 +40,7 @@ class VectorObject:
     layer_id: str
     name: str = ""
     id: str = field(default_factory=new_id)
+    locked_starts: list[int] = field(default_factory=list)  # contours whose start point was set by hand
 
     def bbox(self) -> BBox:
         return contours_bbox(self.contours)
@@ -53,7 +54,7 @@ class VectorObject:
 
     def copy(self, keep_id: bool = False) -> "VectorObject":
         return VectorObject([c.copy() for c in self.contours], self.layer_id, self.name,
-                            self.id if keep_id else new_id())
+                            self.id if keep_id else new_id(), list(self.locked_starts))
 
 
 @dataclass
@@ -112,6 +113,7 @@ class ToolpathDef:
     enabled: bool = True
     sheet_ids: list[str] | None = None  # None = every sheet
     id: str = field(default_factory=new_id)
+    sequence: dict = field(default_factory=dict)  # cut order and start point settings (cam.sequence)
 
 
 class Project:
@@ -287,20 +289,22 @@ def contour_from_dict(d: dict) -> Contour:
 
 
 def vector_to_dict(v: VectorObject) -> dict:
-    return {"id": v.id, "layer": v.layer_id, "name": v.name,
-            "contours": [contour_to_dict(c) for c in v.contours]}
+    d = {"id": v.id, "layer": v.layer_id, "name": v.name, "contours": [contour_to_dict(c) for c in v.contours]}
+    if v.locked_starts:
+        d["locked_starts"] = list(v.locked_starts)
+    return d
 
 
 def vector_from_dict(d: dict) -> VectorObject:
     return VectorObject([contour_from_dict(c) for c in d["contours"]], d["layer"],
-                        d.get("name", ""), d["id"])
+                        d.get("name", ""), d["id"], list(d.get("locked_starts", [])))
 
 
 def toolpath_to_dict(t: ToolpathDef) -> dict:
     return {"id": t.id, "name": t.name, "op": t.op, "tool": t.tool.to_dict(),
             "params": _jsonable(t.params), "enabled": t.enabled, "sheets": t.sheet_ids,
             "selection": {"mode": t.selection.mode, "vectors": list(t.selection.vector_ids),
-                          "layers": list(t.selection.layer_ids)}}
+                          "layers": list(t.selection.layer_ids)}, "sequence": _jsonable(t.sequence)}
 
 
 def _jsonable(v):
@@ -328,7 +332,7 @@ def toolpath_from_dict(d: dict) -> ToolpathDef:
     return ToolpathDef(d["name"], d["op"], Tool.from_dict(d["tool"]), _unjson(d.get("params", {})),
                        Selection(sel.get("mode", "vectors"), list(sel.get("vectors", [])),
                                  list(sel.get("layers", []))),
-                       d.get("enabled", True), d.get("sheets"), d["id"])
+                       d.get("enabled", True), d.get("sheets"), d["id"], dict(d.get("sequence") or {}))
 
 
 def project_to_dict(p: Project) -> dict:

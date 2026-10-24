@@ -51,20 +51,6 @@ def nearest_order(items: Sequence[T], entry: Callable[[T, Pt], Pt], exit_: Calla
     return out
 
 
-def leveled_order(items: Sequence[T], levels: Sequence[int], entry, exit_, start: Pt = (0.0, 0.0)) -> list[T]:
-    """Deepest containment level first (holes before outlines), nearest neighbour inside a level."""
-    out: list[T] = []
-    pos = start
-    for lv in sorted(set(levels), reverse=True):
-        group = [it for it, l in zip(items, levels) if l == lv]
-        ordered = nearest_order(group, entry, exit_, pos)
-        out += ordered
-        if ordered:
-            last = ordered[-1]
-            pos = exit_(last, entry(last, pos))
-    return out
-
-
 def bbox_center(c: Contour) -> Pt:
     return c.bbox().center
 

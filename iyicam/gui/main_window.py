@@ -27,11 +27,12 @@ from .panels import LayersPanel, PropertiesPanel, SheetsPanel, ToolpathsPanel
 from .tools import TOOLS
 
 TOOL_KEYS = {"select": "S", "nodes": "N", "polyline": "P", "line": "L", "rectangle": "R", "circle": "C",
-             "ellipse": "E", "polygon": "G", "star": "", "arc": "A", "text": "T", "measure": "M", "trim": "X"}
+             "ellipse": "E", "polygon": "G", "star": "", "arc": "A", "text": "T", "measure": "M", "trim": "X",
+             "start": "B"}
 TOOL_LABELS = {"select": "Select / Transform", "nodes": "Edit Nodes", "polyline": "Polyline / Bezier",
                "line": "Line", "rectangle": "Rectangle", "circle": "Circle", "ellipse": "Ellipse",
                "polygon": "Polygon", "star": "Star", "arc": "Arc (3 points)", "text": "Text", "measure": "Measure",
-               "trim": "Trim Vectors"}
+               "trim": "Trim Vectors", "start": "Set Start Point"}
 
 
 class MainWindow(QMainWindow):
@@ -186,6 +187,7 @@ class MainWindow(QMainWindow):
         self._act(m, "Show &Toolpaths", lambda v: self._toggle("show_toolpaths", v), None, True, s.show_toolpaths)
         self._act(m, "Show Tool &Width", lambda v: self._toggle("show_tool_width", v), None, True, s.show_tool_width)
         self._act(m, "Show &Directions", lambda v: self._toggle("show_directions", v), None, True, s.show_directions)
+        self._act(m, "Show Cut &Order", lambda v: self._toggle("show_cut_order", v), None, True, s.show_cut_order)
         self.sim_action = self._act(m, "Show Si&mulation", self._toggle_sim, None, True, self.canvas.show_sim)
         m.addSeparator()
         self._act(m, "Clear &Guides", self.canvas.clear_guides)
@@ -203,6 +205,10 @@ class MainWindow(QMainWindow):
         m = mb.addMenu("&Vectors")
         self._act(m, "Trace &Bitmap...", self.trace_bitmap)
         self._act(m, "Text on &Curve...", self.text_on_curve)
+        sp = m.addMenu("&Start Points")
+        self._act(sp, "Smart &Start Points...", self.start_points)
+        sp.addAction(self.tool_actions["start"])
+        self._act(sp, "&Release Start Points of the Selection", self.release_starts)
         m.addSeparator()
         self._command_menus(m, "Vectors")
 
@@ -211,6 +217,7 @@ class MainWindow(QMainWindow):
         for op in c.registry.operations.values():
             self._act(new, op.label + "...", lambda o=op.id: self.new_toolpath(o))
         self._act(m, "&Recalculate All", self.recalculate, "F5")
+        self._act(m, "Cut &Order...", self.cut_order, "Ctrl+Shift+O")
         m.addSeparator()
         self._act(m, "&Material Setup...", lambda: MaterialDialog(c, self).exec(), "Ctrl+Shift+M")
         self._act(m, "&Tool Database...", lambda: ToolDatabaseDialog(c, self).exec())
@@ -606,6 +613,25 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"{t.name}: " + "; ".join(warns), 10000)
         elif n == 0:
             self.statusBar().showMessage(f"{t.name}: nothing to machine on this sheet", 6000)
+
+    def cut_order(self, tid: str | None = None) -> None:
+        from .sequence_dialogs import CutOrderDialog, sequenced_toolpaths
+        if not sequenced_toolpaths(self.ctrl):
+            QMessageBox.information(self, "Cut order", "Add a profile or engraving toolpath first.")
+            return
+        if not self.ctrl.settings.show_cut_order:
+            self._toggle("show_cut_order", True)
+        CutOrderDialog(self.ctrl, tid, self).exec()
+
+    def start_points(self, tid: str | None = None) -> None:
+        from .sequence_dialogs import StartPointsDialog, sequenced_toolpaths
+        if not sequenced_toolpaths(self.ctrl):
+            QMessageBox.information(self, "Start points", "Add a profile or engraving toolpath first.")
+            return
+        StartPointsDialog(self.ctrl, tid, self).exec()
+
+    def release_starts(self) -> None:
+        self.ctrl.unlock_starts(list(self.ctrl.selection))
 
     def edit_tabs(self, tid: str) -> None:
         from .tools import TabTool

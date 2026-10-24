@@ -1,17 +1,18 @@
 """Profile (contour) machining: outside / inside / on the vector."""
 from __future__ import annotations
 
-import math
+from collections import OrderedDict
 from dataclasses import dataclass
 
 from ..core import arcfit, clip, vectorops
-from ..core.geom import Arc, Contour, Line, Pt, add, mul, perp, sub, unit
+from ..core.geom import Arc, BBox, Contour, Line, Pt, add, dist, mul, perp, sub, unit
 from ..core.params import Param
+from . import sequence as seq
 from .builder import MoveBuilder
-from .operation import OpContext, Operation, depth_levels, depth_params, final_depth, stepdown
-from .ordering import containment_levels, leveled_order
-from .pathutil import PathWalker, emit_profile, machinable, nearest_on_polys, pl_max_breaks
 from .moves import Toolpath
+from .operation import OpContext, Operation, depth_levels, depth_params, final_depth, stepdown
+from .pathutil import PathWalker, emit_profile, machinable, nearest_on_polys, pl_max_breaks
+from .startpoints import Machined, choose_start
 
 NEG_INF = -1e9
 
@@ -22,14 +23,37 @@ class CutItem:
     level: int = 0
     finish: bool = False
     wall_right: bool | None = None  # side of the finished wall (None: no leads)
+    key: str = ""                   # "<vector id>:<contour index>" of the vector contour it cuts
+    source: Contour | None = None   # that vector contour
+
+
+# finished cuts by everything they depend on: editing one start point recomputes one cut
+_CACHE: OrderedDict = OrderedDict()
+_LOOPS: OrderedDict = OrderedDict()  # offset loops of a part, by its geometry
+_CACHE_SIZE = 20000
+CACHE_STATS = {"hits": 0, "misses": 0}
+
+
+def _signature(c: Contour) -> tuple:
+    return tuple((type(s).__name__, round(s.a[0], 6), round(s.a[1], 6), round(s.b[0], 6), round(s.b[1], 6),
+                  round(getattr(s, "bulge", 0.0), 9)) for s in c.segs)
 
 
 def offset_loops(closed: list[Contour], delta: float, sharp: bool, tol: float) -> list[Contour]:
     """Offset a region and fit arcs; keeps the Clipper orientation (region on the left)."""
+    key = (tuple(_signature(c) for c in closed), delta, sharp, tol)
+    hit = _LOOPS.get(key)
+    if hit is not None:
+        _LOOPS.move_to_end(key)
+        return list(hit)
     reg = vectorops.region(closed, tol / 2)
     polys = clip.offset(reg, delta, "miter" if sharp else "round", arc_tol=tol / 2,
                         miter_limit=10.0 if sharp else 4.0)
-    return [arcfit.fit_contour(p, True, tol) for p in polys if len(p) >= 3]
+    out = [arcfit.fit_contour(p, True, tol) for p in polys if len(p) >= 3]
+    _LOOPS[key] = tuple(out)
+    if len(_LOOPS) > _CACHE_SIZE:
+        _LOOPS.popitem(last=False)
+    return out
 
 
 class TabPlan:
@@ -130,91 +154,189 @@ class ProfileOp(Operation):
             ctx.warn("Cut depth must be deeper than the start depth")
             return []
         surface = -start
-        side = v["side"]
-        self._tool_r = (tool.radius_at_depth(final - start) if tool.is_tapered else tool.radius) + v["allowance"]
-        closed = [c for c in ctx.contours if c.closed]
-        opened = [machinable(c, tol) for c in ctx.contours if not c.closed]
-        items: list[CutItem] = []
-        if side == "on":
-            items += [CutItem(machinable(c, tol)) for c in closed]
-        else:
-            r = tool.radius_at_depth(final - start) if tool.is_tapered else tool.radius
-            base = r + v["allowance"]
-            sign = 1.0 if side == "outside" else -1.0
-            climb = v["direction"] == "climb"
-            # Clipper keeps the solid on the left; for outside cuts that is the part.
-            reverse = climb if side == "outside" else not climb
-            fin = v["finish_pass"] or 0.0
-            for delta, is_fin in ([(sign * (base + fin), False), (sign * base, True)] if fin > 0
-                                  else [(sign * base, False)]):
-                loops = offset_loops(closed, delta, v["sharp_corners"], tol)
-                if not loops and not is_fin:
-                    ctx.warn("Offset vanished: the tool is too large for some vectors")
-                for lp in loops:
-                    lp = lp.reversed() if reverse else lp
-                    items.append(CutItem(lp, finish=is_fin, wall_right=climb))
-            if opened:
-                ctx.warn("Open vectors are machined on the line")
-        items += [CutItem(c) for c in opened]
+        r = tool.radius_at_depth(final - start) if tool.is_tapered else tool.radius
+        self._tool_r = r + v["allowance"]
+        self._sig = (repr(sorted((k, repr(x)) for k, x in v.items())), repr(sorted(tool.to_dict().items())),
+                     tuple(levels), surface, final, ctx.safe_z, ctx.clearance)
+        sources = [(f"{o.id}:{i}", c) for o in ctx.objects for i, c in enumerate(o.contours) if c.segs]
+        items = self._items(ctx, sources, r)
         if not items:
             ctx.warn("No vectors to machine")
             return []
+        groups: dict[str, list[CutItem]] = {}
+        for it in items:
+            groups.setdefault(it.key, []).append(it)
 
-        # preferred start points from the source vectors
-        starts = [c.start for c in closed]
-        if v["start_mode"] == "vector" and side != "on":
-            items = [CutItem(self._rotate_to_hint(it.contour, starts), it.level, it.finish, it.wall_right)
-                     if it.contour.closed else it for it in items]
-
-        lv = containment_levels([it.contour for it in items])
-        for it, l in zip(items, lv):
-            it.level = l
-        rough = [it for it in items if not it.finish]
-        fin_items = [it for it in items if it.finish]
+        # cut order: one entry per vector contour, whatever its loops
+        cfg = seq.settings(ctx.tdef.sequence)
+        through = final >= ctx.thickness - 1e-6
+        kerf_r = max(self._tool_r, 0.05)
+        src = dict(sources)
+        sitems = []
+        for key, its in groups.items():
+            closed = its[0].contour.closed
+            loops = [it.contour.flatten(tol * 4) for it in its if not it.finish]
+            kerf = clip.offset_lines(loops, kerf_r, closed=closed) if loops else None
+            held = v["tabs"] and any(self._tabs(PathWalker(it.contour.segs, True), final, self._tool_r) is not None
+                                     for it in its if closed)
+            sitems.append(seq.SeqItem(key, src[key], frees=closed and through and not held, kerf=kerf,
+                                      solid=self._solids.get(key)))
+        if through and v["finish_pass"] and v["side"] != "on" and not v["tabs"]:
+            ctx.warn("The finish pass runs along parts the roughing pass has already cut free: add tabs")
+        sheet = BBox(0.0, 0.0, ctx.sheet.width, ctx.sheet.height)
         home = ctx.material.home[:2]
-        ordered = []
-        pos = home
-        for group in (rough, fin_items):
-            if not group:
-                continue
-            g = leveled_order(group, [it.level for it in group], self._entry, self._exit, pos)
-            ordered += g
-            last = g[-1]
-            pos = self._exit(last, self._entry(last, pos))
+        order, notes = seq.sequence(sitems, cfg, home, sheet)
+        for n in notes:
+            ctx.warn(n)
+        ctx.order = order
 
+        # machine them, choosing where each closed cut starts
+        locked = {f"{o.id}:{i}" for o in ctx.objects for i in o.locked_starts}
+        smart = cfg["smart_starts"] or ctx.force_smart
+        machined = Machined()  # what is machined so far: start points keep clear of it
+        track = smart or bool(locked)
+        if track:
+            for prev in ctx.previous:
+                machined.add_moves(prev.moves, lambda d, t=prev.tool: t.radius_at_depth(d) if t.is_tapered else t.radius)
         mb = MoveBuilder(ctx.safe_z, ctx.clearance, tool.feed_rate, tool.plunge_rate, surface)
-        for it in ordered:
-            c = it.contour
-            if c.closed and v["start_mode"] == "nearest" and mb.pos is not None:
-                c = vectorops.set_start_point(c, mb.pos[:2])
-            if c.closed:
-                self._cut_closed(mb, c, levels if not it.finish else [levels[-1]], surface, final, it)
-            else:
-                self._cut_open(mb, c, levels, surface)
-        return [self.make_toolpath(ctx, mb.finish())]
+        cuts = []
+        free = {it.key: it.frees for it in sitems}
+        for idx, key in enumerate(order):
+            its = groups[key]
+            first = None
+            for it in [it for it in its if not it.finish] + [it for it in its if it.finish]:
+                c = it.contour
+                info = {"key": key, "index": idx, "closed": c.closed, "finish": it.finish, "frees": free[key]}
+                if c.closed:
+                    c = self._place_start(ctx, it, c, mb, machined, cfg, r, key in locked, smart, first, info)
+                    first = first or c.start
+                info["start"] = c.start
+                if c.closed:
+                    info["loop"] = c
+                    info["radius"] = kerf_r
+                block = self._block(ctx, c, it, levels, surface, final)
+                info["moves"] = (len(mb.moves), len(mb.moves) + len(block))
+                if block:
+                    mb.retract()
+                    mb.moves.extend(block)
+                    last = next(m for m in reversed(block) if hasattr(m, "z"))
+                    mb.pos = (last.x, last.y, last.z)
+                    info["entry"] = next((m.x, m.y) for m in block if hasattr(m, "x"))
+                    if track:
+                        machined.add_polyline(c.flatten(0.1), kerf_r, closed=c.closed)
+                        lead_in = self._entry_fn(PathWalker(c.segs, True), it) if c.closed else None
+                        if lead_in is not None:
+                            machined.add_polyline(lead_in(0.0), kerf_r)
+                cuts.append(info)
+        tp = self.make_toolpath(ctx, mb.finish())
+        tp.cuts = cuts
+        return [tp]
 
-    # ---------------------------------------------------------------------------
-    @staticmethod
-    def _rotate_to_hint(c: Contour, starts: list[Pt]) -> Contour:
-        if not starts:
-            return c
-        bb = c.bbox()
-        reach = max(bb.width, bb.height) + 1.0
-        cand = [p for p in starts if bb.inflated(reach).contains(p)] or starts
-        best, bd = None, math.inf
-        for p in cand:
-            d = c.nearest(p)[3]
-            if d < bd:
-                best, bd = p, d
-        return vectorops.set_start_point(c, best)
+    def _items(self, ctx: OpContext, sources: list[tuple[str, Contour]], r: float) -> list[CutItem]:
+        """Loops to cut, each tagged with the key of the vector contour it belongs to."""
+        v = self.values
+        tol = ctx.tolerance
+        closed = [(k, c) for k, c in sources if c.closed]
+        opened = [(k, machinable(c, tol)) for k, c in sources if not c.closed]
+        items: list[CutItem] = []
+        self._solids: dict[str, list] = {}  # part material left by an outside cut, by outline key
+        if v["side"] == "on":
+            items += [CutItem(machinable(c, tol), key=k, source=c) for k, c in closed]
+        elif closed:
+            base = r + v["allowance"]
+            sign = 1.0 if v["side"] == "outside" else -1.0
+            climb = v["direction"] == "climb"
+            # Clipper keeps the solid on the left; for outside cuts that is the part.
+            reverse = climb if v["side"] == "outside" else not climb
+            fin = v["finish_pass"] or 0.0
+            passes = [(sign * (base + fin), False), (sign * base, True)] if fin > 0 else [(sign * base, False)]
+            # every part (an outline with its holes) is offset on its own; parts nested in a
+            # hole are parts of their own
+            tree = [seq.SeqItem(k, c) for k, c in closed]
+            seq.containment(tree)
+            for part in (it for it in tree if it.depth % 2 == 0):
+                group = [(part.key, part.contour)] + [(h.key, h.contour) for h in tree if h.parent == part.key]
+                if v["side"] == "outside":
+                    self._solids[part.key] = vectorops.region([gc for _, gc in group], 0.05)
+                for delta, is_fin in passes:
+                    loops = offset_loops([gc for _, gc in group], delta, v["sharp_corners"], tol)
+                    if not loops and not is_fin:
+                        ctx.warn("Offset vanished: the tool is too large for some vectors")
+                    for lp in loops:
+                        probe = (lp.start, lp.point_at_length(lp.length() / 2))
+                        key, src = min(group, key=lambda kc: sum(kc[1].nearest(q)[3] for q in probe))
+                        items.append(CutItem(lp.reversed() if reverse else lp, finish=is_fin, wall_right=climb,
+                                             key=key, source=src))
+            if opened:
+                ctx.warn("Open vectors are machined on the line")
+        items += [CutItem(c, key=k, source=c) for k, c in opened]
+        return items
 
-    def _entry(self, it: CutItem, pos: Pt) -> Pt:
-        if it.contour.closed and self.values["start_mode"] == "nearest":
-            return it.contour.nearest(pos)[2]
-        return it.contour.start
+    def _place_start(self, ctx: OpContext, it: CutItem, c: Contour, mb: MoveBuilder, machined: Machined,
+                     cfg: dict, r: float, locked: bool, smart: bool, first: Pt | None, info: dict) -> Contour:
+        """Rotate the loop ``c`` to its start point and note the vector start it stands for."""
+        walker = PathWalker(c.segs, True)
+        pos = mb.pos[:2] if mb.pos is not None else ctx.material.home[:2]
 
-    def _exit(self, it: CutItem, entry: Pt) -> Pt:
-        return entry if it.contour.closed else it.contour.end
+        def at(p: Pt) -> float:
+            i, t, _, _ = c.nearest(p)
+            return walker.cum[i] + t * (walker.cum[i + 1] - walker.cum[i])
+
+        if first is not None:  # the finish pass starts where its roughing pass started
+            s = at(first)
+        elif smart or locked:
+            hint = at(it.source.start)
+            ch = choose_start(walker, r, self._entry_fn(walker, it), machined, pos, hint,
+                              cfg["start_margin"], cfg["corner_distance"], locked=locked or not smart)
+            s = ch.s
+            info.update(gap=ch.gap, ok=ch.ok, locked=locked)
+            if not ch.ok:
+                ctx.warn("Some cuts have no start point clear of machined areas and corners"
+                         if not locked else "A start point set by hand is close to machined areas or a corner")
+            if smart and not locked and ctx.start_updates is not None:
+                q = it.source.nearest(walker.point_at(s))[2]
+                if dist(q, it.source.start) > 1e-3:
+                    ctx.start_updates[it.key] = q
+        elif self.values["start_mode"] == "nearest" and mb.pos is not None:
+            s = at(pos)
+        else:
+            s = at(it.source.start)
+        return vectorops.set_start_point(c, walker.point_at(s))
+
+    def _entry_fn(self, walker: PathWalker, it: CutItem):
+        """Points the tool occupies at depth before cutting from ``s``: the plunge, or the lead-in."""
+        v = self.values
+        lead = v["lead"] if it.wall_right is not None else "none"
+        if lead == "none":
+            return None
+
+        def entry(s: float) -> list[Pt]:
+            P = walker.point_at(s)
+            S, seg = self._lead_in(P, walker.tangent_at(s), it.wall_right, lead, v["lead_length"])
+            return [S, seg.point_at(0.5), P]
+
+        return entry
+
+    def _block(self, ctx: OpContext, c: Contour, it: CutItem, levels: list[float], surface: float,
+               final: float) -> list:
+        """Moves of one cut from above its entry point; reused while nothing it depends on changes."""
+        key = (_signature(c), c.closed, it.finish, it.wall_right, self._sig)
+        hit = _CACHE.get(key)
+        if hit is not None:
+            _CACHE.move_to_end(key)
+            CACHE_STATS["hits"] += 1
+            return list(hit)
+        CACHE_STATS["misses"] += 1
+        tool = ctx.tool
+        mb = MoveBuilder(ctx.safe_z, ctx.clearance, tool.feed_rate, tool.plunge_rate, surface)
+        if c.closed:
+            self._cut_closed(mb, c, levels if not it.finish else [levels[-1]], surface, final, it)
+        else:
+            self._cut_open(mb, c, levels, surface)
+        _CACHE[key] = tuple(mb.moves)
+        if len(_CACHE) > _CACHE_SIZE:
+            _CACHE.popitem(last=False)
+        return list(mb.moves)
 
     # ---------------------------------------------------------------------------
     def _tabs(self, walker: PathWalker, final: float, tool_r: float) -> TabPlan | None:

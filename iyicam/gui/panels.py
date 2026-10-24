@@ -362,6 +362,9 @@ class ToolpathsPanel(QWidget):
         op = self.ctrl.registry.operations.get(t.op) if t else None
         if op is not None and any(p.name == "tab_mode" for p in op.params()):
             m.addAction("Edit tabs on the drawing", lambda: self.window.edit_tabs(t.id))
+        if op is not None and any(p.name == "start_mode" for p in op.params()):
+            m.addAction("Cut order...", lambda: self.window.cut_order(t.id))
+            m.addAction("Start points...", lambda: self.window.start_points(t.id))
         m.addAction("Save as template...", self.window.save_toolpath_template)
         m.addAction("Load template...", self.window.load_toolpath_template)
         m.exec(self.tree.mapToGlobal(pos))

@@ -95,6 +95,14 @@ def _trim(p):
     p.drawLine(QPointF(15, 18), QPointF(20, 18))
 
 
+def _start(p):
+    p.drawRoundedRect(QRectF(4, 6, 16, 12), 3, 3)
+    p.setBrush(QColor("#c0392b"))
+    p.setPen(QPen(QColor("#c0392b"), 1.2))
+    p.drawEllipse(QPointF(12, 6), 2.6, 2.6)
+    p.drawPolygon(QPolygonF([QPointF(15, 3.5), QPointF(19, 6), QPointF(15, 8.5)]))
+
+
 def _zoom(p):
     p.drawEllipse(QPointF(10, 10), 6, 6)
     p.drawLine(QPointF(14.5, 14.5), QPointF(20, 20))
@@ -102,7 +110,7 @@ def _zoom(p):
 
 TOOL_ICONS = {"select": _select, "nodes": _nodes, "polyline": _polyline, "line": _line, "rectangle": _rect,
               "circle": _circle, "ellipse": _ellipse, "polygon": _polygon, "star": _star, "arc": _arc,
-              "text": _text, "measure": _measure, "trim": _trim, "zoom": _zoom}
+              "text": _text, "measure": _measure, "trim": _trim, "start": _start, "zoom": _zoom}
 
 
 def icon(name: str) -> QIcon:
