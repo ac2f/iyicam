@@ -673,6 +673,22 @@ class ExportDialog(QDialog):
         self.sheets.addItem("Current sheet", "current")
         self.sheets.addItem("All sheets (one file per sheet)", "all")
         form.addRow("Sheets", self.sheets)
+        tiling = QHBoxLayout()
+        self.tile = QCheckBox("Tile the job")
+        self.tile.setToolTip("Machine a sheet longer than the machine in bands, one file per band")
+        self.tile_axis = QComboBox()
+        self.tile_axis.addItem("along Y", "y")
+        self.tile_axis.addItem("along X", "x")
+        self.tile_len = QDoubleSpinBox()
+        self.tile_len.setRange(1.0, 1e6)
+        self.tile_len.setDecimals(ctrl.units.decimals)
+        self.tile_len.setSuffix(ctrl.units.suffix)
+        self.tile_len.setValue(ctrl.units.to_display(600.0))
+        for w in (self.tile, self.tile_axis, self.tile_len):
+            tiling.addWidget(w)
+        for sig in (self.tile.toggled, self.tile_axis.currentIndexChanged, self.tile_len.valueChanged):
+            sig.connect(self.preview)
+        form.addRow("Tiling", tiling)
         lay.addLayout(form)
         self.desc = QLabel()
         self.desc.setWordWrap(True)
@@ -713,16 +729,30 @@ class ExportDialog(QDialog):
         ids = self.chosen()
         return [tp for tp in self.ctrl.sheet_toolpaths(sheet, enabled_only=False) if tp.def_id in ids]
 
+    def jobs(self, sheet) -> list[tuple[str, object, list]]:
+        """``[(file suffix, sheet, toolpaths)]``: the sheet, or one entry per tile."""
+        tps = self.toolpaths(sheet)
+        if not tps or not self.tile.isChecked():
+            return [("", sheet, tps)] if tps else []
+        from ..cam.tiling import tile_toolpaths
+        tiles = tile_toolpaths(tps, sheet, self.tile_axis.currentData(),
+                               self.ctrl.units.from_display(self.tile_len.value()),
+                               self.ctrl.project.material.clearance)
+        return [(f"_tile{i + 1}", t.sheet, t.toolpaths) for i, t in enumerate(tiles)]
+
     def preview(self, *args) -> None:
         from ..post.export import post_toolpaths
         post = self.current_post()
         self.desc.setText(f"{post.description}  (*.{post.extension})")
-        tps = self.toolpaths(self.ctrl.sheet)
-        if not tps:
+        jobs = self.jobs(self.ctrl.sheet)
+        if not jobs:
             self.text.setPlainText("(no calculated toolpaths on this sheet)")
             return
+        files = []
         try:
-            files = post_toolpaths(self.ctrl.project, self.ctrl.sheet, tps, post, "preview")
+            for tile, sheet, tps in jobs:
+                files += [(tile + sfx, text) for sfx, text in post_toolpaths(self.ctrl.project, sheet, tps, post,
+                                                                            "preview" + tile)]
         except Exception as exc:  # broken user posts must not take the app down
             self.text.setPlainText(f"Post-processor error:\n{type(exc).__name__}: {exc}")
             return
@@ -745,14 +775,13 @@ class ExportDialog(QDialog):
         sheets = [ctrl.sheet] if self.sheets.currentData() == "current" else ctrl.project.sheets
         written = []
         for i, s in enumerate(sheets):
-            tps = self.toolpaths(s)
-            if not tps:
-                continue
             path = Path(fn)
             if len(sheets) > 1:
                 path = path.with_name(f"{path.stem}_{i + 1}{path.suffix}")
             try:
-                written += write_gcode(path, ctrl.project, s, tps, post)
+                for tile, sheet, tps in self.jobs(s):
+                    written += write_gcode(path.with_name(path.stem + tile + path.suffix), ctrl.project, sheet,
+                                           tps, post)
             except Exception as exc:
                 QMessageBox.warning(self, "Save G-code", f"{type(exc).__name__}: {exc}")
                 return

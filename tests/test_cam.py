@@ -391,3 +391,40 @@ def test_safety_warnings():
     p, s, objs = make_project([shapes.rectangle(20, 20, 50, 50)], thickness=18)
     res = compute_toolpath(p, add_tp(p, "profile", end_mill(6, flute_length=25), {}, objs), s)
     assert not res.warnings
+
+
+def cut_length(tps, ax=None, band=None):
+    """XY length of the level cutting moves; with ``band`` every move must stay inside [0, band]."""
+    total = 0.0
+    for tp in tps:
+        pos = None
+        for m in tp.moves:
+            if isinstance(m, ArcMove) and pos is not None:
+                total += math.hypot(pos[0] - m.cx, pos[1] - m.cy) * abs(arc_sweep(pos[0], pos[1], m))
+            elif isinstance(m, Feed) and pos is not None and m.z < -1e-6 and abs(m.z - pos[2]) < 1e-9:
+                total += math.dist(pos[:2], (m.x, m.y))
+            if band is not None and isinstance(m, (Feed, ArcMove)):
+                assert -1e-6 <= (m.x, m.y)[ax] <= band + 1e-6, m
+            if hasattr(m, "x"):
+                pos = (m.x, m.y, m.z)
+    return total
+
+
+@pytest.mark.parametrize("axis", ["x", "y"])
+def test_tiling_splits_cuts_at_band_edges(axis):
+    from iyicam.cam.moves import DrillCycle
+    from iyicam.cam.tiling import tile_toolpaths
+    p, s, objs = make_project([shapes.rectangle(30, 40, 480, 300, corner_radius=20), shapes.circle((200, 200), 50),
+                               shapes.circle((450, 450), 3)], size=(600, 600))
+    prof = run(p, s, add_tp(p, "profile", end_mill(6), {"cut_depth": 6}, objs[:2])).toolpaths
+    drill = run(p, s, add_tp(p, "drill", end_mill(3, type="drill"), {"cut_depth": 5}, objs[2:])).toolpaths
+    ax = 0 if axis == "x" else 1
+    tiles = tile_toolpaths(prof + drill, s, axis, 200.0)
+    assert [t.offset for t in tiles] == [0, 200, 400]
+    # every cut is machined exactly once, inside its band
+    assert sum(cut_length(t.toolpaths, ax, 200.0) for t in tiles) == pytest.approx(cut_length(prof), rel=1e-9)
+    assert sum(isinstance(m, ArcMove) for t in tiles for tp in t.toolpaths for m in tp.moves) > 0
+    holes = [(t.index, m) for t in tiles for tp in t.toolpaths for m in tp.moves if isinstance(m, DrillCycle)]
+    assert len(holes) == 1 and holes[0][0] == 2 and (holes[0][1].x, holes[0][1].y)[ax] == pytest.approx(50)
+    assert [t.sheet.thickness for t in tiles] == [s.thickness] * 3
+    assert (tiles[0].sheet.width, tiles[0].sheet.height)[ax] == 200

@@ -152,6 +152,9 @@ def test_commands_toolpaths_export_and_simulation(win, tmp_path):
         ex.post.setCurrentIndex(i)
         text = ex.text.toPlainText()
         assert ("G1" in text or "G01" in text) and "error" not in text.lower()
+    ex.tile.setChecked(True)  # 100 mm tiles along Y: the rectangle (y 150..250) spans two of them
+    ex.tile_len.setValue(ctrl.units.to_display(100.0))
+    assert ex.text.toPlainText().count("_tile") >= 2
     from iyicam.post.export import write_gcode
     files = write_gcode(tmp_path / "job", ctrl.project, ctrl.sheet, ctrl.sheet_toolpaths(), reg.posts["mach3"])
     assert files[0].read_text().count("G2") + files[0].read_text().count("G3") > 0
