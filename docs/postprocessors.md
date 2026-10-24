@@ -59,6 +59,8 @@ G4 P5
 | `tool_change_first` | `true` | output the tool change block for the first tool |
 | `max_spindle` | `0` | clamp the spindle speed (0 = no limit) |
 | `split_by_tool` | `false` | write one file per tool (single spindle machines) |
+| `rotary_letter` | `"A"` | angle word of wrapped (rotary) jobs |
+| `rotary_feed` | `"inverse_time"` | feed of wrapped moves: `inverse_time` (G93, F = 1 / minutes on every line), `degrees` (F corrected for controllers that count degrees like millimetres) or `plain` |
 
 ## Blocks
 
@@ -74,6 +76,7 @@ G4 P5
 | `dwell` | pauses |
 | `comment` | comments coming from toolpaths (`{text}`) |
 | `footer` | end of the file |
+| `inverse_time_on`, `inverse_time_off` | around wrapped jobs with `rotary_feed = "inverse_time"` (`G93` / `G94`) |
 
 Lines are formatted with Python `str.format` placeholders. Spaces are
 collapsed and empty lines dropped, so `"{G} {X} {Y} {Z} {F}"` and
@@ -112,6 +115,17 @@ Toolpaths are calculated in sheet coordinates with Z = 0 at the material top.
 When writing G-code the post subtracts the XY origin chosen in **Material
 Setup** (bottom left, centre, ...), adds the material thickness when Z zero is
 at the bottom and converts to inches when `units = "inch"`.
+
+## Rotary (wrapped) jobs
+
+With **Material Setup ▸ Wrap around a rotary axis** the sheet is the unrolled
+cylinder: X runs along the axis and Y around it, so the sheet height becomes the
+circumference. The post then writes the angle (`A`, see `rotary_letter`) in
+degrees instead of Y, turns arcs into short lines (a wrapped arc is not a
+circle) and keeps the surface speed at the toolpath feed rate (see
+`rotary_feed`). Z zero is the cylinder surface or, with *Bottom*, the axis.
+`Y{home_y}`, `Y{ymin}` and `Y{ymax}` in blocks become `A...`, so the built-in
+footers turn the part back instead of moving the Y axis.
 
 ## Python posts
 

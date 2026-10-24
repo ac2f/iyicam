@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 import shutil
 from pathlib import Path
 
@@ -123,10 +124,13 @@ class MaterialDialog(QDialog):
         origin_labels = {o: o.replace("_", " ").title() for o in XY_ORIGINS}
         params = [
             Param("width", "Sheet width (X)", "length", s.width, min=1.0, group="Sheet"),
-            Param("height", "Sheet height (Y)", "length", s.height, min=1.0, group="Sheet"),
-            Param("thickness", "Material thickness", "length", m.thickness, min=0.01, group="Material"),
+            Param("height", "Sheet height (Y)", "length", s.height, min=1.0, group="Sheet",
+                  visible={"rotary": False}),
+            Param("thickness", "Material thickness", "length", m.thickness, min=0.01, group="Material",
+                  visible={"rotary": False}),
             Param("z_zero", "Z zero", "choice", m.z_zero,
-                  choices=[("top", "Top of the material"), ("bottom", "Bottom (machine bed)")], group="Material"),
+                  choices=[("top", "Top of the material"), ("bottom", "Bottom (machine bed / rotary axis)")],
+                  group="Material"),
             Param("xy_origin", "XY origin", "choice", m.xy_origin, choices=list(origin_labels.items()),
                   group="Material"),
             Param("safe_z", "Safe Z (above surface)", "length", m.safe_z, min=0.1, group="Heights"),
@@ -137,6 +141,10 @@ class MaterialDialog(QDialog):
             Param("home_z", "Home Z (above surface)", "length", m.home[2], group="Home position"),
             Param("rapid_rate", "Machine rapid rate", "feed", m.rapid_rate, min=1.0, group="Machine",
                   help="Only used for machining time estimates"),
+            Param("rotary", "Wrap around a rotary axis", "bool", m.rotary, group="Rotary",
+                  help="The sheet is the unrolled cylinder: X along the axis, Y around it (written as A)"),
+            Param("rotary_diameter", "Cylinder diameter", "length", m.rotary_diameter, min=1.0, group="Rotary",
+                  visible={"rotary": True}, help="Sets the sheet height to the circumference"),
         ]
         lay = QVBoxLayout(self)
         self.form = ParamForm(params, None, ctrl.units)
@@ -152,6 +160,11 @@ class MaterialDialog(QDialog):
             m.safe_z, m.clearance, m.rapid_rate = v["safe_z"], v["clearance"], v["rapid_rate"]
             m.home = (v["home_x"], v["home_y"], v["home_z"])
             self.ctrl.sheet.width, self.ctrl.sheet.height = v["width"], v["height"]
+            m.rotary, m.rotary_diameter = v["rotary"], v["rotary_diameter"]
+            if m.rotary:  # depths are measured from the surface, the axis is one radius below
+                m.thickness = m.rotary_diameter / 2
+                for s in self.ctrl.project.sheets:
+                    s.height, s.thickness = math.pi * m.rotary_diameter, None
         self.ctrl.sheet_changed.emit()
         super().accept()
 

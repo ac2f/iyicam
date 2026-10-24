@@ -8,7 +8,7 @@ with Python plugins.
 
 > **Türkçe özet:** iyiCAM, CNC router'lar için ArtCAM'in 2D tarafına alternatif,
 > modüler bir CAM yazılımıdır. Vektör katmanları, sheet'ler, malzeme/derinlik
-> ayarı, kontür (profil), cep, delme, gravür, V-oyma ve kakma (inlay) takım yolları, köprüler
+> ayarı, kontür (profil), cep, delme, gravür, V-oyma ve kakma (inlay) takım yolları, döner eksen (A) sarma, köprüler
 > (tab), rampa ve giriş/çıkış yayları, gerçek şekil nesting, NcStudio / Mach3 /
 > Mach4 / Fanuc / LinuxCNC / Syntec postprocessor'ları, takım veritabanı ve
 > kesme hızı hesaplayıcı, malzeme kaldırma simülasyonu, G-kod görüntüleme,
@@ -65,6 +65,8 @@ with Python plugins.
 - **Inlay**: V-carve inlay pocket and the matching mirrored plug with a glue gap
   (fit checked by simulating both halves)
 - **Fluting**: follow vectors with linear or S-curve depth ramps at both ends
+- **Rotary axis wrapping**: draw on the unrolled cylinder, get A-axis G-code with inverse time
+  (G93) or corrected feed rates
 - Time estimates, warnings, height-map **material removal simulation**, HTML job report
 - **G-code backplot**: open any G-code file, see it over the sheet and simulate it
 

@@ -195,3 +195,37 @@ def test_rapid_never_dives_diagonally():
         for k in "XYZ":
             if k in d:
                 pos[k] = d[k]
+
+
+def rotary_toolpath(p, s, moves):
+    tp = Toolpath("wrap", end_mill(3, feed_rate=2000), moves, "engrave", "t", s.id, p.material.safe_z)
+    return post_toolpaths(p, s, [tp], REGISTRY.posts["mach3"])[0][1]
+
+
+@pytest.mark.parametrize("mode", ["inverse_time", "degrees"])
+def test_rotary_wrapping_writes_angles(mode):
+    p, s, _ = make_project([], size=(200, math.pi * 50))
+    m = p.material
+    m.rotary, m.rotary_diameter, m.thickness, m.z_zero = True, 50.0, 25.0, "bottom"  # Z zero on the axis
+    REGISTRY.posts["mach3"].options["rotary_feed"] = mode
+    try:
+        half = math.pi * 25  # half way round
+        text = rotary_toolpath(p, s, [Rapid(10, 0, 5), Feed(10, 0, -1, 500), Feed(10, half, -1, 2000),
+                                      ArcMove(30, half, -1, 20, half, False, 2000)])
+    finally:
+        REGISTRY.posts["mach3"].options["rotary_feed"] = "inverse_time"
+    words = [dict(w) for _, w in parse(text)]
+    cut = next(w for w in words if w.get("A") == "180")
+    assert not any("Y" in w for w in words)
+    assert not ARC.search(text)  # wrapped arcs are written as lines
+    assert any(w.get("Z") == "24" for w in words)  # 1 mm deep on a 25 mm radius
+    if mode == "inverse_time":
+        assert "G93" in text and "G94" in text
+        assert float(cut["F"]) == pytest.approx(2000 / half, abs=1e-3)
+    else:
+        assert "G93" not in text
+        assert float(cut["F"]) == pytest.approx(2000 * 180 / half, abs=1)
+    assert "Y" not in text.split("G0 Z")[-1]  # the home move turns A instead of moving Y
+    from iyicam.core.document import project_from_dict, project_to_dict
+    q = project_from_dict(project_to_dict(p)).material
+    assert q.rotary and q.rotary_diameter == 50

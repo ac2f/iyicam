@@ -61,7 +61,9 @@ def safety_warnings(project: Project, sheet: Sheet, toolpaths: list[Toolpath],
         below = -st.zmin - thick
         if below > spoilboard + 1e-6:
             out.append(f"{tp.name}: goes {below:.2f} mm below the material (into the spoilboard)")
-        if st.xmin < -margin or st.ymin < -margin or st.xmax > sheet.width + margin or st.ymax > sheet.height + margin:
+        wraps = project.material.rotary  # Y beyond the circumference just turns further
+        if (st.xmin < -margin or st.xmax > sheet.width + margin
+                or (not wraps and (st.ymin < -margin or st.ymax > sheet.height + margin))):
             out.append(f"{tp.name}: cuts outside the sheet ({st.xmin:.1f}, {st.ymin:.1f}) - "
                        f"({st.xmax:.1f}, {st.ymax:.1f})")
         fl = tp.tool.flute_length

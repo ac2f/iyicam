@@ -67,6 +67,8 @@ class MaterialSetup:
     home: tuple[float, float, float] = (0.0, 0.0, 20.0)  # X, Y in sheet coordinates, Z above surface
     xy_origin: str = "bottom_left"  # where X0 Y0 lies on the sheet
     rapid_rate: float = 8000.0     # mm/min, used for time estimates
+    rotary: bool = False           # sheets are wrapped around a rotary axis: Y becomes the angle
+    rotary_diameter: float = 100.0  # cylinder diameter at the material surface
 
 
 @dataclass
@@ -335,7 +337,7 @@ def project_to_dict(p: Project) -> dict:
         "format": FORMAT, "version": FORMAT_VERSION, "name": p.name, "units": p.units,
         "material": {"thickness": m.thickness, "z_zero": m.z_zero, "safe_z": m.safe_z,
                      "clearance": m.clearance, "home": list(m.home), "xy_origin": m.xy_origin,
-                     "rapid_rate": m.rapid_rate},
+                     "rapid_rate": m.rapid_rate, "rotary": m.rotary, "rotary_diameter": m.rotary_diameter},
         "layers": [{"id": l.id, "name": l.name, "color": l.color, "visible": l.visible,
                     "locked": l.locked} for l in p.layers],
         "sheets": [{"id": s.id, "name": s.name, "width": s.width, "height": s.height,
@@ -355,7 +357,8 @@ def project_from_dict(d: dict) -> Project:
     p.material = MaterialSetup(
         thickness=m.get("thickness", 18.0), z_zero=m.get("z_zero", "top"), safe_z=m.get("safe_z", 10.0),
         clearance=m.get("clearance", 2.0), home=tuple(m.get("home", (0, 0, 20))),
-        xy_origin=m.get("xy_origin", "bottom_left"), rapid_rate=m.get("rapid_rate", 8000.0))
+        xy_origin=m.get("xy_origin", "bottom_left"), rapid_rate=m.get("rapid_rate", 8000.0),
+        rotary=m.get("rotary", False), rotary_diameter=m.get("rotary_diameter", 100.0))
     p.layers = [Layer(l["name"], l.get("color", "#1f77b4"), l.get("visible", True), l.get("locked", False),
                       l["id"]) for l in d.get("layers", [])] or p.layers
     p.sheets = [Sheet(s["name"], s.get("width", 600.0), s.get("height", 400.0),

@@ -61,6 +61,8 @@ DEFAULT_OPTIONS: dict[str, Any] = {
     "tool_change_first": True,
     "max_spindle": 0,            # 0 = no limit
     "split_by_tool": False,      # one file per tool (single spindle machines)
+    "rotary_letter": "A",        # angle word when the material is wrapped around a rotary axis
+    "rotary_feed": "inverse_time",  # inverse_time (G93) | degrees (degrees count as units) | plain
 }
 
 DEFAULT_BLOCKS: dict[str, str] = {
@@ -80,6 +82,8 @@ DEFAULT_BLOCKS: dict[str, str] = {
     "dwell": "G4 P{dwell}",
     "comment": "({text})",
     "footer": "M5\nG0 Z{safe_z}\nG0 X{home_x} Y{home_y}\nM30\n%",
+    "inverse_time_on": "G93",
+    "inverse_time_off": "G94",
 }
 
 ORIGINS = {
@@ -149,11 +153,18 @@ class PostProcessor:
         thick = job.project.sheet_thickness(job.sheet)
         self._oz = thick if m.z_zero == "bottom" else 0.0
         self._k = 1.0 / 25.4 if self.options["units"] == "inch" else 1.0
+        self._rotary = m.rotary and m.rotary_diameter > 0
+        self._circ = math.pi * m.rotary_diameter
+        self._yl = self.options["rotary_letter"] if self._rotary else "Y"
+        self._inverse = self._rotary and self.options["rotary_feed"] == "inverse_time"
 
     def tx(self, x: float) -> float:
         return (x - self._ox) * self._k
 
     def ty(self, y: float) -> float:
+        """Output Y, or the angle in degrees when the sheet is wrapped around a rotary axis."""
+        if self._rotary:
+            return (y - self._oy) / self._circ * 360.0
         return (y - self._oy) * self._k
 
     def tz(self, z: float) -> float:
@@ -199,6 +210,8 @@ class PostProcessor:
             stats = stats.merge(tp.stats(job.project.material.rapid_rate))
         base = self.job_vars(job, toolpaths, stats)
         self.block("header", base)
+        if self._inverse:
+            self.block("inverse_time_on", base)
         prev_tool = None
         for i, tp in enumerate(toolpaths):
             tv = {**base, **self.tool_vars(tp, prev_tool, job)}
@@ -211,12 +224,14 @@ class PostProcessor:
                 self.block("tool_same", tv)
             self.block("toolpath_start", tv)
             # the first move of a toolpath always writes every coordinate
-            self._last.update({"X": None, "Y": None, "Z": None, "G": None})
+            self._last.update({"X": None, self._yl: None, "Z": None, "G": None})
             for m in tp.moves:
                 self.move(m, tv)
             self._end_cycle(tv)
             self.block("toolpath_end", tv)
             prev_tool = tp.tool
+        if self._inverse:
+            self.block("inverse_time_off", base)
         self.block("footer", base)
         lines = self.finalize(self.lines, job)
         text = self._join(lines)
@@ -268,6 +283,7 @@ class PostProcessor:
             "xmax": self.fmt(self.tx(stats.xmax) if math.isfinite(stats.xmax) else 0.0),
             "ymax": self.fmt(self.ty(stats.ymax) if math.isfinite(stats.ymax) else 0.0),
             "zmin": self.fmt(self.tz(stats.zmin)),
+            "rotary_diameter": self.fmt(m.rotary_diameter * self._k) if m.rotary else "",
             "tools": ", ".join(sorted({f"T{t.tool.number} {t.tool.name}" for t in toolpaths})),
         }
         v.update(job.extra)
@@ -297,6 +313,8 @@ class PostProcessor:
             return
         if not self.options["comments"]:
             tpl = "\n".join(l for l in tpl.split("\n") if not self._is_comment(l.strip()))
+        if self._rotary:  # Y positions are angles on a wrapped job
+            tpl = re.sub(r"Y(?=\{(?:home_y|ymin|ymax)\})", self._yl, tpl)
         text = string.Formatter().vformat(tpl, (), _Vars(variables))
         for ln in text.split("\n"):
             self.emit(ln)
@@ -329,7 +347,7 @@ class PostProcessor:
     def _coords(self, x: float, y: float, z: float, force_xy: bool = False) -> dict:
         mc = self.options["modal_coords"]
         return {"X": self._word("X", self.fmt(self.tx(x)), mc and not force_xy),
-                "Y": self._word("Y", self.fmt(self.ty(y)), mc and not force_xy),
+                "Y": self._word(self._yl, self.fmt(self.ty(y)), mc and not force_xy),
                 "Z": self._word("Z", self.fmt(self.tz(z)), mc)}
 
     def _feed_word(self, f: float) -> str:
@@ -384,8 +402,24 @@ class PostProcessor:
         if not (w["X"] or w["Y"] or w["Z"]):
             self._pos = [x, y, z]
             return
-        self.block("linear", {**tv, **w, "G": self._motion(1), "F": self._feed_word(f), "N": ""})
+        fw = self._rotary_feed(x, y, z, f) if self._rotary and self._pos is not None else self._feed_word(f)
+        self.block("linear", {**tv, **w, "G": self._motion(1), "F": fw, "N": ""})
         self._pos = [x, y, z]
+
+    def _rotary_feed(self, x: float, y: float, z: float, f: float) -> str:
+        """Feed word that keeps the surface speed of a wrapped move at ``f``."""
+        px, py, pz = self._pos
+        flat = math.dist((px, py, pz), (x, y, z))
+        mode = self.options["rotary_feed"]
+        if flat < 1e-9 or mode == "plain":
+            return self._feed_word(f)
+        if mode == "inverse_time":  # F = 1 / minutes, required on every line
+            self._last["F"] = None
+            return "F" + self.fmt(f / flat, 3, coord=False)
+        # degrees: the controller counts degrees like length units along the move
+        out = math.hypot((x - px) * self._k, self.ty(y) - self.ty(py), (z - pz) * self._k)
+        return self._word("F", self.fmt(f * out / flat, self.options["feed_decimals"], coord=False),
+                          self.options["modal_feed"])
 
     def arc(self, m: ArcMove, tv: dict) -> None:
         o = self.options
@@ -401,7 +435,7 @@ class PostProcessor:
         sweep = arc_sweep(sx, sy, m)
         helical = abs(m.z - sz) > 1e-9
         if (o["arcs"] == "none" or r * self._k < o["arc_min_radius"] or r * self._k > o["arc_max_radius"]
-                or (helical and not o["helical"])):
+                or (helical and not o["helical"]) or self._rotary):  # wrapped arcs are no circles
             self._linearize(sx, sy, sz, m, r, sweep, tv)
             return
         max_sw = math.radians(o["arc_max_sweep"])
@@ -447,7 +481,7 @@ class PostProcessor:
 
     # -- drilling ------------------------------------------------------------------------------
     def drill(self, m: DrillCycle, tv: dict) -> None:
-        if not self.options["drill_cycles"]:
+        if not self.options["drill_cycles"] or self._inverse:
             z0 = self._pos[2] if self._pos else m.r
             for sub in drill_expand(z0, m):
                 self.move(sub, tv)
@@ -459,15 +493,15 @@ class PostProcessor:
         if same:
             mc = self.options["modal_coords"]
             self.block("drill_next", {**tv, "X": self._word("X", self.fmt(self.tx(m.x)), mc),
-                                      "Y": self._word("Y", self.fmt(self.ty(m.y)), mc), "N": ""})
+                                      "Y": self._word(self._yl, self.fmt(self.ty(m.y)), mc), "N": ""})
         else:
             self._end_cycle(tv)
             if self._pos is None:
                 self._rapid_line(m.x, m.y, max(m.r, 0.0), tv)
             self._cycle_z0 = self._pos[2]
-            self._last["X"] = self._last["Y"] = None
+            self._last["X"] = self._last[self._yl] = None
             xw = self._word("X", self.fmt(self.tx(m.x)), False)
-            yw = self._word("Y", self.fmt(self.ty(m.y)), False)
+            yw = self._word(self._yl, self.fmt(self.ty(m.y)), False)
             words = {"X": xw, "Y": yw, "Z": "Z" + self.fmt(self.tz(m.z)), "R": "R" + self.fmt(self.tz(m.r)),
                      "Q": "Q" + self.fmt(m.peck * self._k) if m.peck > 0 else "",
                      "P": "P" + self.fmt(m.dwell * (1000 if self.options["dwell_units"] == "ms" else 1), 3,
