@@ -133,6 +133,20 @@ def _offset(ctx, v):
     ctx.select([o.id for o in new])
 
 
+def _centerline(ctx, v):
+    from ..core.trace import contour_centerlines
+    new = []
+    for o in ctx.selected:
+        cs = contour_centerlines(o.contours, v["pixel_size"], v["smoothing"])
+        if cs:
+            new.append(ctx.add(cs, o.layer_id, (o.name or "Vector") + " centre line"))
+    if not new:
+        raise CommandError("Select closed vectors (for example text) to find their centre lines")
+    if not v["keep"]:
+        ctx.remove([o.id for o in ctx.selected])
+    ctx.select([o.id for o in new])
+
+
 def _weld(ctx, v):
     sel = ctx.selected
     out = vectorops.weld([o.contours for o in sel])
@@ -564,6 +578,12 @@ def commands() -> list[Command]:
                 EDIT, [Param("tolerance", "Tolerance", "length", 0.05, min=0.001)], min_selection=1),
         Command("edit.polyline", "Convert to Polyline...", _map_contours(lambda c, v: vectorops.to_polyline(c, v["tolerance"])),
                 EDIT, [Param("tolerance", "Tolerance", "length", 0.01, min=0.001)], min_selection=1),
+        Command("edit.centerline", "Centre Line (Single Line)...", _centerline, EDIT, [
+            Param("pixel_size", "Resolution (0 = automatic)", "length", 0.0, min=0.0,
+                  help="The shapes are rasterised at this pixel size; smaller is finer and slower"),
+            Param("smoothing", "Smoothing (pixels)", "float", 0.8, min=0.1, max=10.0),
+            Param("keep", "Keep the outlines", "bool", False)], min_selection=1,
+                tooltip="Single lines along the middle of closed shapes, e.g. text for single line engraving"),
         Command("edit.doctor", "Vector Doctor...", _doctor, EDIT, [
             Param("gap", "Close gaps up to", "length", 0.1, min=0.0),
             Param("min_size", "Tiny if smaller than", "length", 0.05, min=0.0),

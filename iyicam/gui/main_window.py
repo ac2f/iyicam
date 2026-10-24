@@ -418,7 +418,7 @@ class MainWindow(QMainWindow):
     def trace_bitmap(self, path: str | None = None, options: dict | None = None) -> list[VectorObject]:
         """Turn a picture (logo, scanned drawing) into vectors."""
         import numpy as np
-        from ..core.trace import trace
+        from ..core.trace import centerline, trace
         from .qtgeom import image_to_gray
         if not path:
             path, _ = QFileDialog.getOpenFileName(self, "Trace bitmap", "",
@@ -436,6 +436,9 @@ class MainWindow(QMainWindow):
                             min=0.01),
                       Param("threshold", "Threshold (0-255)", "int", 128, min=1, max=254,
                             help="Pixels darker than this become the shape"),
+                      Param("mode", "Result", "choice", "outline",
+                            choices=[("outline", "Outlines of the dark areas"),
+                                     ("centerline", "Centre lines (single lines along strokes)")]),
                       Param("invert", "Trace light areas instead", "bool", False),
                       Param("smoothing", "Smoothing (pixels)", "float", 0.6, min=0.05, max=10.0),
                       Param("min_area", "Ignore specks smaller than (pixels)", "float", 8.0, min=0.0),
@@ -450,8 +453,12 @@ class MainWindow(QMainWindow):
                 return []
             options = form.values()
         px = options.get("width", 100.0) / max(1, w)
-        contours = trace(np.asarray(gray), options.get("threshold", 128), options.get("invert", False), px,
-                         options.get("min_area", 8.0), options.get("smoothing", 0.6))
+        if options.get("mode") == "centerline":
+            contours = centerline(np.asarray(gray), options.get("threshold", 128), options.get("invert", False),
+                                  px, options.get("smoothing", 0.6), max(4.0, options.get("min_area", 8.0) ** 0.5))
+        else:
+            contours = trace(np.asarray(gray), options.get("threshold", 128), options.get("invert", False), px,
+                             options.get("min_area", 8.0), options.get("smoothing", 0.6))
         if not contours:
             QMessageBox.information(self, "Trace bitmap", "Nothing was found at this threshold.")
             return []

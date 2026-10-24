@@ -44,3 +44,46 @@ def test_trace_saddle_cases_close():
     img[2, 2] = img[3, 3] = 0  # diagonal neighbours
     for c in trace_polylines(img):
         assert len(c) >= 3
+
+
+def test_centerline_of_strokes_and_rings():
+    from iyicam.core.trace import centerline
+    img = np.full((200, 300), 255.0)
+    img[20:40, 30:170] = 0      # bar of a T
+    img[40:180, 90:110] = 0     # its stem
+    y, x = np.mgrid[0:200, 0:300]
+    r = np.hypot(x - 230, y - 100)
+    img[(r > 40) & (r < 56)] = 0
+    cs = centerline(img)
+    rings = [c for c in cs if c.closed]
+    assert len(rings) == 1 and rings[0].length() == pytest.approx(2 * math.pi * 47.5, rel=0.02)
+    lines = [c for c in cs if not c.closed]
+    assert len(lines) == 3
+    ends = [p for c in lines for p in (c.start, c.end)]
+    junction = (99.5, 199 - 29.5)
+    assert sum(math.dist(p, junction) < 2 for p in ends) == 3  # the three strokes meet in one point
+    stem = max(lines, key=lambda c: abs(c.end[1] - c.start[1]))
+    assert all(abs(p[0] - 99.5) < 0.6 for p in stem.flatten(0.1))
+
+
+def test_centerline_command_runs_down_the_middle():
+    from conftest import make_project
+    from iyicam.core import shapes
+    from iyicam.core.commands import CommandContext, run_command
+    from iyicam.core.registry import REGISTRY
+    # a slanted leg with horizontal ends (like the legs of an A): the line must not hook into a corner
+    leg = shapes.polyline([(0, 0), (10, 0), (50, 100), (40, 100)], True)
+    p, s, objs = make_project([shapes.rectangle(0, 120, 100, 10), leg])
+    ctx = CommandContext(p, s, [o.id for o in objs])
+    run_command(REGISTRY.commands["edit.centerline"], ctx, {})
+    assert len(s.vectors) == 2 and all(not c.closed for o in s.vectors for c in o.contours)
+    bar, line = s.vectors[0].contours[0], s.vectors[1].contours[0]
+    assert all(abs(y - 125) < 0.15 for _, y in bar.flatten(0.05))  # within half a pixel (10 mm / 24)
+    assert bar.length() == pytest.approx(90, abs=2)  # ends half a stroke width in
+    axis = ((5, 0), (45, 100))
+
+    def off_axis(q):
+        (ax, ay), (bx, by) = axis
+        return abs((bx - ax) * (q[1] - ay) - (by - ay) * (q[0] - ax)) / math.dist(axis[0], axis[1])
+
+    assert max(off_axis(q) for q in line.flatten(0.05)) < 0.8

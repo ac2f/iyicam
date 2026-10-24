@@ -242,7 +242,7 @@ def test_trim_tool(win):
 
 
 def test_trace_bitmap(win, tmp_path):
-    from PySide6.QtGui import QColor, QImage, QPainter
+    from PySide6.QtGui import QColor, QImage, QPainter, QPen
     img = QImage(200, 100, QImage.Format_ARGB32)
     img.fill(QColor(0, 0, 0, 0))  # transparent background counts as white
     p = QPainter(img)
@@ -256,6 +256,14 @@ def test_trace_bitmap(win, tmp_path):
                                      "min_area": 8, "center": True})
     assert len(objs) == 1 and len(objs[0].contours) == 1
     assert objs[0].contours[0].area() == pytest.approx(math.pi * 25 ** 2, rel=0.03)
+    p = QPainter(img)
+    p.setPen(QPen(QColor("black"), 10))
+    p.drawLine(10, 50, 190, 50)
+    p.end()
+    img.save(str(f))
+    line = win.trace_bitmap(str(f), {"width": 100.0, "mode": "centerline", "center": False})
+    longest = max((c for o in line for c in o.contours), key=lambda c: c.length())
+    assert not longest.closed and longest.length() > 80
 
 
 def test_edit_tabs_tool(win):
