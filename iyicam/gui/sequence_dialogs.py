@@ -106,6 +106,12 @@ class CutOrderDialog(_ToolpathDialog):
         self.band = _length_spin(ctrl, 0.0, "Automatic")
         self.band.setToolTip("Height of a row (width of a column) for the row and column strategies")
         form.addRow("Row / column size", self.band)
+        self.direction = QComboBox()
+        for k, label in seq.DIRECTIONS:
+            self.direction.addItem(label, k)
+        self.direction.setToolTip("Direction the part outlines are cut in; holes follow with the same climb or "
+                                  "conventional milling. Start points take the direction into account.")
+        form.addRow("Outline direction", self.direction)
         lay.addLayout(form)
         note = QLabel("Whatever the strategy, vectors inside others (holes, parts in holes, engravings) are "
                       "always cut before the vector around them, so nothing is cut once it is loose.")
@@ -142,6 +148,7 @@ class CutOrderDialog(_ToolpathDialog):
         self.strategy.currentIndexChanged.connect(lambda: self._set(strategy=self.strategy.currentData()))
         self.grouping.currentIndexChanged.connect(lambda: self._set(grouping=self.grouping.currentData()))
         self.band.editingFinished.connect(lambda: self._set(band=ctrl.units.from_display(self.band.value())))
+        self.direction.currentIndexChanged.connect(lambda: self._set(direction=self.direction.currentData()))
         self.reorder.clicked.connect(self._reorder)
         self.up.clicked.connect(lambda: self._move(-1))
         self.down.clicked.connect(lambda: self._move(1))
@@ -152,7 +159,8 @@ class CutOrderDialog(_ToolpathDialog):
     def load(self) -> None:
         c = self.cfg()
         self._loading = True
-        for w, v in ((self.auto, None), (self.strategy, c["strategy"]), (self.grouping, c["grouping"])):
+        for w, v in ((self.auto, None), (self.strategy, c["strategy"]), (self.grouping, c["grouping"]),
+                     (self.direction, c["direction"])):
             w.blockSignals(True)
             if v is None:
                 w.setChecked(bool(c["auto_order"]))
@@ -230,10 +238,12 @@ class StartPointsDialog(_ToolpathDialog):
         self.corner.setToolTip("Keep start points this far from corners")
         form.addRow("Away from corners by", self.corner)
         lay.addLayout(form)
-        note = QLabel("A good start point is in solid material away from everything cut before it, off the "
-                      "corners, on a straight or gently curved stretch and close to where the tool is. "
-                      "Changing one start point only recalculates that cut and the ones after it; the cut "
-                      "order stays as it is.")
+        note = QLabel("A cut closes where it starts, so the start point is where the part is held last. It is "
+                      "put where the sheet still holds best (ahead of the sweep, away from neighbours already "
+                      "cut), with the well held sides cut last, a corner distance off the corner and clear of "
+                      "machined areas. Long narrow parts and letters close just above their bottom right corner "
+                      "(mirrored for the other sweeps). Changing one start point only recalculates that cut and "
+                      "the ones after it; the cut order stays as it is.")
         note.setWordWrap(True)
         lay.addWidget(note)
         row = QHBoxLayout()

@@ -57,6 +57,13 @@ GROUPINGS: list[tuple[str, str]] = [
     ("part", "Part by part (its inner cuts, then its outline)"),
 ]
 
+DIRECTIONS: list[tuple[str, str]] = [
+    ("toolpath", "As the toolpath says (climb / conventional)"),
+    ("mirror", "Mirrored with the sweep (clockwise for bottom left → top right)"),
+    ("cw", "Outlines clockwise"),
+    ("ccw", "Outlines counter-clockwise"),
+]
+
 DEFAULTS: dict = {
     "auto_order": True,        # re-order with the strategy on every calculation
     "strategy": "nearest",
@@ -66,11 +73,52 @@ DEFAULTS: dict = {
     "smart_starts": False,     # move the vectors' start points to the best places
     "start_margin": 1.0,       # keep the plunge this far from machined areas
     "corner_distance": 0.0,    # keep the start this far from corners (0 = automatic)
+    "direction": "toolpath",   # cutting direction of part outlines, see DIRECTIONS
 }
 
 _CORNERS = {"bl": (1.0, 1.0), "br": (-1.0, 1.0), "tl": (1.0, -1.0), "tr": (-1.0, -1.0)}
 _ZIGZAG = {"zigzag_up": ("rows", 1.0, 1.0), "zigzag_down": ("rows", 1.0, -1.0),
            "zigzag_right": ("cols", 1.0, 1.0), "zigzag_left": ("cols", -1.0, 1.0)}
+
+
+_ZIGZAG_HOLD = {"zigzag_up": (0.0, 1.0), "zigzag_down": (0.0, -1.0), "zigzag_right": (1.0, 0.0),
+                "zigzag_left": (-1.0, 0.0)}
+
+
+def hold_direction(strategy: str, centre: Pt = (0.0, 0.0), sheet: BBox | None = None) -> Pt | None:
+    """Where the sheet is held most firmly while a part at ``centre`` is cut: towards the
+    material the sweep has not reached yet (right and top for bottom left -> top right)."""
+    if strategy in _ZIGZAG_HOLD:
+        return _ZIGZAG_HOLD[strategy]
+    if strategy.split("_")[-1] in _CORNERS and strategy.split("_")[0] in ("rows", "cols", "diag"):
+        sx, sy = _CORNERS[strategy.split("_")[-1]]
+        return (sx * math.sqrt(0.5), sy * math.sqrt(0.5))
+    if strategy in ("centre_out", "edges_in") and sheet is not None and not sheet.empty:
+        dx, dy = centre[0] - sheet.center[0], centre[1] - sheet.center[1]
+        n = math.hypot(dx, dy)
+        if n > 1e-6:
+            k = 1.0 if strategy == "centre_out" else -1.0
+            return (k * dx / n, k * dy / n)
+    return None
+
+
+def mirrored_clockwise(strategy: str) -> bool | None:
+    """Outline direction of 'mirrored with the sweep': clockwise for bottom left -> top right and
+    every sweep that is a turn of it, counter-clockwise for its mirror images."""
+    h = hold_direction(strategy)
+    if h is None or strategy in ("centre_out", "edges_in"):
+        return None
+    if h[0] == 0.0 or h[1] == 0.0:  # zig-zag sweeps: up and right as bottom left -> top right
+        return h[0] + h[1] > 0
+    return h[0] * h[1] > 0
+
+
+def outline_clockwise(cfg: dict) -> bool | None:
+    """Requested direction of part outlines (``None``: as the toolpath says)."""
+    d = cfg.get("direction", "toolpath")
+    if d == "mirror":
+        return mirrored_clockwise(cfg.get("strategy", "nearest"))
+    return {"cw": True, "ccw": False}.get(d)
 
 
 def settings(d: dict | None) -> dict:

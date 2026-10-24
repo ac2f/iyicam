@@ -56,16 +56,44 @@ order on the drawing or moving a row freezes the order.
 
 ## Smart start points
 
-A start point is where the tool goes down (at the beginning of its lead-in when
-there is one) and where the cut finally closes. Smart start points put it
+A closed cut ends where it starts: the stretch just before the start point is
+cut last and is all that holds the part (or the scrap of a hole) at the end. The
+start point of a vector therefore marks **where its cut closes**, and smart start
+points put it where the part stays held best until the very last moment:
 
-* in solid material, at least the *clearance* away from everything machined
-  before (earlier cuts of this toolpath, their full width, and earlier toolpaths
-  of the sheet), so the tool never plunges beside a slot or into a sliver,
-* away from corners (also the small arcs an offset path rolls around a sharp
-  corner of the vector), preferring the calm middle of straight stretches and
-  gentle curves,
-* not far from where the tool already is.
+* **Hold direction.** The sheet is held most firmly where the sweep has not
+  been yet: bottom left → top right is held from the **right and top**, bottom
+  right → top left from the left and top, top left → bottom right from the right
+  and bottom, top right → bottom left from the left and bottom (zig-zag sweeps:
+  ahead of the rows / columns; centre outwards / edges inwards: away from /
+  towards the centre; other strategies: as bottom left → top right).
+* **What is really there.** Beyond the width of the cut the material is probed
+  at every point: sides facing neighbours that are already cut, or the sheet edge,
+  hold little; sides facing uncut parts or the solid sheet hold well.
+* **Cut last what holds best.** Over the whole cut, the well held sides are left
+  for the end, and the final stretch lies on the best held side.
+* **Cutting direction counts.** With clockwise outlines (climb milling) a
+  rectangle in a bottom left → top right sweep closes on its right side, a corner
+  distance above the bottom right corner (the cut runs along the bottom, up the
+  left, along the top and finishes down the right side); when its right side faces
+  a neighbour that is already cut, it closes at the top right instead. The mirror
+  images follow for the other sweeps. **Cut Order ▸ Outline direction** keeps the
+  toolpath's climb / conventional setting, mirrors it with the sweep (clockwise for
+  bottom left → top right and top right → bottom left, counter-clockwise for the
+  other two) or sets clockwise / counter-clockwise; holes keep the same milling as
+  their outline.
+* **Long narrow parts and letters** (strips with a length of 2.5 times their
+  width or more, shapes far from convex such as letters, L and T shapes) always
+  close a corner distance before their bottom right corner in a bottom left → top
+  right sweep with clockwise cutting: on the right side, just above the corner.
+  Other sweeps and directions use the mirrored corner.
+* **Never on the corner, never into a cut.** The close and the plunge keep the
+  corner distance (default: the larger of 2 mm and the tool radius) from corners,
+  including the small arcs an offset path rolls around a sharp corner, and the
+  plunge keeps the clearance from everything machined before.
+* **Ramps and overlap.** Passes without a lead-in go on where the previous one
+  ended, so with a ramp or an overlap the tool goes down earlier along the path
+  and the last pass still closes at the start point.
 
 The chosen point becomes a **new node** of the vector, wherever it is, and is
 the vector's start from then on. A start point that is about as good as the best

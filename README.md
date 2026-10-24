@@ -77,9 +77,12 @@ with Python plugins.
   smallest parts first, centre out or edges in; automatic or frozen, picked on the drawing from any
   position. Inside-first and loose-scrap rules guarantee nothing is cut once it is free
   ([docs/cut_order.md](docs/cut_order.md))
-- **Smart start points**: in solid material clear of everything cut before, off the corners, as a
-  new node on the vector; start points set by hand are kept; moving one recalculates only that cut
-  and the ones after it
+- **Smart start points**: a cut closes where it starts, so the start is put where the part stays
+  held best to the last moment (ahead of the sweep, away from neighbours already cut), with the well
+  held sides cut last, for the actual cutting direction; long narrow parts and letters close just
+  above the bottom right corner (mirrored for other sweeps); never on a corner, never plunging into a
+  cut; a new node on the vector; hand-set starts are kept; moving one recalculates only that cut and
+  the ones after it
 - **Tiling**: machine sheets longer than the machine in bands, one G-code file per tile
 - Time estimates, warnings, height-map **material removal simulation**, HTML job report
 - **G-code backplot**: open any G-code file, see it over the sheet and simulate it

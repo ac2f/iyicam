@@ -372,3 +372,147 @@ def test_small_round_holes_are_not_corners():
     t.sequence = {"smart_starts": True}
     cuts = compute_toolpath(p, t, s).toolpaths[0].cuts
     assert len(cuts) == 3 and all(c["ok"] for c in cuts)
+
+
+# ---------------------------------------------------------------------------
+# where a cut closes: on the side the sheet is held, just off the corner
+# ---------------------------------------------------------------------------
+
+def edge_of(pt, bb, r=TOOL_R):
+    """Side of a rectangle's tool path a point is on and its distance from the two corners of that side."""
+    x, y = pt
+    d = {"right": abs(x - (bb.xmax + r)), "left": abs(x - (bb.xmin - r)), "top": abs(y - (bb.ymax + r)),
+         "bottom": abs(y - (bb.ymin - r))}
+    side = min(d, key=d.get)
+    if d[side] > 0.05:
+        return None, None
+    if side in ("left", "right"):
+        return side, {"bottom": y - bb.ymin, "top": bb.ymax - y}
+    return side, {"left": x - bb.xmin, "right": bb.xmax - x}
+
+
+def roomy_grid():
+    """Rectangles 8 mm apart (their cuts overlap) with plenty of sheet around them."""
+    return [[shapes.rectangle(40 + i * 58, 40 + j * 58, 50, 50)] for i in range(4) for j in range(3)]
+
+
+@pytest.mark.parametrize("strategy,direction,side,corner,clockwise", [
+    ("rows_bl", "toolpath", "right", "bottom", True),   # climb: clockwise, ends coming down the right side
+    ("rows_br", "mirror", "left", "bottom", False),     # the mirror image
+    ("rows_tl", "mirror", "right", "top", False),
+    ("rows_tr", "mirror", "left", "top", True),
+    ("rows_br", "toolpath", "top", "right", True),      # clockwise kept: the held left and top sides go last
+    ("zigzag_right", "toolpath", "right", "bottom", True),
+    ("nearest", "toolpath", "right", "bottom", True),   # no sweep: held like bottom left -> top right
+])
+def test_cuts_close_on_the_held_side_just_off_the_corner(strategy, direction, side, corner, clockwise):
+    p, s, objs = make_project(roomy_grid(), size=(320, 250))
+    t = add_tp(p, "profile", end_mill(6), {"through": True}, objs)
+    t.sequence = {"strategy": strategy, "direction": direction, "smart_starts": True}
+    tp = compute_toolpath(p, t, s).toolpaths[0]
+    bbs = {f"{o.id}:0": o.bbox() for o in objs}
+    for c in tp.cuts:
+        assert (not c["loop"].is_ccw()) == clockwise
+        got, dist_ = edge_of(c["close"], bbs[c["key"]])
+        assert got == side, (c["key"], c["close"])
+        assert dist_[corner] == pytest.approx(TOOL_R, abs=0.3)  # "a little above the corner", not on it
+
+
+def l_shape(x, y):
+    return shapes.polyline([(x, y), (x + 60, y), (x + 60, y + 15), (x + 15, y + 15), (x + 15, y + 70),
+                            (x, y + 70)], True)
+
+
+def t_shape(x, y):
+    return shapes.polyline([(x + 20, y), (x + 35, y), (x + 35, y + 55), (x + 55, y + 55), (x + 55, y + 70),
+                            (x, y + 70), (x, y + 55), (x + 20, y + 55)], True)
+
+
+def test_strips_and_letters_close_just_above_the_bottom_right_corner():
+    vecs = [[shapes.rectangle(20 + i * 30, 20, 16, 130)] for i in range(3)]       # tall narrow strips
+    vecs += [[l_shape(130, 20)], [t_shape(130, 110)], [shapes.rectangle(210, 20, 120, 14)]]
+    p, s, objs = make_project(vecs, size=(360, 200))
+    t = add_tp(p, "profile", end_mill(6), {"through": True}, objs)
+    t.sequence = {"strategy": "rows_bl", "smart_starts": True}
+    tp = compute_toolpath(p, t, s).toolpaths[0]
+    for c in tp.cuts:
+        o = next(o for o in objs if c["key"].startswith(o.id))
+        # the part's bottom right corner: furthest towards bottom right
+        corner = max(o.contours[0].flatten(0.1), key=lambda q: q[0] - q[1])
+        x, y = c["close"]
+        assert x == pytest.approx(corner[0] + TOOL_R, abs=0.05), o.name
+        assert y == pytest.approx(corner[1] + TOOL_R, abs=0.3)  # on the right side, 3 mm above the corner
+
+
+def test_the_stretch_cut_last_faces_material_still_in_place():
+    """Independent of the algorithm: probe the material beyond each cut; what is cut last must be
+    where the sheet is still there, not where neighbours have already been cut away."""
+    p, s, objs = make_project(tight_grid(4, 3), size=(260, 200))
+    t = add_tp(p, "profile", end_mill(6), {"through": True}, objs)
+    t.sequence = {"strategy": "rows_bl", "smart_starts": True}
+    tp = compute_toolpath(p, t, s).toolpaths[0]
+    done = []
+    for c in tp.cuts:
+        loop = c["loop"]
+        L = loop.length()
+        pts = [loop.point_at_length(L * k / 200) for k in range(200)]  # in cutting order from the start
+        ccw = loop.is_ccw()
+
+        def material(i):
+            a, b = pts[i], pts[(i + 1) % 200]
+            tx, ty = b[0] - a[0], b[1] - a[1]
+            n = math.hypot(tx, ty) or 1.0
+            nx, ny = (ty / n, -tx / n) if ccw else (-ty / n, tx / n)  # away from the part
+            q = (a[0] + nx * (TOOL_R + 2.5), a[1] + ny * (TOOL_R + 2.5))
+            inside = 0 <= q[0] <= s.width and 0 <= q[1] <= s.height
+            return inside and all(min(math.dist(q, z) for z in d) > TOOL_R for d in done)
+
+        first = sum(material(i) for i in range(30)) / 30
+        last = sum(material(i) for i in range(170, 200)) / 30
+        if done:  # the very first part has nothing cut around it
+            assert last >= 0.9 and last >= first, (c["index"], first, last)
+        done.append(cut_points(tp, c))
+
+
+@pytest.mark.parametrize("ramp,overlap", [("linear", 0.0), ("none", 5.0), ("linear", 4.0)])
+def test_creeping_passes_still_close_where_planned(ramp, overlap):
+    """With ramps or overlap each pass goes on from where the last one ended; the tool goes down
+    earlier so the last pass still closes (and frees the part) at the chosen point."""
+    p, s, objs = make_project([[shapes.rectangle(40, 40, 80, 60)]], size=(160, 140))
+    t = add_tp(p, "profile", end_mill(6), {"through": True, "ramp": ramp, "ramp_length": 15,
+                                           "overlap": overlap}, objs)
+    t.sequence = {"strategy": "rows_bl", "smart_starts": True}
+    tp = compute_toolpath(p, t, s).toolpaths[0]
+    c = tp.cuts[0]
+    loop = c["loop"]
+    L = loop.length()
+    zf = min(m.z for m in tp.moves if hasattr(m, "z"))
+    covered = [False] * 400
+    pos, closing = None, None
+    for m in tp.moves:
+        if not hasattr(m, "z") or isinstance(m, DrillCycle):
+            continue
+        if pos is not None and isinstance(m, (Feed, ArcMove)) and abs(m.z - zf) < 1e-6 and abs(pos[2] - zf) < 1e-6:
+            if isinstance(m, ArcMove):
+                sw = arc_sweep(pos[0], pos[1], m)
+                rr = math.hypot(pos[0] - m.cx, pos[1] - m.cy)
+                a0 = math.atan2(pos[1] - m.cy, pos[0] - m.cx)
+                k = max(2, int(abs(sw) * rr / 0.3))
+                seg = [(m.cx + rr * math.cos(a0 + sw * j / k), m.cy + rr * math.sin(a0 + sw * j / k))
+                       for j in range(k + 1)]
+            else:
+                k = max(2, int(math.dist(pos[:2], (m.x, m.y)) / 0.3))
+                seg = [(pos[0] + (m.x - pos[0]) * j / k, pos[1] + (m.y - pos[1]) * j / k) for j in range(k + 1)]
+            for q in seg:
+                i, tt, _, _ = loop.nearest(q)
+                sl = sum(sg.length() for sg in loop.segs[:i]) + tt * loop.segs[i].length()
+                k = int(sl / L * 400) % 400
+                if not covered[k]:
+                    covered[k] = True
+                    if all(covered) and closing is None:
+                        closing = q
+        pos = (m.x, m.y, m.z)
+    assert closing is not None
+    assert math.dist(closing, c["close"]) < 1.5
+    side, d = edge_of(c["close"], objs[0].bbox())
+    assert side == "right" and d["bottom"] == pytest.approx(TOOL_R, abs=0.3)

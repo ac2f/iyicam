@@ -21,7 +21,7 @@ from typing import Callable, Iterable, Sequence
 
 import numpy as np
 
-from ..core.geom import Arc, Pt, dist
+from ..core.geom import Arc, BBox, Contour, Line, Pt, polygon_area
 from .moves import ArcMove, Feed, arc_sweep
 from .pathutil import PathWalker
 
@@ -35,6 +35,7 @@ class Machined:
         self.grid: dict[tuple[int, int], list[int]] = defaultdict(list)
         self.rmax = 0.0
         self._seen: set = set()  # depth passes repeat the same lines
+        self._arr = np.empty((256, 5))  # the segments again, as a growing array
 
     def __len__(self) -> int:
         return len(self.segs)
@@ -51,6 +52,9 @@ class Machined:
         self._seen.add(k)
         i = len(self.segs)
         self.segs.append((a[0], a[1], b[0], b[1], r))
+        if i >= len(self._arr):
+            self._arr = np.concatenate([self._arr, np.empty_like(self._arr)])
+        self._arr[i] = self.segs[-1]
         self.rmax = max(self.rmax, r)
         c = self.cell
         for gx in range(math.floor((min(a[0], b[0]) - r) / c), math.floor((max(a[0], b[0]) + r) / c) + 1):
@@ -92,7 +96,13 @@ class Machined:
                 idx.update(self.grid.get((gx, gy), ()))
         if not idx:
             return out
-        S = np.array([self.segs[i] for i in sorted(idx)])
+        S = self._arr[np.fromiter(idx, int, len(idx))]
+        # segments whose reach cannot touch the points are dropped before the big arrays
+        smin = np.minimum(S[:, 0:2], S[:, 2:4]) - S[:, 4:5]
+        smax = np.maximum(S[:, 0:2], S[:, 2:4]) + S[:, 4:5]
+        S = S[np.all(smin <= hi, axis=1) & np.all(smax >= lo, axis=1)]
+        if not len(S):
+            return out
         A, B, R = S[:, 0:2], S[:, 2:4], S[:, 4]
         AB = B - A
         L2 = np.maximum((AB * AB).sum(axis=1), 1e-18)
@@ -169,65 +179,173 @@ def _span_distance(s: np.ndarray, spans: list[tuple[float, float]], L: float) ->
     out = np.full(len(s), np.inf)
     for a, b in spans:
         inside = (s >= a - 1e-9) & (s <= b + 1e-9)
-        d = np.minimum(np.abs(s - a), np.abs(s - b))
-        d = np.minimum(d, L - d)
+        da, db = np.abs(s - a) % L, np.abs(s - b) % L
+        d = np.minimum(np.minimum(da, L - da), np.minimum(db, L - db))  # either way round the loop
         out = np.minimum(out, np.where(inside, 0.0, d))
     return out
 
 
+def shape_kind(c: Contour) -> str:
+    """'strip' (long and narrow), 'complex' (letters, L, T, stars: far from convex) or 'compact'."""
+    bb = c.bbox()
+    w, h = bb.width, bb.height
+    if min(w, h) <= 1e-9 or max(w, h) / min(w, h) >= 2.5:
+        return "strip"
+    pts = c.flatten(0.1)
+    hull = _hull(pts)
+    area = abs(polygon_area(pts))
+    hull_area = abs(polygon_area(hull)) if len(hull) >= 3 else 0.0
+    return "complex" if hull_area > 0 and area / hull_area < 0.8 else "compact"
+
+
+def _hull(pts: Sequence[Pt]) -> list[Pt]:
+    """Convex hull (monotone chain)."""
+    P = sorted(set((round(x, 6), round(y, 6)) for x, y in pts))
+    if len(P) < 3:
+        return P
+
+    def half(points):
+        out: list[Pt] = []
+        for p in points:
+            while len(out) >= 2 and ((out[-1][0] - out[-2][0]) * (p[1] - out[-2][1])
+                                     - (out[-1][1] - out[-2][1]) * (p[0] - out[-2][0])) <= 0:
+                out.pop()
+            out.append(p)
+        return out
+
+    lower, upper = half(P), half(P[::-1])
+    return lower[:-1] + upper[:-1]
+
+
+def sample(walker: PathWalker, s: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Points and unit tangents at arc length positions ``s`` of a closed path (vectorised for
+    lines and arcs)."""
+    L = walker.length
+    s = np.asarray(s, float) % L if L > 0 else np.zeros(len(s))
+    cum = np.asarray(walker.cum)
+    idx = np.clip(np.searchsorted(cum, s, side="right") - 1, 0, len(walker.segs) - 1)
+    P = np.empty((len(s), 2))
+    T = np.empty((len(s), 2))
+    for i in np.unique(idx):
+        sel = idx == i
+        seg = walker.segs[i]
+        u = (s[sel] - cum[i]) / max(cum[i + 1] - cum[i], 1e-12)
+        if isinstance(seg, Line):
+            a, b = np.asarray(seg.a), np.asarray(seg.b)
+            P[sel] = a + u[:, None] * (b - a)
+            d = b - a
+            T[sel] = d / (np.hypot(*d) or 1.0)
+        elif isinstance(seg, Arc):
+            c = np.asarray(seg.center)
+            ang = seg.start_angle + seg.sweep * u
+            P[sel] = c + seg.radius * np.c_[np.cos(ang), np.sin(ang)]
+            sgn = 1.0 if seg.sweep > 0 else -1.0
+            T[sel] = sgn * np.c_[-np.sin(ang), np.cos(ang)]
+        else:
+            P[sel] = [walker.point_at(float(x)) for x in s[sel]]
+            T[sel] = [walker.tangent_at(float(x)) for x in s[sel]]
+    return P, T
+
+
+DEFAULT_HOLD = (math.sqrt(0.5), math.sqrt(0.5))  # bottom left -> top right: held from the right and the top
+
+
+def support(walker: PathWalker, r: float, machined: Machined, hold: Pt | None, sheet: BBox | None,
+            n: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, bool]:
+    """``(positions, points, strength, clockwise)`` of ``n`` samples along a closed path.
+
+    The strength (0..1) of a point is how firmly the material on the far side of
+    the cut is still held there: the hold direction of the sweep (material is held
+    from where the sweep has not been yet) and what is really there now, probed
+    beyond the cut width (already machined areas and the sheet edge hold nothing).
+    """
+    L = walker.length
+    ss = np.arange(n) * L / n
+    P, T = sample(walker, ss)
+    area = 0.5 * float(np.sum(P[:, 0] * np.roll(P[:, 1], -1) - np.roll(P[:, 0], -1) * P[:, 1]))
+    cw = area < 0
+    # normals pointing away from what this cut sets free (its inside)
+    N = np.c_[-T[:, 1], T[:, 0]] if cw else np.c_[T[:, 1], -T[:, 0]]
+    H = np.asarray(hold if hold is not None else DEFAULT_HOLD, float)
+    H = H / (np.hypot(*H) or 1.0)
+    prior = (1.0 + N @ H) / 2
+    rings = ((1.5, 0.5), (5.0, 0.3), (10.0, 0.2))
+    Q = np.concatenate([P + N * (r + d) for d, _ in rings])
+    present = machined.gap(Q, 1.0) > 0 if len(machined) else np.ones(len(Q), bool)
+    if sheet is not None:
+        present &= ((Q[:, 0] >= sheet.xmin) & (Q[:, 0] <= sheet.xmax)
+                    & (Q[:, 1] >= sheet.ymin) & (Q[:, 1] <= sheet.ymax))
+    local = sum(wgt * present[k * n:(k + 1) * n] for k, (_, wgt) in enumerate(rings))
+    pw = 0.5 if hold is not None else 0.25
+    return ss, P, pw * prior + (1 - pw) * local, cw
+
+
 def choose_start(walker: PathWalker, r: float, entry: Callable[[float], list[Pt]] | None, machined: Machined,
                  prev: Pt | None = None, hint: float | None = None, margin: float = 1.0,
-                 corner: float = 0.0, locked: bool = False) -> StartChoice:
-    """Best start position on the closed tool centre path ``walker``.
+                 corner: float = 0.0, locked: bool = False, hold: Pt | None = None,
+                 kind: str = "compact", sheet: BBox | None = None, shift: float = 0.0) -> StartChoice:
+    """Best start position on the closed tool centre path ``walker`` (in cutting direction).
 
-    ``r`` is the tool radius, ``entry(s)`` the points the tool occupies at depth
-    before it starts cutting at ``s`` (samples along the lead-in; ``None``: just
-    the plunge point). A ``locked`` start (picked by hand) stays at ``hint``.
+    A closed cut ends where it starts: the stretch just before the start is cut
+    last and holds the part to the end. The start is chosen so the firmly held
+    sides are cut last, ending on the best held side, with the plunge clear of
+    machined areas and off the corners.
+
+    ``kind`` 'strip' or 'complex' (long narrow parts, letters) use the fixed rule:
+    end just after the corner the hold direction points to, turned by a quarter
+    in the cutting direction (bottom right for bottom left -> top right and
+    clockwise cutting), a corner distance before it. ``r`` is the tool radius,
+    ``entry(s)`` the points the tool occupies at depth before it cuts from ``s``
+    (``None``: just the plunge point). A ``locked`` start stays at ``hint``.
+
+    Positions are where the cut closes. When the passes of a cut creep on (ramps,
+    overlap) the tool goes down ``shift`` earlier along the path; the plunge
+    clearance is checked there and both places keep off the corners.
     """
     L = walker.length
     corner = corner if corner > 0 else max(2.0, r)
     spans = corners(walker, tight=2 * r + 1.0)
+    n = int(min(240, max(64, L / 1.5)))
+    ss, SP, w, cw = support(walker, r, machined, hold, sheet, n)
     if locked and hint is not None:
         cand = np.array([hint % L])
     else:
-        step = min(5.0, max(0.5, L / 100))
-        s_list = list(np.arange(0.0, L, step))
-        s_list += [(walker.cum[i] + walker.cum[i + 1]) / 2 for i in range(len(walker.segs))]
+        s_list = list(ss) + [(walker.cum[i] + walker.cum[i + 1]) / 2 for i in range(len(walker.segs))]
+        for a, b in spans:  # exactly the corner distance off every corner, for the close and the plunge
+            s_list += [a - corner, b + corner, a - corner + shift, b + corner + shift]
         if hint is not None:
             s_list.append(hint % L)
-        cand = np.array(sorted(set(round(s, 9) for s in s_list)))
-    cdist = _span_distance(cand, spans, L)  # along the loop to the nearest corner
-    # along the loop to the nearest joint between segments: the middle of a stretch is calmer
-    edist = _span_distance(cand, [(walker.cum[i], walker.cum[i]) for i in range(len(walker.segs))], L)
-    ecap = max(3 * corner, 10.0)
-    # curvature of the path (arcs bend, lines do not)
-    kappa = np.zeros(len(cand))
-    pts = []
-    entries: list[list[Pt]] = []
-    for k, s in enumerate(cand):
-        i, t = walker.locate(float(s))
-        seg = walker.segs[i]
-        if isinstance(seg, Arc):
-            kappa[k] = 1.0 / max(seg.radius, 1e-6)
-        P = seg.point_at(t)
-        pts.append(P)
-        entries.append(entry(float(s)) if entry is not None else [P])
+        cand = np.array(sorted(set(round(float(s) % L, 9) for s in s_list)))
+    # along the loop to the nearest corner, from where the cut closes and from where the tool goes down
+    cdist = np.minimum(_span_distance(cand, spans, L), _span_distance((cand - shift) % L, spans, L))
+    pts = sample(walker, cand)[0]
     cap = 2 * r + margin + 5.0
-    flat = np.array([p for e in entries for p in e], float)
-    g = machined.gap(flat, cap + r) - r
-    gap = np.empty(len(cand))
-    k0 = 0
-    for k, e in enumerate(entries):
-        gap[k] = g[k0:k0 + len(e)].min()
-        k0 += len(e)
-    ok = (gap >= margin) & (cdist >= corner)
-    travel = np.array([dist(prev, e[0]) if prev is not None else 0.0 for e in entries])
-    size = max(1.0, L / 4)
-    score = (np.minimum(gap, cap) / cap
-             + 0.7 * np.minimum(cdist, 3 * corner) / (3 * corner)
-             + 0.3 * np.minimum(edist, ecap) / ecap
-             - 0.3 * np.minimum(1.0, r * kappa)
-             - 0.25 * travel / (travel.max() + size))
+    if entry is None:  # the tool goes straight down: just the plunge point
+        plunge = sample(walker, (cand - shift) % L)[0]
+        gap = machined.gap(plunge, cap + r) - r
+        first = plunge
+    else:
+        entries = [entry(float(s - shift) % L) for s in cand]
+        g = machined.gap(np.array([p for e in entries for p in e], float), cap + r) - r
+        k = len(entries[0])
+        gap = g.reshape(len(cand), k).min(axis=1)
+        first = np.array([e[0] for e in entries])
+    ok = (gap >= margin) & (cdist >= corner - 1e-6)
+    # how long each sample (the stretch it stands for, judged at its middle) stays uncut
+    late = (ss[None, :] + L / (2 * n) - cand[:, None]) % L / L
+    keep = (late * w[None, :]).sum(axis=1) / max(float(w.sum()), 1e-9)
+    bridge = min(L / 3, max(6 * r, 0.1 * L))  # the stretch that holds the part at the very end
+    last = late >= 1.0 - bridge / L
+    end = (last * w[None, :]).sum(axis=1) / np.maximum(last.sum(axis=1), 1)
+    travel = np.hypot(*(first - np.asarray(prev, float)).T) if prev is not None else np.zeros(len(cand))
+    score = keep + 0.6 * end - 0.02 * travel / (travel.max() + L)
+    if kind in ("strip", "complex"):
+        H = np.asarray(hold if hold is not None else DEFAULT_HOLD, float)
+        K = np.array([H[1], -H[0]]) if cw else np.array([-H[1], H[0]])  # a quarter turn with the cut
+        anchor = float(ss[int(np.argmax(SP @ (K - 0.02 * H)))])  # the far end along the hold, if a whole side
+        span = next(((a, b) for a, b in spans if a - 1e-6 <= anchor <= b + 1e-6), (anchor, anchor))
+        back = (span[0] - corner - cand + 1e-9) % L  # how far before "a corner distance before the corner"
+        score = -back / L + 1e-3 * score
     pick = np.flatnonzero(ok) if ok.any() else np.flatnonzero(gap >= margin)
     if not len(pick):
         pick = np.arange(len(cand))
@@ -236,7 +354,7 @@ def choose_start(walker: PathWalker, r: float, entry: Callable[[float], list[Pt]
     kept = False
     if hint is not None:
         h = int(np.argmin(np.abs(cand - hint % L)))
-        if h in set(pick.tolist()) and score[h] >= score[best] - 0.02:
+        if h in set(pick.tolist()) and score[h] >= score[best] - 0.005:
             best, kept = h, True
-    return StartChoice(float(cand[best]), pts[best], float(gap[best]), float(cdist[best]), bool(ok[best]),
-                       kept or locked)
+    return StartChoice(float(cand[best]), tuple(map(float, pts[best])), float(gap[best]), float(cdist[best]),
+                       bool(ok[best]), kept or locked)

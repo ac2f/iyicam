@@ -12,7 +12,7 @@ from .builder import MoveBuilder
 from .moves import Toolpath
 from .operation import OpContext, Operation, depth_levels, depth_params, final_depth, stepdown
 from .pathutil import PathWalker, emit_profile, machinable, nearest_on_polys, pl_max_breaks
-from .startpoints import Machined, choose_start
+from .startpoints import Machined, choose_start, shape_kind
 
 NEG_INF = -1e9
 
@@ -159,7 +159,9 @@ class ProfileOp(Operation):
         self._sig = (repr(sorted((k, repr(x)) for k, x in v.items())), repr(sorted(tool.to_dict().items())),
                      tuple(levels), surface, final, ctx.safe_z, ctx.clearance)
         sources = [(f"{o.id}:{i}", c) for o in ctx.objects for i, c in enumerate(o.contours) if c.segs]
-        items = self._items(ctx, sources, r)
+        cfg = seq.settings(ctx.tdef.sequence)
+        self._sheet = BBox(0.0, 0.0, ctx.sheet.width, ctx.sheet.height)
+        items = self._items(ctx, sources, r, seq.outline_clockwise(cfg))
         if not items:
             ctx.warn("No vectors to machine")
             return []
@@ -168,7 +170,6 @@ class ProfileOp(Operation):
             groups.setdefault(it.key, []).append(it)
 
         # cut order: one entry per vector contour, whatever its loops
-        cfg = seq.settings(ctx.tdef.sequence)
         through = final >= ctx.thickness - 1e-6
         kerf_r = max(self._tool_r, 0.05)
         src = dict(sources)
@@ -208,8 +209,11 @@ class ProfileOp(Operation):
                 c = it.contour
                 info = {"key": key, "index": idx, "closed": c.closed, "finish": it.finish, "frees": free[key]}
                 if c.closed:
-                    c = self._place_start(ctx, it, c, mb, machined, cfg, r, key in locked, smart, first, info)
-                    first = first or c.start
+                    n = 1 if it.finish else len(levels)
+                    c, close = self._place_start(ctx, it, c, mb, machined, cfg, r, key in locked, smart, first,
+                                                 info, n)
+                    first = first or close
+                    info["close"] = close
                 info["start"] = c.start
                 if c.closed:
                     info["loop"] = c
@@ -232,8 +236,12 @@ class ProfileOp(Operation):
         tp.cuts = cuts
         return [tp]
 
-    def _items(self, ctx: OpContext, sources: list[tuple[str, Contour]], r: float) -> list[CutItem]:
-        """Loops to cut, each tagged with the key of the vector contour it belongs to."""
+    def _items(self, ctx: OpContext, sources: list[tuple[str, Contour]], r: float,
+               clockwise: bool | None = None) -> list[CutItem]:
+        """Loops to cut, each tagged with the key of the vector contour it belongs to.
+
+        ``clockwise`` overrides the direction of part outlines (holes keep the same
+        climb / conventional milling as their outline)."""
         v = self.values
         tol = ctx.tolerance
         closed = [(k, c) for k, c in sources if c.closed]
@@ -241,11 +249,17 @@ class ProfileOp(Operation):
         items: list[CutItem] = []
         self._solids: dict[str, list] = {}  # part material left by an outside cut, by outline key
         if v["side"] == "on":
-            items += [CutItem(machinable(c, tol), key=k, source=c) for k, c in closed]
+            for k, src in closed:
+                c = machinable(src, tol)
+                if clockwise is not None and c.is_ccw() == clockwise:
+                    c = c.reversed()
+                items.append(CutItem(c, key=k, source=src))
         elif closed:
             base = r + v["allowance"]
             sign = 1.0 if v["side"] == "outside" else -1.0
             climb = v["direction"] == "climb"
+            if clockwise is not None:  # climb milling runs clockwise around the outside of a part
+                climb = clockwise if v["side"] == "outside" else not clockwise
             # Clipper keeps the solid on the left; for outside cuts that is the part.
             reverse = climb if v["side"] == "outside" else not climb
             fin = v["finish_pass"] or 0.0
@@ -272,22 +286,42 @@ class ProfileOp(Operation):
         items += [CutItem(c, key=k, source=c) for k, c in opened]
         return items
 
+    def _closing_shift(self, L: float, passes: int, it: CutItem) -> float:
+        """How far before its closing point a cut starts: passes without a lead-in go on where the
+        previous pass ended (by the ramp and the overlap), so the last pass closes further on."""
+        v = self.values
+        if (v["lead"] != "none" and it.wall_right is not None) or v["ramp"] == "helix":
+            return 0.0
+        if v["ramp"] == "linear":
+            R = min(v["ramp_length"], L)
+            return ((passes - 1) * (R + v["overlap"]) + R) % L
+        return ((passes - 1) * v["overlap"]) % L
+
     def _place_start(self, ctx: OpContext, it: CutItem, c: Contour, mb: MoveBuilder, machined: Machined,
-                     cfg: dict, r: float, locked: bool, smart: bool, first: Pt | None, info: dict) -> Contour:
-        """Rotate the loop ``c`` to its start point and note the vector start it stands for."""
+                     cfg: dict, r: float, locked: bool, smart: bool, first: Pt | None, info: dict,
+                     passes: int) -> tuple[Contour, Pt]:
+        """Rotate the loop ``c`` to where the tool starts and return where the cut closes.
+
+        The vector start point marks where the cut closes: that is what holds the part
+        to the end. The tool goes down earlier when the passes creep on (ramps, overlap).
+        """
         walker = PathWalker(c.segs, True)
+        L = walker.length
         pos = mb.pos[:2] if mb.pos is not None else ctx.material.home[:2]
+        shift = self._closing_shift(L, passes, it)
 
         def at(p: Pt) -> float:
             i, t, _, _ = c.nearest(p)
             return walker.cum[i] + t * (walker.cum[i + 1] - walker.cum[i])
 
-        if first is not None:  # the finish pass starts where its roughing pass started
+        if first is not None:  # the finish pass closes where its roughing pass closed
             s = at(first)
         elif smart or locked:
             hint = at(it.source.start)
             ch = choose_start(walker, r, self._entry_fn(walker, it), machined, pos, hint,
-                              cfg["start_margin"], cfg["corner_distance"], locked=locked or not smart)
+                              cfg["start_margin"], cfg["corner_distance"], locked=locked or not smart,
+                              hold=seq.hold_direction(cfg["strategy"], it.source.bbox().center, self._sheet),
+                              kind=shape_kind(it.source), sheet=self._sheet, shift=shift)
             s = ch.s
             info.update(gap=ch.gap, ok=ch.ok, locked=locked)
             if not ch.ok:
@@ -298,10 +332,11 @@ class ProfileOp(Operation):
                 if dist(q, it.source.start) > 1e-3:
                     ctx.start_updates[it.key] = q
         elif self.values["start_mode"] == "nearest" and mb.pos is not None:
-            s = at(pos)
+            s = (at(pos) + shift) % L  # go down nearest to the tool
         else:
             s = at(it.source.start)
-        return vectorops.set_start_point(c, walker.point_at(s))
+        close = walker.point_at(s)
+        return vectorops.set_start_point(c, walker.point_at((s - shift) % L)), close
 
     def _entry_fn(self, walker: PathWalker, it: CutItem):
         """Points the tool occupies at depth before cutting from ``s``: the plunge, or the lead-in."""
