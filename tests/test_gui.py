@@ -285,3 +285,12 @@ def test_open_gcode_backplot(win, tmp_path):
     assert win.canvas.sim_image is not None
     win.clear_backplot()
     assert not win.ctrl.backplot
+
+
+def test_feeds_dialog_applies_to_tool(win):
+    from iyicam.gui.dialogs import FeedsDialog
+    t = win.ctrl.tools.tools[1]
+    dlg = FeedsDialog(win.ctrl, t, win)
+    new = dlg.apply_to(t)
+    assert new.feed_rate > 0 and new.id == t.id
+    assert "Chip load" in dlg.result_label.text()

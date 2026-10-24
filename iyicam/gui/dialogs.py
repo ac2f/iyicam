@@ -214,6 +214,52 @@ class ToolEditor(QWidget):
         return t
 
 
+class FeedsDialog(QDialog):
+    """Chip load based feeds and speeds for a tool."""
+
+    def __init__(self, ctrl, tool: Tool, parent=None):
+        super().__init__(parent)
+        from ..core.feeds import MATERIALS
+        self.ctrl = ctrl
+        self.setWindowTitle(f"Feeds & Speeds — {tool.name}")
+        params = [Param("material", "Material", "choice", "mdf", choices=[(k, v[0]) for k, v in MATERIALS.items()]),
+                  Param("diameter", "Diameter", "length", tool.diameter, min=0.1),
+                  Param("flutes", "Flutes", "int", tool.flutes, min=1, max=12),
+                  Param("rpm", "Spindle speed (rpm)", "int", tool.spindle_speed or 18000, min=1000, max=100000)]
+        lay = QVBoxLayout(self)
+        self.form = ParamForm(params, None, ctrl.units)
+        lay.addWidget(self.form)
+        self.result_label = QLabel()
+        self.result_label.setTextFormat(Qt.RichText)
+        lay.addWidget(self.result_label)
+        note = QLabel("<i>Starting values only — check the tool maker's recommendations.</i>")
+        lay.addWidget(note)
+        lay.addWidget(buttons(self, "Apply to tool"))
+        self.form.changed.connect(self.update_result)
+        self.update_result()
+
+    def result(self):
+        from ..core.feeds import suggest
+        v = self.form.values()
+        return suggest(v["material"], v["diameter"], v["flutes"], v["rpm"]), v
+
+    def update_result(self) -> None:
+        c, v = self.result()
+        u = self.ctrl.units
+        self.result_label.setText(
+            f"Chip load <b>{c.chip_load:.3f} mm</b><br>Feed rate <b>{c.feed_rate:.0f} mm/min</b>, "
+            f"plunge {c.plunge_rate:.0f} mm/min<br>Stepdown {u.fmt(c.stepdown)}, stepover {u.fmt(c.stepover)}"
+            f"<br>Surface speed {c.surface_speed:.0f} m/min")
+
+    def apply_to(self, t: Tool) -> Tool:
+        c, v = self.result()
+        t = t.copy()
+        t.feed_rate, t.plunge_rate = round(c.feed_rate), round(c.plunge_rate)
+        t.stepdown, t.stepover = round(c.stepdown, 2), round(c.stepover, 2)
+        t.spindle_speed, t.flutes = int(v["rpm"]), int(v["flutes"])
+        return t
+
+
 class ToolDatabaseDialog(QDialog):
     """Edit the tool library; in pick mode the selected tool is returned."""
 
@@ -235,7 +281,7 @@ class ToolDatabaseDialog(QDialog):
         ll.addWidget(self.tree)
         row = QHBoxLayout()
         for text, slot in (("Add", self.add), ("Copy", self.copy), ("Delete", self.delete),
-                           ("Import...", self.import_), ("Export...", self.export)):
+                           ("Feeds...", self.feeds), ("Import...", self.import_), ("Export...", self.export)):
             b = QPushButton(text)
             b.clicked.connect(slot)
             row.addWidget(b)
@@ -310,6 +356,14 @@ class ToolDatabaseDialog(QDialog):
             self.lib_tools = [t for t in self.lib_tools if t.id != self.current.id]
             self.current = None
             self.refresh()
+
+    def feeds(self) -> None:
+        if self.current is None:
+            return
+        dlg = FeedsDialog(self.ctrl, self.editor.tool(), self)
+        if dlg.exec():
+            t = dlg.apply_to(self.editor.tool())
+            self.editor.set_tool(t)
 
     def import_(self) -> None:
         fn, _ = QFileDialog.getOpenFileName(self, "Import tools", "", "Tool library (*.json)")

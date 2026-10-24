@@ -158,3 +158,26 @@ def test_join_explode_group_commands():
     run("edit.ungroup", p, s, s.vectors)
     assert len(s.vectors) == 3
     run("select.open", p, s)
+
+
+def test_copy_along_vector():
+    import math
+    from iyicam.core.geom import Contour
+    p, s, objs = make_project([shapes.rectangle(0, 0, 4, 2), shapes.line((0, 50), (100, 50))])
+    run("arrange.along", p, s, objs, count=5, rotate=True)
+    copies = s.vectors[2:]
+    assert len(copies) == 5
+    xs = sorted(round(o.bbox().center[0], 6) for o in copies)
+    assert xs == pytest.approx([0, 25, 50, 75, 100])
+    circle = shapes.circle((0, 0), 30)
+    p, s, objs = make_project([shapes.rectangle(-2, -1, 4, 2), circle])
+    run("arrange.along", p, s, objs, count=4, rotate=True)
+    rot = [o for o in s.vectors[2:] if abs(o.bbox().center[0] - 30) < 1e-6]
+    assert rot and rot[0].bbox().width == pytest.approx(2, abs=1e-6)  # turned 90 degrees to the tangent
+
+
+def test_feeds_suggestion():
+    from iyicam.core.feeds import suggest
+    c = suggest("mdf", 6.0, 2, 18000)
+    assert c.feed_rate == pytest.approx(18000 * 2 * 0.30)
+    assert suggest("aluminium", 6.0, 1, 18000).feed_rate < c.feed_rate / 5

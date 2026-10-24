@@ -378,6 +378,41 @@ def _array_circ(ctx, v):
     ctx.select(ids)
 
 
+def _along_path(ctx, v):
+    """Copy the selection along the open (or last selected) vector of the selection."""
+    sel = ctx.selected
+    path_obj = next((o for o in sel if not o.closed), sel[-1])
+    items = [o for o in sel if o is not path_obj]
+    if not items:
+        raise CommandError("Select the vectors to copy and the path vector")
+    path = path_obj.contours[0]
+    L = path.length()
+    n = v["count"]
+    if path.closed:
+        positions = [L * k / n for k in range(n)]
+    else:
+        positions = [L * k / max(1, n - 1) for k in range(n)] if n > 1 else [0.0]
+    bb = BBox()
+    for o in items:
+        bb = bb.union(o.bbox())
+    ref = bb.center
+    ids = []
+    for s in positions:
+        p = path.point_at_length(s)
+        T = Transform.translate(p[0] - ref[0], p[1] - ref[1])
+        if v["rotate"]:
+            tang = path.tangent_at_length(s)
+            ang = math.atan2(tang[1], tang[0])
+            T = Transform.rotate(ang, p) @ T
+        for o in items:
+            n_obj = o.copy()
+            n_obj.transform(T)
+            ids.append(ctx.add_object(n_obj, select=False).id)
+    if v["delete_originals"]:
+        ctx.remove([o.id for o in items])
+    ctx.select(ids)
+
+
 # ---------------------------------------------------------------------------
 # selection helpers
 # ---------------------------------------------------------------------------
@@ -545,6 +580,11 @@ def commands() -> list[Command]:
             Param("cx", "Centre X", "length", 0.0, visible={"about": "point"}),
             Param("cy", "Centre Y", "length", 0.0, visible={"about": "point"}),
             Param("rotate_copies", "Rotate copies", "bool", True)], min_selection=1),
+        Command("arrange.along", "Copy Along Vector...", _along_path, ARRANGE, [
+            Param("count", "Number of copies", "int", 5, min=1, max=10000),
+            Param("rotate", "Rotate copies to follow the vector", "bool", True),
+            Param("delete_originals", "Delete the originals", "bool", False)], min_selection=2,
+                tooltip="Select the vectors to copy and one open vector (or select the path last)."),
         # selection
         Command("select.all", "Select All", _select_all, SELECT, shortcut="Ctrl+A"),
         Command("select.invert", "Invert Selection", _invert, SELECT, shortcut="Ctrl+Shift+I"),

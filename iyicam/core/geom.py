@@ -893,6 +893,14 @@ class Contour:
                 best = (i, t, q, d)
         return best
 
+    def tangent_at_length(self, s: float) -> Pt:
+        for seg in self.segs:
+            L = seg.length()
+            if s <= L:
+                return seg.tangent_at(seg.t_at_length(s))
+            s -= L
+        return self.segs[-1].tangent_at(1.0)
+
     def point_at_length(self, s: float) -> Pt:
         for seg in self.segs:
             L = seg.length()
