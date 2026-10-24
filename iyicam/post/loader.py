@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import sys
 import tomllib
 from pathlib import Path
 from typing import Iterable
@@ -61,7 +62,7 @@ def load_posts(dirs: Iterable[Path], known: dict[str, dict] | None = None) -> li
             try:
                 dd = read_definition(p)
             except (OSError, tomllib.TOMLDecodeError) as exc:
-                print(f"iyiCAM: cannot read post {p}: {exc}")
+                print(f"iyiCAM: cannot read post {p}: {exc}", file=sys.stderr)
                 continue
             defs[dd["id"]] = dd
             paths[dd["id"]] = p

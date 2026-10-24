@@ -1,7 +1,6 @@
 import math
 
 import pytest
-from conftest import make_project
 from test_post import job_project
 
 from iyicam.cam.gcode_reader import ReadOptions, read_gcode

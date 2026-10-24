@@ -3,7 +3,6 @@ import json
 import pytest
 from conftest import add_tp, end_mill, make_project, vbit
 
-from iyicam.builtins import ensure_registered
 from iyicam.core import shapes
 from iyicam.core.commands import CommandContext, CommandError, run_command
 from iyicam.core.document import Project
@@ -115,7 +114,7 @@ def test_creation_commands_default_to_sheet_centre():
 
 def test_editing_commands():
     p, s, objs = make_project([shapes.rectangle(0, 0, 20, 20), shapes.rectangle(10, 10, 20, 20)])
-    ctx = run("edit.weld", p, s, objs)
+    run("edit.weld", p, s, objs)
     assert len(s.vectors) == 1 and s.vectors[0].contours[0].area() == pytest.approx(700)
     w = s.vectors[0]
     run("edit.offset", p, s, [w], distance=2, direction="outward", keep=False)
@@ -161,8 +160,6 @@ def test_join_explode_group_commands():
 
 
 def test_copy_along_vector():
-    import math
-    from iyicam.core.geom import Contour
     p, s, objs = make_project([shapes.rectangle(0, 0, 4, 2), shapes.line((0, 50), (100, 50))])
     run("arrange.along", p, s, objs, count=5, rotate=True)
     copies = s.vectors[2:]

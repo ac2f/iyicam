@@ -5,7 +5,7 @@ import pytest
 from conftest import make_project
 
 from iyicam.core import clip, shapes
-from iyicam.core.geom import Contour, polygon_area
+from iyicam.core.geom import polygon_area
 from iyicam.nesting.nest import NestSettings, NestShape, nest
 from iyicam.nesting.parts import group_parts, nest_objects
 
@@ -116,7 +116,6 @@ def test_nest_objects_moves_vectors_and_makes_copies():
 
 
 def test_non_convex_decomposition_keeps_parts_apart():
-    from iyicam.core.geom import Contour
     st = NestSettings(700, 500, margin=5, spacing=3, rotations=[0, 45, 90, 135, 180, 225, 270, 315])
     star = shapes.star((0, 0), 70, 30, 7).flatten()
     U = [(0, 0), (150, 0), (150, 120), (110, 120), (110, 40), (40, 40), (40, 120), (0, 120)]
