@@ -213,23 +213,25 @@ class VCarveOp(Operation):
         ]
 
     def compute(self, ctx: OpContext) -> list[Toolpath]:
-        v = self.values
-        tool = ctx.tool
-        if not tool.is_tapered:
+        if not ctx.tool.is_tapered:
             ctx.warn("V-carving needs a V-bit or engraving tool")
             return []
         closed = [c for c in ctx.contours if c.closed]
         if not closed:
             ctx.warn("Select closed vectors for V-carving")
             return []
+        return self.carve(ctx, closed, self.values["start_depth"], self.values["flat_depth"] or 0.0)
+
+    def carve(self, ctx: OpContext, closed: list[Contour], start: float, flat: float) -> list[Toolpath]:
+        """V-carve the region of ``closed`` (even-odd nesting) from depth ``start``."""
+        v = self.values
+        tool = ctx.tool
         reg = vectorops.region(closed, ctx.tolerance)
         if not reg:
             return []
         loops_src, refitted = prepare_contours(closed)
-        start = v["start_depth"]
         tan = math.tan(tool.half_angle())
         r0 = tool.tip_diameter / 2
-        flat = v["flat_depth"] or 0.0
         rmax = r0 + flat * tan if flat > 0 else math.inf
         rlim = min(rmax, tool.radius)
         step = v["resolution"]
@@ -284,6 +286,14 @@ class VCarveOp(Operation):
         from ..core.document import VectorObject
         from .pocket import PocketOp
         tool = self.values.get("clear_tool") or ctx.tool
+        if tool.is_tapered:
+            # a tapered tool clears the floor with its tip only: let its cone run up to the
+            # V-carved walls (no further than their slope allows) or ridges are left behind
+            grow = min(tool.radius_at_depth(flat) - tool.tip_diameter / 2,
+                       flat * math.tan(min(tool.half_angle(), ctx.tool.half_angle())))
+            flats = clip.offset(flats, grow, arc_tol=ctx.tolerance)
+        elif clip.area(flats) - clip.area(clip.offset(clip.offset(flats, -tool.radius), tool.radius)) > 0.01:
+            ctx.warn(f"Some flat areas are narrower than {tool.name}; ridges are left there")
         objs = [VectorObject([Contour.polyline(p, True) for p in flats], "")]
         tdef = ToolpathDef(ctx.tdef.name + " (flats)", "pocket", tool,
                            {"start_depth": start, "cut_depth": start + flat, "strategy": "offset"})

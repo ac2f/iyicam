@@ -10,6 +10,7 @@ def register(api: PluginAPI) -> None:
     from ..cam.drill import DrillOp
     from ..cam.engrave import EngraveOp
     from ..cam.fluting import FlutingOp
+    from ..cam.inlay import InlayOp
     from ..cam.pocket import PocketOp
     from ..cam.profile import ProfileOp
     from ..cam.vcarve import VCarveOp
@@ -17,7 +18,7 @@ def register(api: PluginAPI) -> None:
     from ..post.loader import BUILTIN_DIR, load_posts
     from .commands import commands
 
-    for op in (ProfileOp, PocketOp, DrillOp, EngraveOp, VCarveOp, FlutingOp):
+    for op in (ProfileOp, PocketOp, DrillOp, EngraveOp, VCarveOp, InlayOp, FlutingOp):
         api.add_operation(op)
     for cmd in commands():
         api.add_command(cmd)

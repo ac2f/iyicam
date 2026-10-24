@@ -8,7 +8,7 @@ with Python plugins.
 
 > **Türkçe özet:** iyiCAM, CNC router'lar için ArtCAM'in 2D tarafına alternatif,
 > modüler bir CAM yazılımıdır. Vektör katmanları, sheet'ler, malzeme/derinlik
-> ayarı, kontür (profil), cep, delme, gravür ve V-oyma takım yolları, köprüler
+> ayarı, kontür (profil), cep, delme, gravür, V-oyma ve kakma (inlay) takım yolları, köprüler
 > (tab), rampa ve giriş/çıkış yayları, gerçek şekil nesting, NcStudio / Mach3 /
 > Mach4 / Fanuc / LinuxCNC / Syntec postprocessor'ları, takım veritabanı ve
 > kesme hızı hesaplayıcı, malzeme kaldırma simülasyonu, G-kod görüntüleme,
@@ -62,6 +62,8 @@ with Python plugins.
   drill point compensation; canned cycles (G81/G83) when the post supports them
 - **Engrave**: follow vectors at a depth or at a depth derived from a V-bit line width
 - **V-carve**: exact inscribed-circle carving, flat depth with automatic flat area clearing
+- **Inlay**: V-carve inlay pocket and the matching mirrored plug with a glue gap
+  (fit checked by simulating both halves)
 - **Fluting**: follow vectors with linear or S-curve depth ramps at both ends
 - Time estimates, warnings, height-map **material removal simulation**, HTML job report
 - **G-code backplot**: open any G-code file, see it over the sheet and simulate it
@@ -144,7 +146,7 @@ Set the `IYICAM_HOME` environment variable to use another folder.
 iyicam/
   core/        geometry kernel (geom, clip, arcfit), shapes, vector operations, document
                model, parameters, commands, registry, tool library, undo
-  cam/         moves, toolpath strategies (profile, pocket, drill, engrave, vcarve),
+  cam/         moves, toolpath strategies (profile, pocket, drill, engrave, vcarve, inlay),
                ordering, job calculation, simulation
   post/        post-processor engine, TOML loader, built-in posts, G-code export
   nesting/     no-fit polygon nesting and part grouping

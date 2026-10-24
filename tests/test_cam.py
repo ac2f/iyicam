@@ -274,6 +274,30 @@ def test_vcarve_flat_depth_adds_clearing():
     assert min(m.z for m in res.toolpaths[1].moves if hasattr(m, "z")) == pytest.approx(-3.0)
 
 
+def test_inlay_plug_fits_the_pocket():
+    """Simulate both halves, turn the plug over and press it in: walls meet, flats keep the glue gap."""
+    import numpy as np
+    from iyicam.cam.simulate import simulate
+    design = [shapes.circle((18, 40), 9), shapes.star((44, 40), 10, 4, 5), shapes.rectangle(6, 10, 48, 10)]
+    p, s, objs = make_project([design], size=(60, 60))
+    F, G = 4.0, 1.0
+    female = run(p, s, add_tp(p, "inlay", vbit(60, d=12.7), {"part": "female", "flat_depth": F}, objs))
+    male = run(p, s, add_tp(p, "inlay", vbit(60, d=12.7), {"part": "male", "flat_depth": F, "glue_gap": G}, objs))
+    assert not female.warnings and not male.warnings
+    assert min(tp.stats().zmin for tp in female.toolpaths) == pytest.approx(-F)
+    assert min(tp.stats().zmin for tp in male.toolpaths) == pytest.approx(-(2 * F - G))
+    hf = simulate(female.toolpaths, 60, 60, 18, 0.1).z
+    hm = simulate(male.toolpaths, 60, 60, 18, 0.1).z[:, ::-1]  # mirrored back about x = 30
+    gap = -(F - G) - hm - hf  # plug underside minus pocket surface after turning the plug over
+    # the pocket and the plug's margin (the plug blank is sawn off around it)
+    cut = (hf < -1e-6) | (hm < -(F - G) + 1e-6)
+    assert gap[cut].min() > -0.1
+    walls = (hf < -0.2) & (hf > -F + 0.6)
+    assert np.median(np.abs(gap[walls])) < 0.05
+    flats = hf < -F + 0.45  # V-bit clearing leaves scallops of 0.43 mm
+    assert np.all(gap[flats] > G - 0.5) and np.median(gap[flats]) == pytest.approx(G, abs=0.4)
+
+
 def test_unknown_operation_reports_error():
     p, s, objs = make_project([shapes.rectangle(0, 0, 10, 10)])
     res = compute_toolpath(p, add_tp(p, "nope", end_mill(), {}, objs), s)
