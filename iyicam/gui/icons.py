@@ -88,6 +88,13 @@ def _measure(p):
         p.drawLine(QPointF(x, y), QPointF(x + 2, y + 3.5))
 
 
+def _trim(p):
+    p.drawLine(QPointF(4, 18), QPointF(20, 18))
+    p.drawLine(QPointF(9, 4), QPointF(15, 21))
+    p.setPen(QPen(QColor("#c0392b"), 1.7, Qt.DashLine))
+    p.drawLine(QPointF(15, 18), QPointF(20, 18))
+
+
 def _zoom(p):
     p.drawEllipse(QPointF(10, 10), 6, 6)
     p.drawLine(QPointF(14.5, 14.5), QPointF(20, 20))
@@ -95,7 +102,7 @@ def _zoom(p):
 
 TOOL_ICONS = {"select": _select, "nodes": _nodes, "polyline": _polyline, "line": _line, "rectangle": _rect,
               "circle": _circle, "ellipse": _ellipse, "polygon": _polygon, "star": _star, "arc": _arc,
-              "text": _text, "measure": _measure, "zoom": _zoom}
+              "text": _text, "measure": _measure, "trim": _trim, "zoom": _zoom}
 
 
 def icon(name: str) -> QIcon:

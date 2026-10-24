@@ -27,10 +27,11 @@ from .panels import LayersPanel, PropertiesPanel, SheetsPanel, ToolpathsPanel
 from .tools import TOOLS
 
 TOOL_KEYS = {"select": "S", "nodes": "N", "polyline": "P", "line": "L", "rectangle": "R", "circle": "C",
-             "ellipse": "E", "polygon": "G", "star": "", "arc": "A", "text": "T", "measure": "M"}
+             "ellipse": "E", "polygon": "G", "star": "", "arc": "A", "text": "T", "measure": "M", "trim": "X"}
 TOOL_LABELS = {"select": "Select / Transform", "nodes": "Edit Nodes", "polyline": "Polyline / Bezier",
                "line": "Line", "rectangle": "Rectangle", "circle": "Circle", "ellipse": "Ellipse",
-               "polygon": "Polygon", "star": "Star", "arc": "Arc (3 points)", "text": "Text", "measure": "Measure"}
+               "polygon": "Polygon", "star": "Star", "arc": "Arc (3 points)", "text": "Text", "measure": "Measure",
+               "trim": "Trim Vectors"}
 
 
 class MainWindow(QMainWindow):

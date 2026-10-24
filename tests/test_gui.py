@@ -224,3 +224,15 @@ def test_console_runs_code(win):
     con.inp.setText("1/0")
     con.execute()
     assert "ZeroDivisionError" in con.out.toPlainText()
+
+
+def test_trim_tool(win):
+    cv, ctrl = win.canvas, win.ctrl
+    ctrl.add_vectors([VectorObject([shapes.line((100, 100), (300, 100))], ctrl.layer_id),
+                      VectorObject([shapes.line((200, 50), (200, 150))], ctrl.layer_id)])
+    win.set_tool("trim")
+    QTest.mouseClick(cv, Qt.LeftButton, Qt.NoModifier, at(cv, 250, 100))
+    h = ctrl.sheet.vectors[0]
+    assert h.bbox().xmax == pytest.approx(200, abs=1e-3)
+    ctrl.undo()
+    assert ctrl.sheet.vectors[0].bbox().xmax == pytest.approx(300)

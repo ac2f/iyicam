@@ -202,6 +202,48 @@ def _dedupe(ctx, v):
     ctx.message(f"{len(dupes)} duplicate vector(s) deleted")
 
 
+def _doctor(ctx, v):
+    """Find (and optionally fix) open, nearly closed, tiny, duplicate and self-crossing vectors."""
+    from ..core.intersect import nearly_closed, self_intersects
+    gap, small = v["gap"], v["min_size"]
+    objs = ctx.selected or list(ctx.sheet.vectors)
+    found = {"open": [], "gaps": [], "tiny": [], "crossing": [], "duplicate": []}
+    seen = set()
+    for o in objs:
+        sig = tuple(sorted((round(c.length(), 3), round(c.bbox().xmin, 3), round(c.bbox().ymin, 3))
+                           for c in o.contours))
+        if sig in seen:
+            found["duplicate"].append(o)
+            continue
+        seen.add(sig)
+        bb = o.bbox()
+        if max(bb.width, bb.height) < small:
+            found["tiny"].append(o)
+            continue
+        for c in o.contours:
+            if nearly_closed(c, gap):
+                found["gaps"].append(o)
+                break
+            if not c.closed:
+                found["open"].append(o)
+                break
+            if self_intersects(c):
+                found["crossing"].append(o)
+                break
+    if v["fix"]:
+        for o in found["gaps"]:
+            ctx.replace(o, [vectorops.close(c, gap) if nearly_closed(c, gap) else c for c in o.contours])
+        ctx.remove([o.id for o in found["tiny"] + found["duplicate"]])
+        problems = found["open"] + found["crossing"]
+        fixed = f" Fixed: closed {len(found['gaps'])}, deleted {len(found['tiny']) + len(found['duplicate'])}."
+    else:
+        problems = [o for k in found for o in found[k]]
+        fixed = ""
+    ctx.select([o.id for o in problems])
+    parts = [f"{len(found[k])} {k}" for k in ("open", "gaps", "tiny", "crossing", "duplicate") if found[k]]
+    ctx.message(("Vector check: " + ", ".join(parts) + "." if parts else "Vector check: no problems found.") + fixed)
+
+
 # ---------------------------------------------------------------------------
 # transforms / arrangement
 # ---------------------------------------------------------------------------
@@ -436,6 +478,12 @@ def commands() -> list[Command]:
                 EDIT, [Param("tolerance", "Tolerance", "length", 0.05, min=0.001)], min_selection=1),
         Command("edit.polyline", "Convert to Polyline...", _map_contours(lambda c, v: vectorops.to_polyline(c, v["tolerance"])),
                 EDIT, [Param("tolerance", "Tolerance", "length", 0.01, min=0.001)], min_selection=1),
+        Command("edit.doctor", "Vector Doctor...", _doctor, EDIT, [
+            Param("gap", "Close gaps up to", "length", 0.1, min=0.0),
+            Param("min_size", "Tiny if smaller than", "length", 0.05, min=0.0),
+            Param("fix", "Fix automatically", "bool", True)],
+                tooltip="Checks the selection (or the whole sheet) for open, nearly closed, tiny, duplicate and "
+                        "self-crossing vectors, fixes what it can and selects the rest."),
         Command("edit.dedupe", "Delete Duplicates...", _dedupe, EDIT, [
             Param("tolerance", "Tolerance", "length", 0.01, min=0.0001),
             Param("scope", "Search in", "choice", "sheet", choices=[("sheet", "Whole sheet"), ("selection", "Selection")])]),

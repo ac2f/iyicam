@@ -745,6 +745,23 @@ def make_arc(a: Pt, b: Pt, bulge: float) -> Segment:
     return Arc(a, b, bulge)
 
 
+def subsegment(s: Segment, t0: float, t1: float) -> Segment:
+    """The part of ``s`` between the parameters ``t0 < t1``."""
+    if t0 <= 1e-12 and t1 >= 1 - 1e-12:
+        return s
+    if isinstance(s, Line):
+        return Line(s.point_at(t0), s.point_at(t1))
+    if isinstance(s, Arc):
+        return Arc(s.point_at(t0), s.point_at(t1), math.tan(s.sweep * (t1 - t0) / 4.0))
+    seg = s
+    if t0 > 0:
+        seg = seg.split(t0)[1]
+    if t1 < 1:
+        tt = (t1 - t0) / (1 - t0) if t0 < 1 else 1.0
+        seg = seg.split(tt)[0]
+    return seg
+
+
 def segment_area_contribution(s: Segment, tol: float = 0.01) -> float:
     """Contribution of a segment to the signed area of a closed contour."""
     if isinstance(s, Line):

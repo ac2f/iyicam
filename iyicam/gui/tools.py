@@ -938,5 +938,35 @@ class MeasureTool(CanvasTool):
             p.drawText(qb + QPointF(8, -8), u.fmt(dist(self.a, self.b)))
 
 
+class TrimTool(CanvasTool):
+    name = "trim"
+    prompt = "Trim: click the part of a vector to remove; it is cut where it crosses other vectors."
+    cursor = Qt.CrossCursor
+
+    def move(self, ev, w):
+        o = self.canvas.hit(w)
+        self.canvas.hover_id = o.id if o else None
+
+    def press(self, ev, w):
+        from ..core.intersect import trim
+        if ev.button() != Qt.LeftButton:
+            return
+        obj = self.canvas.hit(w)
+        if obj is None:
+            return
+        ci = min(range(len(obj.contours)), key=lambda k: obj.contours[k].nearest(w)[3])
+        target = obj.contours[ci]
+        cutters = [c for o in self.canvas.visible_objects() for c in o.contours if c is not target]
+        pieces = trim(target, w, cutters)
+        if pieces is None:
+            self.say("Nothing to trim here: the vector does not cross other vectors around this point.")
+            return
+        with self.ctrl.edit("Trim"):
+            obj.contours = obj.contours[:ci] + pieces + obj.contours[ci + 1:]
+            if not obj.contours:
+                self.ctrl.project.remove_vectors([obj.id])
+        self.say(self.prompt)
+
+
 TOOLS = {cls.name: cls for cls in (SelectTool, NodeTool, PolylineTool, LineTool, RectTool, CircleTool,
-                                    EllipseTool, PolygonTool, StarTool, ArcTool, TextTool, MeasureTool)}
+                                    EllipseTool, PolygonTool, StarTool, ArcTool, TextTool, MeasureTool, TrimTool)}

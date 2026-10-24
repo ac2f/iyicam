@@ -6,7 +6,7 @@ import math
 from typing import Callable, Sequence
 
 from ..core import arcfit
-from ..core.geom import Arc, Bezier, Contour, Line, Pt, Segment, dist
+from ..core.geom import Arc, Bezier, Contour, Pt, Segment, dist, subsegment
 from .moves import ArcMove, Feed
 
 ZProfile = list[tuple[float, float]]  # sorted (u, z) breakpoints, linear in between
@@ -29,25 +29,6 @@ def machinable(c: Contour, tol: float = 0.005) -> Contour:
         else:
             out.append(s)
     return Contour(out, c.closed)
-
-
-def subsegment(s: Segment, t0: float, t1: float) -> Segment:
-    if t0 <= 1e-12 and t1 >= 1 - 1e-12:
-        return s
-    if isinstance(s, Line):
-        return Line(s.point_at(t0), s.point_at(t1))
-    if isinstance(s, Arc):
-        sw = s.sweep
-        a = s.point_at(t0)
-        b = s.point_at(t1)
-        return Arc(a, b, math.tan(sw * (t1 - t0) / 4.0))
-    seg = s
-    if t0 > 0:
-        seg = seg.split(t0)[1]
-    if t1 < 1:
-        tt = (t1 - t0) / (1 - t0) if t0 < 1 else 1.0
-        seg = seg.split(tt)[0]
-    return seg
 
 
 class PathWalker:
