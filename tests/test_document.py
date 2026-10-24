@@ -178,3 +178,29 @@ def test_feeds_suggestion():
     c = suggest("mdf", 6.0, 2, 18000)
     assert c.feed_rate == pytest.approx(18000 * 2 * 0.30)
     assert suggest("aluminium", 6.0, 1, 18000).feed_rate < c.feed_rate / 5
+
+
+def test_door_wizard_vectors_and_toolpaths():
+    from iyicam.cam.job import compute_all
+    p, s, _ = make_project([], size=(1000, 1000))
+    run("create.door", p, s, width=400, height=700, frame=70, panels=2, rail=70, style="arch", arch=60,
+        grooves=2, groove_spacing=8, x=500, y=500, pocket_tool=end_mill(6), edge_tool=vbit(90),
+        groove_tool=vbit(60, d=6), cut_tool=end_mill(8))
+    outline, *rest = s.vectors
+    panels = [o for o in rest if o.name == "Panel"]
+    grooves = [o for o in rest if o.name == "Groove"]
+    assert outline.bbox().center == pytest.approx((500, 500))
+    assert len(panels) == 2 and len(grooves) == 4
+    bottom, top = sorted(panels, key=lambda o: o.bbox().ymin)
+    assert bottom.contours[0].area() == pytest.approx(260 * 245)
+    bb = top.bbox()
+    assert (bb.xmin, bb.xmax, bb.ymax) == pytest.approx((370, 630, 850 - 70))
+    assert any(isinstance(sg, Arc) for sg in top.contours[0].segs)
+    for g in grooves:  # grooves run inside their panel
+        assert any(g.bbox().xmin > pn.bbox().xmin and g.bbox().ymax < pn.bbox().ymax for pn in panels)
+    assert [l.name for l in p.layers][-3:] == ["Door outline", "Door panels", "Door grooves"]
+    assert [t.name for t in p.toolpaths] == ["Door grooves", "Door pocket", "Door panel edge", "Door cut-out"]
+    res = compute_all(p)
+    assert all(r.error is None and r.toolpaths for r in res.values())
+    with pytest.raises(CommandError):
+        run("create.door", p, s, width=100, height=100, frame=60)

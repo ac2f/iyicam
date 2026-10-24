@@ -8,7 +8,7 @@ with Python plugins.
 
 > **Türkçe özet:** iyiCAM, CNC router'lar için ArtCAM'in 2D tarafına alternatif,
 > modüler bir CAM yazılımıdır. Vektör katmanları, sheet'ler, malzeme/derinlik
-> ayarı, kontür (profil), cep, delme, gravür, V-oyma ve kakma (inlay) takım yolları, döner eksen (A) sarma, köprüler
+> ayarı, kontür (profil), cep, delme, gravür, V-oyma ve kakma (inlay) takım yolları, döner eksen (A) sarma, MDF kapak sihirbazı, köprüler
 > (tab), rampa ve giriş/çıkış yayları, gerçek şekil nesting, NcStudio / Mach3 /
 > Mach4 / Fanuc / LinuxCNC / Syntec postprocessor'ları, takım veritabanı ve
 > kesme hızı hesaplayıcı, malzeme kaldırma simülasyonu, G-kod görüntüleme,
@@ -38,6 +38,9 @@ with Python plugins.
   vector**, **text on a curve**, bounding box, select open / similar / invert
 - **Vector Doctor**: finds open, nearly closed, tiny, duplicate and self-crossing vectors and fixes
   what it can
+- **Door / panel wizard**: cabinet (MDF) doors with stacked square / rounded / cove /
+  chamfered / arched panels, decorative groove lines and, when tools are chosen, the
+  pocket, panel edge, groove and cut-out toolpaths
 - **Bitmap tracing**: turn logos and scanned drawings (PNG, JPG, BMP, ...) into vectors
 - DXF import (lines, arcs, circles, polylines with bulges, splines, ellipses, blocks, OCS,
   units, gap joining) and export; SVG import (transforms, units, Inkscape layers) and export;

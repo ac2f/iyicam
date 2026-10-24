@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import math
 
-from ..core import shapes, vectorops
+from ..core import doors, shapes, vectorops
 from ..core.commands import Command, CommandContext, CommandError
 from ..core.document import VectorObject
 from ..core.geom import BBox, Contour, Transform
@@ -84,6 +84,34 @@ def _bbox_rect(ctx, v):
         raise CommandError("Nothing selected")
     bb = bb.inflated(v["offset"])
     ctx.add(shapes.rectangle(bb.xmin, bb.ymin, bb.width, bb.height, v["radius"]), name="Boundary")
+
+
+def _door(ctx, v):
+    from ..core.document import Selection, ToolpathDef
+    try:
+        d = doors.door(0.0, 0.0, v["width"], v["height"], v["frame"], v["panels"], v["rail"], v["style"],
+                       v["radius"], v["arch"], v["outer_radius"], v["grooves"], v["groove_spacing"],
+                       v["groove_side"])
+    except ValueError as exc:
+        raise CommandError(str(exc)) from None
+    cx, cy = _centre(ctx, v)
+    T = Transform.translate(cx - v["width"] / 2, cy - v["height"] / 2)
+
+    def layer(name):
+        lay = ctx.project.layer_by_name(name) or ctx.project.add_layer(name)
+        return lay.id
+
+    outline = ctx.add(d.outline.transformed(T), layer("Door outline"), "Door")
+    panels = [ctx.add(c.transformed(T), layer("Door panels"), "Panel") for c in d.panels]
+    grooves = [ctx.add(c.transformed(T), layer("Door grooves"), "Groove") for c in d.grooves]
+    jobs = [("Door grooves", "engrave", v["groove_tool"], grooves, {"cut_depth": v["groove_depth"]}),
+            ("Door pocket", "pocket", v["pocket_tool"], panels, {"cut_depth": v["pocket_depth"]}),
+            ("Door panel edge", "engrave", v["edge_tool"], panels, {"cut_depth": v["pocket_depth"]}),
+            ("Door cut-out", "profile", v["cut_tool"], [outline], {"side": "outside", "through": True})]
+    for name, op, tool, objs, params in jobs:
+        if tool is not None and objs:
+            ctx.project.toolpaths.append(ToolpathDef(name, op, tool, params,
+                                                     Selection("vectors", [o.id for o in objs])))
 
 
 # ---------------------------------------------------------------------------
@@ -485,6 +513,29 @@ def commands() -> list[Command]:
         Command("create.boundary", "Bounding Box", _bbox_rect, CREATE, [
             Param("offset", "Offset", "length", 0.0), Param("radius", "Corner radius", "length", 0.0, min=0.0)],
                 min_selection=1),
+        Command("create.door", "Door / Panel...", _door, CREATE, [
+            Param("width", "Door width", "length", 400.0, min=10.0, group="Door"),
+            Param("height", "Door height", "length", 700.0, min=10.0, group="Door"),
+            Param("outer_radius", "Outer corner radius", "length", 0.0, min=0.0, group="Door"),
+            Param("frame", "Frame width", "length", 70.0, min=1.0, group="Panels",
+                  help="From the door edge to the panel line"),
+            Param("panels", "Panels (stacked)", "int", 1, min=1, max=6, group="Panels"),
+            Param("rail", "Rail between panels", "length", 70.0, min=1.0, group="Panels"),
+            Param("style", "Panel shape", "choice", "square", choices=doors.PANEL_STYLES, group="Panels"),
+            Param("radius", "Corner radius / chamfer", "length", 15.0, min=0.0, group="Panels",
+                  visible={"style": ["round", "cove", "chamfer"]}),
+            Param("arch", "Arch rise", "length", 60.0, min=0.0, group="Panels", visible={"style": "arch"}),
+            Param("grooves", "Groove lines", "int", 0, min=0, max=10, group="Grooves"),
+            Param("groove_spacing", "Groove spacing", "length", 8.0, min=0.1, group="Grooves"),
+            Param("groove_side", "Grooves on", "choice", "panel",
+                  choices=[("panel", "The panel (inside)"), ("frame", "The frame (outside)")], group="Grooves"),
+            Param("pocket_tool", "Panel pocket tool (none = no toolpath)", "tool", None, group="Toolpaths"),
+            Param("pocket_depth", "Panel depth", "length", 6.0, min=0.0, group="Toolpaths"),
+            Param("edge_tool", "Panel edge tool (V-bit / profile bit)", "tool", None, group="Toolpaths"),
+            Param("groove_tool", "Groove tool", "tool", None, group="Toolpaths"),
+            Param("groove_depth", "Groove depth", "length", 2.0, min=0.0, group="Toolpaths"),
+            Param("cut_tool", "Cut-out tool", "tool", None, group="Toolpaths"),
+        ] + pos(), tooltip="Cabinet door with stacked panels, decorative grooves and optional toolpaths"),
         # edit
         Command("edit.offset", "Offset...", _offset, EDIT, [
             Param("distance", "Distance", "length", 3.0, min=0.0),
