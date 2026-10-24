@@ -16,7 +16,7 @@ from typing import Any, Callable, Sequence
 import pyclipper
 
 from ..core import clip
-from ..core.geom import Pt, polygon_area
+from ..core.geom import Pt, polygon_area, simplify_polyline
 
 IntPath = list[tuple[int, int]]
 
@@ -40,7 +40,7 @@ class NestSettings:
     max_sheets: int = 100
     iterations: int = 1            # randomised attempts, best result is kept
     seed: int = 1
-    tolerance: float = 0.2         # outline simplification
+    tolerance: float = 0.5         # outline simplification (parts get this much extra spacing at most)
 
 
 @dataclass
@@ -61,8 +61,147 @@ class NestResult:
     utilization: list[float] = field(default_factory=list)
 
 
+def is_convex(path: IntPath) -> bool:
+    """True for a counter-clockwise polygon that is convex up to integer rounding noise."""
+    n = len(path)
+    for i in range(n):
+        ax, ay = path[i - 1]
+        bx, by = path[i]
+        cx, cy = path[(i + 1) % n]
+        cr = (bx - ax) * (cy - by) - (by - ay) * (cx - bx)
+        if cr < -2.0 * (math.hypot(bx - ax, by - ay) + math.hypot(cx - bx, cy - by)):
+            return False
+    return True
+
+
+def convex_hull(pts: IntPath) -> IntPath:
+    """Counter-clockwise convex hull (monotone chain)."""
+    P = sorted(set(pts))
+    if len(P) < 3:
+        return P
+
+    def half(points):
+        h: list = []
+        for p in points:
+            while len(h) >= 2 and (h[-1][0] - h[-2][0]) * (p[1] - h[-2][1]) - \
+                    (h[-1][1] - h[-2][1]) * (p[0] - h[-2][0]) <= 0:
+                h.pop()
+            h.append(p)
+        return h
+
+    lower, upper = half(P), half(reversed(P))
+    return lower[:-1] + upper[:-1]
+
+
+def convex_minkowski(a: IntPath, b: IntPath) -> IntPath:
+    """Minkowski sum of two counter-clockwise convex polygons (O(n + m) edge merge)."""
+    def start(p):
+        return min(range(len(p)), key=lambda i: (p[i][1], p[i][0]))
+
+    def edges(p, k):
+        n = len(p)
+        return [(p[(k + i + 1) % n][0] - p[(k + i) % n][0], p[(k + i + 1) % n][1] - p[(k + i) % n][1])
+                for i in range(n)]
+
+    ia, ib = start(a), start(b)
+    ea, eb = edges(a, ia), edges(b, ib)
+    x, y = a[ia][0] + b[ib][0], a[ia][1] + b[ib][1]
+    out = [(x, y)]
+    i = j = 0
+    while i < len(ea) or j < len(eb):
+        if j >= len(eb):
+            e = ea[i]
+            i += 1
+        elif i >= len(ea):
+            e = eb[j]
+            j += 1
+        else:
+            cr = ea[i][0] * eb[j][1] - ea[i][1] * eb[j][0]
+            if cr > 0:
+                e = ea[i]
+                i += 1
+            elif cr < 0:
+                e = eb[j]
+                j += 1
+            else:
+                e = (ea[i][0] + eb[j][0], ea[i][1] + eb[j][1])
+                i += 1
+                j += 1
+        x, y = x + e[0], y + e[1]
+        out.append((x, y))
+    out.pop()  # back at the start
+    return out
+
+
+def _cross(o, a, b) -> float:
+    return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+
+def _in_triangle(p, a, b, c) -> bool:
+    return _cross(a, b, p) >= 0 and _cross(b, c, p) >= 0 and _cross(c, a, p) >= 0
+
+
+def convex_parts(path: IntPath) -> list[IntPath] | None:
+    """Split a simple counter-clockwise polygon into convex pieces.
+
+    Ear clipping followed by Hertel-Mehlhorn merging.  Returns ``None`` when the
+    polygon is degenerate (the caller then falls back to Clipper's Minkowski).
+    """
+    P = list(path)
+    idx = list(range(len(P)))
+    tris: list[list[int]] = []
+    guard = 0
+    while len(idx) > 3 and guard < 10 * len(P) + 10:
+        guard += 1
+        m = len(idx)
+        for k in range(m):
+            i0, i1, i2 = idx[k - 1], idx[k], idx[(k + 1) % m]
+            a, b, c = P[i0], P[i1], P[i2]
+            cr = _cross(a, b, c)
+            if cr == 0:
+                idx.pop(k)  # collinear vertex: no area to lose
+                break
+            if cr < 0:
+                continue
+            if any(_in_triangle(P[j], a, b, c) for j in idx if j not in (i0, i1, i2) and P[j] not in (a, b, c)):
+                continue
+            tris.append([i0, i1, i2])
+            idx.pop(k)
+            break
+        else:
+            return None
+    if len(idx) == 3 and _cross(P[idx[0]], P[idx[1]], P[idx[2]]) > 0:
+        tris.append(idx)
+    elif len(idx) > 3:
+        return None
+    pieces = tris
+    merged = True
+    while merged:
+        merged = False
+        for a in range(len(pieces)):
+            for b in range(a + 1, len(pieces)):
+                pa, pb = pieces[a], pieces[b]
+                for i in range(len(pa)):
+                    u, v = pa[i], pa[(i + 1) % len(pa)]
+                    if v in pb and pb[(pb.index(v) + 1) % len(pb)] == u:
+                        # shared edge u->v in pa is v->u in pb: splice pb into pa
+                        j = pb.index(u)
+                        rest = [pb[(j + 1 + k) % len(pb)] for k in range(len(pb) - 2)]
+                        cand = pa[:i + 1] + rest + pa[i + 1:]
+                        if is_convex([P[t] for t in cand]):
+                            pieces[a] = cand
+                            del pieces[b]
+                            merged = True
+                        break
+                if merged:
+                    break
+            if merged:
+                break
+    return [[P[t] for t in pc] for pc in pieces]
+
+
 class _Variant:
-    __slots__ = ("paths", "bbox", "area")
+    __slots__ = ("paths", "bbox", "area", "convex", "pieces")
 
     def __init__(self, paths: list[IntPath]):
         self.paths = paths
@@ -70,6 +209,16 @@ class _Variant:
         ys = [p[1] for path in paths for p in path]
         self.bbox = (min(xs), min(ys), max(xs), max(ys))
         self.area = sum(abs(pyclipper.Area(p)) for p in paths)
+        # nearly convex outlines use their hull: a slightly larger, safe no-fit polygon
+        self.convex = [convex_hull(p) if is_convex(p) else None for p in paths]
+        pieces: list[IntPath] | None = []
+        for p, hull in zip(paths, self.convex):
+            parts = [hull] if hull else convex_parts(p)
+            if parts is None:
+                pieces = None
+                break
+            pieces += parts
+        self.pieces = pieces
 
 
 def _rotate_int(paths: list[list[Pt]], ang: float) -> list[IntPath]:
@@ -103,8 +252,11 @@ class Nester:
         for sh in self.shapes:
             outer = [p for p, _ in clip.polytree(sh.polys, "nonzero")] or sh.polys
             self.areas.append(sum(abs(polygon_area(p)) for p in outer))
-            grown = clip.offset(outer, half + settings.tolerance, "round", arc_tol=max(0.01, settings.tolerance / 2))
-            grown = clip.simplify(grown, settings.tolerance) or grown
+            t = max(0.01, settings.tolerance)
+            # round joins lie within t/2 and the simplification within t inside the true outline,
+            # so growing by an extra 1.5 t keeps the simplified outline on the safe side
+            grown = clip.offset(outer, half + 1.5 * t, "round", arc_tol=t / 2)
+            grown = [q for q in (simplify_polyline(p + [p[0]], t)[:-1] for p in grown) if len(q) >= 3]
             grown = [p for p, _ in clip.polytree(grown, "nonzero")]
             vs = {}
             for ang in (sh.rotations if sh.rotations is not None else settings.rotations):
@@ -119,8 +271,22 @@ class Nester:
         hit = self._nfp_cache.get(key)
         if hit is not None:
             return hit
-        A = self.variants[a][aa].paths
-        B = self.variants[b][ba].paths
+        VA, VB = self.variants[a][aa], self.variants[b][ba]
+        A, B = VA.paths, VB.paths
+        if len(A) == 1 and len(B) == 1 and VA.convex[0] and VB.convex[0]:
+            res = [convex_minkowski(VA.convex[0], [(-x, -y) for x, y in VB.convex[0]])]
+            self._nfp_cache[key] = res
+            return res
+        if VA.pieces is not None and VB.pieces is not None:
+            # Minkowski sums distribute over unions: combine the convex pieces
+            pc = pyclipper.Pyclipper()
+            negs = [[(-x, -y) for x, y in pb] for pb in VB.pieces]
+            for pa in VA.pieces:
+                for nb in negs:
+                    pc.AddPath(convex_minkowski(pa, nb), pyclipper.PT_SUBJECT, True)
+            res = pc.Execute(pyclipper.CT_UNION, pyclipper.PFT_NONZERO, pyclipper.PFT_NONZERO)
+            self._nfp_cache[key] = res
+            return res
         pc = pyclipper.Pyclipper()
         added = False
         for pa in A:

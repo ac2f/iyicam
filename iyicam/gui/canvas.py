@@ -32,6 +32,7 @@ class Canvas(QWidget):
         self.scale = 1.0
         self.cx, self.cy = 300.0, 200.0
         self._paths: dict[str, tuple[tuple, QPainterPath]] = {}
+        self._bboxes: dict[str, tuple[tuple, BBox]] = {}
         self._tp_cache: list | None = None
         self._pan_from: QPointF | None = None
         self._space = False
@@ -97,6 +98,7 @@ class Canvas(QWidget):
     # -- caches ----------------------------------------------------------------------------------
     def _doc_changed(self) -> None:
         self._paths.clear()
+        self._bboxes.clear()
         self.update()
 
     def _tp_changed(self) -> None:
@@ -105,6 +107,7 @@ class Canvas(QWidget):
 
     def _sheet_changed(self) -> None:
         self._paths.clear()
+        self._bboxes.clear()
         self._tp_cache = None
         self.sim_image = None
         self.update()
@@ -112,9 +115,20 @@ class Canvas(QWidget):
     def invalidate(self, obj: VectorObject | None = None) -> None:
         if obj is None:
             self._paths.clear()
+            self._bboxes.clear()
         else:
             self._paths.pop(obj.id, None)
+            self._bboxes.pop(obj.id, None)
         self.update()
+
+    def obj_bbox(self, o: VectorObject) -> BBox:
+        """Cached bounding box (hit testing and snapping run on every mouse move)."""
+        key = tuple(id(c) for c in o.contours)
+        hit = self._bboxes.get(o.id)
+        if hit is None or hit[0] != key:
+            hit = (key, o.bbox())
+            self._bboxes[o.id] = hit
+        return hit[1]
 
     def obj_path(self, o: VectorObject) -> QPainterPath:
         key = tuple(id(c) for c in o.contours)
@@ -158,7 +172,7 @@ class Canvas(QWidget):
         for o in reversed(self.visible_objects()):
             if editable_only and not self.ctrl.editable(o):
                 continue
-            if not o.bbox().inflated(tol).contains(p):
+            if not self.obj_bbox(o).inflated(tol).contains(p):
                 continue
             for c in o.contours:
                 d = c.nearest(p)[3]
@@ -172,7 +186,7 @@ class Canvas(QWidget):
         for o in self.visible_objects():
             if not self.ctrl.editable(o):
                 continue
-            bb = o.bbox()
+            bb = self.obj_bbox(o)
             if r.contains_box(bb):
                 out.append(o)
             elif crossing and r.intersects(bb):
@@ -191,7 +205,7 @@ class Canvas(QWidget):
         best, bd, kind = None, tol, ""
         if s.snap_objects:
             for o in self.visible_objects():
-                if o.id in exclude or not o.bbox().inflated(tol).contains(p):
+                if o.id in exclude or not self.obj_bbox(o).inflated(tol).contains(p):
                     continue
                 for c in o.contours:
                     for seg in c.segs:

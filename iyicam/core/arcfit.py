@@ -4,18 +4,34 @@ from __future__ import annotations
 import math
 from typing import Sequence
 
+import numpy as np
+
 from .geom import Arc, Contour, Line, Pt, Segment, circumcenter, cross, dist, point_line_distance, sub
 
 
-def _line_ok(P: Sequence[Pt], i: int, j: int, tol: float) -> bool:
+_VEC = 24  # long runs are checked with numpy, short ones in plain Python (less overhead)
+
+
+def _line_ok(P: Sequence[Pt], i: int, j: int, tol: float, A: np.ndarray | None = None) -> bool:
     a, b = P[i], P[j]
+    if A is not None and j - i > _VEC:
+        q = A[i + 1:j] - A[i]
+        ab = A[j] - A[i]
+        L2 = float(ab @ ab)
+        if L2 < 1e-18:
+            d = np.hypot(q[:, 0], q[:, 1])
+        else:
+            t = np.clip(q @ ab / L2, 0.0, 1.0)
+            d = np.hypot(q[:, 0] - t * ab[0], q[:, 1] - t * ab[1])
+        return bool(np.all(d <= tol))
     for k in range(i + 1, j):
         if point_line_distance(P[k], a, b) > tol:
             return False
     return True
 
 
-def _arc_ok(P: Sequence[Pt], i: int, j: int, tol: float, max_r: float, max_sweep: float):
+def _arc_ok(P: Sequence[Pt], i: int, j: int, tol: float, max_r: float, max_sweep: float,
+            A: np.ndarray | None = None):
     """Return an Arc through P[i]..P[j] when all points fit within ``tol``."""
     m = (i + j) // 2
     c = circumcenter(P[i], P[m], P[j])
@@ -28,6 +44,23 @@ def _arc_ok(P: Sequence[Pt], i: int, j: int, tol: float, max_r: float, max_sweep
     if abs(turn) < 1e-14:
         return None
     ccw = turn > 0
+    if A is not None and j - i > _VEC:
+        seg = A[i:j + 1] - c
+        if np.any(np.abs(np.hypot(seg[1:, 0], seg[1:, 1]) - r) > tol):
+            return None
+        dif = np.diff(seg, axis=0)
+        chord = np.hypot(dif[:, 0], dif[:, 1])
+        if np.any(chord > 2 * r) or np.any(r - np.sqrt(np.maximum(0.0, r * r - chord * chord / 4)) > tol):
+            return None
+        cr = seg[:-1, 0] * seg[1:, 1] - seg[:-1, 1] * seg[1:, 0]
+        if np.any(((cr > 0) != ccw) & (np.abs(cr) > 1e-12)):
+            return None
+        if float(np.sum(2 * np.arcsin(np.minimum(1.0, chord / (2 * r))))) > max_sweep:
+            return None
+        try:
+            return Arc.from_center_points(P[i], P[j], c, ccw)
+        except ValueError:
+            return None
     swept = 0.0
     for k in range(i, j):
         p, q = P[k], P[k + 1]
@@ -69,29 +102,30 @@ def fit_segments(pts: Sequence[Pt], closed: bool, tol: float = 0.005,
     if closed and P:
         P.append(P[0])
     n = len(P)
+    A = np.asarray(P, float) if n > _VEC else None
     segs: list[Segment] = []
     i = 0
     while i < n - 1:
         # longest straight run
         jl = i + 1
         step = 1
-        while jl + step < n and _line_ok(P, i, jl + step, tol):
+        while jl + step < n and _line_ok(P, i, jl + step, tol, A):
             jl += step
             step *= 2
         while step > 1:
             step //= 2
-            if jl + step < n and _line_ok(P, i, jl + step, tol):
+            if jl + step < n and _line_ok(P, i, jl + step, tol, A):
                 jl += step
         # longest arc
         ja, arc = i, None
         j = i + min_arc_points - 1
         if j < n:
-            a = _arc_ok(P, i, j, tol, max_radius, max_sweep)
+            a = _arc_ok(P, i, j, tol, max_radius, max_sweep, A)
             if a is not None:
                 ja, arc = j, a
                 step = 1
                 while ja + step < n:
-                    a = _arc_ok(P, i, ja + step, tol, max_radius, max_sweep)
+                    a = _arc_ok(P, i, ja + step, tol, max_radius, max_sweep, A)
                     if a is None:
                         break
                     ja, arc = ja + step, a
@@ -99,7 +133,7 @@ def fit_segments(pts: Sequence[Pt], closed: bool, tol: float = 0.005,
                 while step > 1:
                     step //= 2
                     if ja + step < n:
-                        a = _arc_ok(P, i, ja + step, tol, max_radius, max_sweep)
+                        a = _arc_ok(P, i, ja + step, tol, max_radius, max_sweep, A)
                         if a is not None:
                             ja, arc = ja + step, a
         if arc is not None and ja > jl:

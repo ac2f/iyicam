@@ -113,3 +113,24 @@ def test_nest_objects_moves_vectors_and_makes_copies():
     for r in rects:
         c = r.bbox().center
         assert any(math.dist(c, h.bbox().center) < 1e-6 for h in holes)
+
+
+def test_non_convex_decomposition_keeps_parts_apart():
+    from iyicam.core.geom import Contour
+    st = NestSettings(700, 500, margin=5, spacing=3, rotations=[0, 45, 90, 135, 180, 225, 270, 315])
+    star = shapes.star((0, 0), 70, 30, 7).flatten()
+    U = [(0, 0), (150, 0), (150, 120), (110, 120), (110, 40), (40, 40), (40, 120), (0, 120)]
+    shapes_ = [NestShape([star], 6), NestShape([U], 4), NestShape([shapes.circle((0, 0), 18).flatten(0.1)], 6)]
+    res = nest(shapes_, st)
+    assert not res.unplaced
+    assert_valid(shapes_, res, st)
+
+
+def test_convex_parts_cover_the_polygon():
+    import pyclipper
+    from iyicam.nesting.nest import convex_parts, is_convex
+    for poly in ([(0, 0), (100, 0), (100, 100), (50, 40), (0, 100)], shapes.star((0, 0), 50, 20, 9).flatten()):
+        ip = clip.to_int(poly)
+        parts = convex_parts(ip)
+        assert parts and all(is_convex(p) for p in parts)
+        assert sum(abs(pyclipper.Area(p)) for p in parts) == pytest.approx(abs(pyclipper.Area(ip)))

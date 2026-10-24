@@ -563,7 +563,8 @@ class NestingDialog(QDialog):
                   choices=[("left", "Left (X min)"), ("bottom", "Bottom (Y min)"), ("compact", "Smallest area")],
                   group="Strategy"),
             Param("iterations", "Optimisation attempts", "int", 1, min=1, max=200, group="Strategy"),
-            Param("tolerance", "Outline tolerance", "length", 0.2, min=0.01, group="Strategy"),
+            Param("tolerance", "Outline tolerance", "length", 0.5, min=0.01, group="Strategy",
+                  help="Outlines are simplified this much; parts may end up this much further apart"),
         ]
         lay = QVBoxLayout(self)
         presets = QComboBox()

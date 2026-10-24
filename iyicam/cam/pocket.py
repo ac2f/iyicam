@@ -107,7 +107,7 @@ class PocketOp(Operation):
         if v["strategy"] == "raster":
             pattern = self._raster(inner, so, r, tol)
         else:
-            pattern = self._offset(inner, so, r, tol)
+            pattern = self._offset(region, r + v["allowance"] + fin, so, tol)
         rest_from = v["rest_from"] or 0.0
         if rest_from > 2 * r + 1e-6:
             pattern = self._rest(pattern, region, r, rest_from / 2, v["allowance"] + fin, tol)
@@ -117,7 +117,9 @@ class PocketOp(Operation):
         else:
             if rest_from > 0:
                 ctx.warn("Rest machining needs a previous tool larger than this one; machining everything")
-            pattern = self._add_cleanup(pattern, inner, r, tol)
+            # offset rings no further apart than the tool radius provably leave nothing behind
+            if v["strategy"] == "raster" or so > r * (1 + 1e-9):
+                pattern = self._add_cleanup(pattern, inner, r, tol)
         if v["direction"] == "conventional":
             pattern = [PatternPath(p.contour.reversed() if p.contour.closed else p.contour, p.group)
                        for p in pattern]
@@ -148,15 +150,21 @@ class PocketOp(Operation):
         return [self.make_toolpath(ctx, mb.finish())]
 
     # -- patterns -------------------------------------------------------------------
-    def _offset(self, inner: list[clip.Poly], so: float, r: float, tol: float) -> list[PatternPath]:
+    def _offset(self, region: list[clip.Poly], first: float, so: float, tol: float) -> list[PatternPath]:
+        """Contour parallel rings at ``first``, ``first + so``, ... inside ``region``.
+
+        Every ring is offset from the original region: offsetting the previous ring
+        again and again multiplies the number of polygon points.
+        """
         rings: list[tuple[int, Contour]] = []
-        cur = inner
         lvl = 0
-        while cur and lvl < 10000:
+        while lvl < 10000:
+            cur = clip.offset(region, -(first + lvl * so), arc_tol=tol / 2)
+            if not cur:
+                break
             for p in cur:
                 if len(p) >= 3:
                     rings.append((lvl, arcfit.fit_contour(p, True, tol)))
-            cur = clip.offset(cur, -so, arc_tol=tol / 2)
             lvl += 1
         top = max((l for l, _ in rings), default=0)
         inside_out = self.values["order"] == "inside_out"
@@ -212,14 +220,16 @@ class PocketOp(Operation):
     def _add_cleanup(self, pattern: list[PatternPath], inner: list[clip.Poly], r: float,
                      tol: float) -> list[PatternPath]:
         """Find material the pattern misses and add loops around those slivers."""
-        closed = [p.contour.flatten(tol) for p in pattern if p.contour.closed]
-        opened = [p.contour.flatten(tol) for p in pattern if not p.contour.closed]
-        covered = clip.offset_lines(closed, r * 0.999, join="round", closed=True) if closed else []
+        ftol = max(tol, min(0.02, r * 0.01))  # a coarse picture is enough to find missed material
+        closed = [p.contour.flatten(ftol) for p in pattern if p.contour.closed]
+        opened = [p.contour.flatten(ftol) for p in pattern if not p.contour.closed]
+        covered = clip.offset_lines(closed, r * 0.999, join="round", closed=True, arc_tol=ftol) if closed else []
         if opened:
-            covered += clip.offset_lines(opened, r * 0.999, end="round")
+            covered += clip.offset_lines(opened, r * 0.999, end="round", arc_tol=ftol)
         covered = clip.union(covered)
-        reach = clip.offset(inner, r * 0.999)
+        reach = clip.offset(inner, r * 0.999, arc_tol=ftol)
         missing = clip.boolean(reach, covered, "difference")
+        missing = clip.offset(clip.offset(missing, -2 * ftol), 2 * ftol)  # drop approximation slivers
         extra = []
         for poly in missing:
             if abs(clip.area([poly])) < max(1e-3, (r * 0.05) ** 2):
