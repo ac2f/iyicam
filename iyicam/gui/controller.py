@@ -258,8 +258,14 @@ class Controller(QObject):
         self.toolpaths_changed.emit()
 
     def recalculate(self, only: set[str] | None = None) -> dict:
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QApplication
         t0 = time.perf_counter()
-        res = compute_all(self.project, self.registry, only)
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            res = compute_all(self.project, self.registry, only)
+        finally:
+            QApplication.restoreOverrideCursor()
         if only is None:
             self.results = res
             self.stale = False

@@ -356,3 +356,14 @@ def test_profile_manual_tabs():
     assert len(on_tab) == 2 * 2  # two tabs (the far point is ignored) on the passes at -9 and -12
     mids = {(round(m.x), round(m.y)) for m in on_tab}
     assert any(abs(x - 95) <= 1 or abs(x - 105) <= 1 for x, y in mids)
+
+
+def test_safety_warnings():
+    part = shapes.rectangle(-5, 10, 50, 50)  # sticks out of the sheet on the left
+    p, s, objs = make_project([part], thickness=18)
+    res = compute_toolpath(p, add_tp(p, "profile", end_mill(6, flute_length=12), {"overcut": 2.0}, objs), s)
+    text = " | ".join(res.warnings)
+    assert "below the material" in text and "outside the sheet" in text and "flutes" in text
+    p, s, objs = make_project([shapes.rectangle(20, 20, 50, 50)], thickness=18)
+    res = compute_toolpath(p, add_tp(p, "profile", end_mill(6, flute_length=25), {}, objs), s)
+    assert not res.warnings

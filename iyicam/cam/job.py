@@ -42,11 +42,32 @@ def compute_toolpath(project: Project, tdef: ToolpathDef, sheet: Sheet,
     except Exception as exc:  # strategies (and plugins) must never crash the application
         res.error = f"{type(exc).__name__}: {exc}"
         res.warnings.append(traceback.format_exc(limit=4))
-    res.warnings = ctx.warnings + res.warnings
+    res.warnings = ctx.warnings + res.warnings + safety_warnings(project, sheet, res.toolpaths)
     for tp in res.toolpaths:
         tp.warnings = list(res.warnings)
     registry.emit("toolpath_computed", project, tdef, sheet, res)
     return res
+
+
+def safety_warnings(project: Project, sheet: Sheet, toolpaths: list[Toolpath],
+                    spoilboard: float = 1.0, margin: float = 0.01) -> list[str]:
+    """Checks every machine operator wants before pressing start."""
+    out = []
+    thick = project.sheet_thickness(sheet)
+    for tp in toolpaths:
+        st = tp.stats()
+        if not st.feed_length:
+            continue
+        below = -st.zmin - thick
+        if below > spoilboard + 1e-6:
+            out.append(f"{tp.name}: goes {below:.2f} mm below the material (into the spoilboard)")
+        if st.xmin < -margin or st.ymin < -margin or st.xmax > sheet.width + margin or st.ymax > sheet.height + margin:
+            out.append(f"{tp.name}: cuts outside the sheet ({st.xmin:.1f}, {st.ymin:.1f}) - "
+                       f"({st.xmax:.1f}, {st.ymax:.1f})")
+        fl = tp.tool.flute_length
+        if fl > 0 and -st.zmin > fl + 1e-6 and tp.tool.type in ("end_mill", "ball_nose", "bull_nose"):
+            out.append(f"{tp.name}: {-st.zmin:.2f} mm deep but the tool's flutes are only {fl:g} mm long")
+    return out
 
 
 def compute_all(project: Project, registry: Registry = REGISTRY,
