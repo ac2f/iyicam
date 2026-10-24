@@ -10,8 +10,10 @@ with Python plugins.
 > modüler bir CAM yazılımıdır. Vektör katmanları, sheet'ler, malzeme/derinlik
 > ayarı, kontür (profil), cep, delme, gravür ve V-oyma takım yolları, köprüler
 > (tab), rampa ve giriş/çıkış yayları, gerçek şekil nesting, NcStudio / Mach3 /
-> Mach4 / Fanuc / LinuxCNC / Syntec postprocessor'ları, takım veritabanı,
-> malzeme kaldırma simülasyonu ve Python eklenti sistemi içerir. Arayüz
+> Mach4 / Fanuc / LinuxCNC / Syntec postprocessor'ları, takım veritabanı ve
+> kesme hızı hesaplayıcı, malzeme kaldırma simülasyonu, G-kod görüntüleme,
+> bitmap'ten vektöre izleme, vektör doktoru, kırpma aracı ve Python eklenti
+> sistemi içerir. Arayüz
 > İngilizcedir. Kurulum ve kullanım aşağıdadır; eklenti yazımı için
 > [docs/plugins.md](docs/plugins.md), postprocessor düzenleme için
 > [docs/postprocessors.md](docs/postprocessors.md) dosyalarına bakın.
@@ -22,7 +24,8 @@ with Python plugins.
 - Vectors made of lines, arcs and cubic beziers; open or closed; compound vectors (text, groups)
 - Vector layers (colour, show/hide, lock, active layer) and multiple **sheets** per project
 - Drawing tools: polyline / bezier (click or drag), line, rectangle, circle, ellipse, polygon,
-  star, 3-point arc, text (any installed font), measure
+  star, 3-point arc, text (any installed font), measure, **trim** (cut away the piece of a vector
+  between crossings)
 - Snapping to nodes, midpoints, arc centres, sheet corners and the grid
 - Selection with move / scale / rotate handles, window and crossing selection, nudging
 - **Node editing**: drag nodes and bezier handles, insert / delete nodes, convert spans
@@ -30,28 +33,37 @@ with Python plugins.
 - Vector commands: offset (round / sharp), weld, subtract, intersect, join with tolerance,
   close, group / ungroup / explode, fillet, chamfer, **dog-bone / T-bone** corners, smooth
   (fit arcs), simplify, convert to polyline, delete duplicates, move / position / rotate /
-  scale / set size / mirror, align, distribute, rectangular and circular arrays, bounding box,
-  select open / similar / invert
+  scale / set size / mirror, align, distribute, rectangular and circular arrays, **copy along a
+  vector**, bounding box, select open / similar / invert
+- **Vector Doctor**: finds open, nearly closed, tiny, duplicate and self-crossing vectors and fixes
+  what it can
+- **Bitmap tracing**: turn logos and scanned drawings (PNG, JPG, BMP, ...) into vectors
 - DXF import (lines, arcs, circles, polylines with bulges, splines, ellipses, blocks, OCS,
-  units, gap joining) and export; SVG import (transforms, units, Inkscape layers) and export
+  units, gap joining) and export; SVG import (transforms, units, Inkscape layers) and export;
+  HPGL (`.plt`) import from cutting plotters
 
 **Machining**
 - Material setup: thickness, Z zero top / bottom, XY origin (9 positions), safe Z,
   rapid-down clearance, home position, per-sheet thickness override
 - Tool database: end mills, ball nose, bull nose, V-bits, engraving tools, drills with
-  feeds, speeds, stepdown / stepover, tool numbers, coolant; import / export
+  feeds, speeds, stepdown / stepover, tool numbers, coolant; import / export; chip load based
+  **feeds & speeds calculator** with material presets
 - Toolpaths select vectors explicitly **or by layer** (layer based toolpaths work on every
   sheet — ideal together with nesting), can be saved and loaded as templates
 - **Profile**: outside / inside / on, climb / conventional, allowance, sharp corners,
-  finish pass, flat or ramped (3D) **tabs**, linear or spiral **ramping**, arc / line
-  **lead in/out**, overlap, holes before outlines, user controlled start points
+  finish pass, flat or ramped (3D) **tabs** placed automatically or **clicked on the drawing**,
+  linear or spiral **ramping**, arc / line **lead in/out**, overlap, holes before outlines, user
+  controlled start points
 - **Pocket**: offset or raster strategy, islands, wall allowance and finish pass,
-  automatic clean-up of missed material, plunge / zig-zag ramp / helix entry
+  automatic clean-up of missed material, plunge / zig-zag ramp / helix entry, **rest machining**
+  after a larger tool
 - **Drilling**: centres, circles only or circles matching the drill, peck, dwell,
   drill point compensation; canned cycles (G81/G83) when the post supports them
 - **Engrave**: follow vectors at a depth or at a depth derived from a V-bit line width
 - **V-carve**: exact inscribed-circle carving, flat depth with automatic flat area clearing
+- **Fluting**: follow vectors with linear or S-curve depth ramps at both ends
 - Time estimates, warnings, height-map **material removal simulation**, HTML job report
+- **G-code backplot**: open any G-code file, see it over the sheet and simulate it
 
 **Nesting** – true shape nesting with no-fit polygons: rotations (none / 180 / 90 / 45 /
 15 degree steps), part spacing, border gap, quantities, several sheets, holes and
@@ -98,7 +110,7 @@ layer based toolpaths and use **Nesting ▸ Nest Parts** — the toolpaths are c
 every sheet the nesting creates.
 
 Useful keys: `S` select, `N` nodes, `P` polyline, `L` line, `R` rectangle, `C` circle,
-`E` ellipse, `G` polygon, `A` arc, `T` text, `M` measure, `F` zoom extents, wheel to zoom,
+`E` ellipse, `G` polygon, `A` arc, `T` text, `M` measure, `X` trim, `F` zoom extents, wheel to zoom,
 middle button or Space+drag to pan, `Esc` back to selection, `F5` recalculate, `F6` simulate,
 `F7`/`F8` grid / vector snapping. **Help ▸ Keyboard Shortcuts** lists them all.
 
