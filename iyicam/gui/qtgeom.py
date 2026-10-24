@@ -122,6 +122,26 @@ def path_to_contours(path: QPainterPath, flip_y: bool = True) -> list[Contour]:
     return [c for c in out if len(c.segs) >= 2 and c.area() > 1e-9]
 
 
+def image_to_gray(path: str):
+    """Load an image as a 2D numpy array of grey values (transparent pixels become white)."""
+    import numpy as np
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QImage, QPainter
+
+    img = QImage(path)
+    if img.isNull():
+        raise ValueError(f"cannot read image {path}")
+    flat = QImage(img.size(), QImage.Format_RGB32)
+    flat.fill(Qt.white)
+    p = QPainter(flat)
+    p.drawImage(0, 0, img)
+    p.end()
+    g = flat.convertToFormat(QImage.Format_Grayscale8)
+    w, h, bpl = g.width(), g.height(), g.bytesPerLine()
+    arr = np.frombuffer(g.constBits(), dtype=np.uint8, count=bpl * h).reshape(h, bpl)[:, :w]
+    return arr.astype(float)
+
+
 def text_contours(text: str, family: str, height: float, bold: bool = False, italic: bool = False,
                   spacing: float = 0.0, line_spacing: float = 1.4, align: str = "left") -> list[Contour]:
     """Outline contours of ``text`` with capital letters ``height`` mm tall, baseline at y = 0."""

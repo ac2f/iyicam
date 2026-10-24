@@ -236,3 +236,20 @@ def test_trim_tool(win):
     assert h.bbox().xmax == pytest.approx(200, abs=1e-3)
     ctrl.undo()
     assert ctrl.sheet.vectors[0].bbox().xmax == pytest.approx(300)
+
+
+def test_trace_bitmap(win, tmp_path):
+    from PySide6.QtGui import QColor, QImage, QPainter
+    img = QImage(200, 100, QImage.Format_ARGB32)
+    img.fill(QColor(0, 0, 0, 0))  # transparent background counts as white
+    p = QPainter(img)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setBrush(QColor("black"))
+    p.drawEllipse(50, 0, 100, 100)
+    p.end()
+    f = tmp_path / "logo.png"
+    img.save(str(f))
+    objs = win.trace_bitmap(str(f), {"width": 100.0, "threshold": 128, "invert": False, "smoothing": 0.6,
+                                     "min_area": 8, "center": True})
+    assert len(objs) == 1 and len(objs[0].contours) == 1
+    assert objs[0].contours[0].area() == pytest.approx(math.pi * 25 ** 2, rel=0.03)

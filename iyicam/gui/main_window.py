@@ -197,6 +197,8 @@ class MainWindow(QMainWindow):
             m.addAction(a)
 
         m = mb.addMenu("&Vectors")
+        self._act(m, "Trace &Bitmap...", self.trace_bitmap)
+        m.addSeparator()
         self._command_menus(m, "Vectors")
 
         m = mb.addMenu("&Toolpaths")
@@ -406,6 +408,55 @@ class MainWindow(QMainWindow):
         self.canvas.zoom_extents()
         self.statusBar().showMessage(f"Imported {len(objs)} vector(s) from {Path(path).name}", 5000)
         return objs
+
+    def trace_bitmap(self, path: str | None = None, options: dict | None = None) -> list[VectorObject]:
+        """Turn a picture (logo, scanned drawing) into vectors."""
+        import numpy as np
+        from ..core.trace import trace
+        from .qtgeom import image_to_gray
+        if not path:
+            path, _ = QFileDialog.getOpenFileName(self, "Trace bitmap", "",
+                                                  "Images (*.png *.jpg *.jpeg *.bmp *.gif *.tif *.tiff)")
+            if not path:
+                return []
+        try:
+            gray = image_to_gray(path)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Trace bitmap", str(exc))
+            return []
+        h, w = gray.shape
+        if options is None:
+            params = [Param("width", "Width of the result", "length", min(self.ctrl.sheet.width * 0.8, 200.0),
+                            min=0.01),
+                      Param("threshold", "Threshold (0-255)", "int", 128, min=1, max=254,
+                            help="Pixels darker than this become the shape"),
+                      Param("invert", "Trace light areas instead", "bool", False),
+                      Param("smoothing", "Smoothing (pixels)", "float", 0.6, min=0.05, max=10.0),
+                      Param("min_area", "Ignore specks smaller than (pixels)", "float", 8.0, min=0.0),
+                      Param("center", "Centre on the sheet", "bool", True)]
+            dlg = QDialog(self)
+            dlg.setWindowTitle(f"Trace {Path(path).name} ({w} x {h} px)")
+            lay = QVBoxLayout(dlg)
+            form = ParamForm(params, None, self.ctrl.units)
+            lay.addWidget(form)
+            lay.addWidget(buttons(dlg, "Trace"))
+            if not dlg.exec():
+                return []
+            options = form.values()
+        px = options.get("width", 100.0) / max(1, w)
+        contours = trace(np.asarray(gray), options.get("threshold", 128), options.get("invert", False), px,
+                         options.get("min_area", 8.0), options.get("smoothing", 0.6))
+        if not contours:
+            QMessageBox.information(self, "Trace bitmap", "Nothing was found at this threshold.")
+            return []
+        c = self.ctrl
+        obj = VectorObject(contours, c.layer_id, Path(path).stem)
+        if options.get("center", True):
+            bb = obj.bbox()
+            obj.transform(Transform.translate(c.sheet.width / 2 - bb.center[0], c.sheet.height / 2 - bb.center[1]))
+        c.add_vectors([obj], "Trace bitmap")
+        self.statusBar().showMessage(f"Traced {len(contours)} contour(s)", 5000)
+        return [obj]
 
     def export_vectors(self) -> None:
         reg = self.ctrl.registry
