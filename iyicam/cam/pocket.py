@@ -98,12 +98,33 @@ class PocketOp(Operation):
         self._r = r
         so = v["stepover"] if v["stepover"] > 0 else tool.stepover
         so = max(0.01, min(so, 2 * r * 0.98))
-        region = vectorops.region(closed, tol / 2)
+        if 0 < (v["rest_from"] or 0.0) <= 2 * r + 1e-6:
+            ctx.warn("Rest machining needs a previous tool larger than this one; machining everything")
+        # separate areas are machined one after the other, nearest first
+        parts = [[outer] + holes for outer, holes in clip.polytree(vectorops.region(closed, tol / 2))]
+        mb = MoveBuilder(ctx.safe_z, ctx.clearance, tool.feed_rate, tool.plunge_rate, -start)
+        pos = ctx.material.home[:2]
+        done = []
+        while parts:
+            k = min(range(len(parts)), key=lambda i: min(dist(pos, q) for q in parts[i][0]))
+            done.append(self._machine(mb, parts.pop(k), levels, r, so, tol, pos))
+            pos = mb.pos[:2] if mb.pos else pos
+        if "ok" not in done:
+            ctx.warn("Nothing is left for rest machining: the larger tool reaches everywhere" if "rest" in done
+                     else "The tool does not fit inside the selected vectors")
+            return []
+        if "small" in done:
+            ctx.warn("The tool does not fit inside some of the selected vectors")
+        return [self.make_toolpath(ctx, mb.finish())]
+
+    def _machine(self, mb: MoveBuilder, region: list[clip.Poly], levels: list[float], r: float, so: float,
+                 tol: float, pos: Pt) -> str:
+        """Pocket one connected area (outline and its islands): 'ok', 'small' or 'rest'."""
+        v = self.values
         fin = v["finish_wall"] or 0.0
         inner = clip.offset(region, -(r + v["allowance"] + fin), arc_tol=tol / 2)
         if not inner:
-            ctx.warn("The tool does not fit inside the selected vectors")
-            return []
+            return "small"
         if v["strategy"] == "raster":
             pattern = self._raster(inner, so, r, tol)
         else:
@@ -112,22 +133,15 @@ class PocketOp(Operation):
         if rest_from > 2 * r + 1e-6:
             pattern = self._rest(pattern, region, r, rest_from / 2, v["allowance"] + fin, tol)
             if not pattern:
-                ctx.warn("Nothing is left for rest machining: the larger tool reaches everywhere")
-                return []
-        else:
-            if rest_from > 0:
-                ctx.warn("Rest machining needs a previous tool larger than this one; machining everything")
+                return "rest"
+        elif v["strategy"] == "raster" or so > r * (1 + 1e-9):
             # offset rings no further apart than the tool radius provably leave nothing behind
-            if v["strategy"] == "raster" or so > r * (1 + 1e-9):
-                pattern = self._add_cleanup(pattern, inner, r, tol)
+            pattern = self._add_cleanup(pattern, inner, r, tol)
         if v["direction"] == "conventional":
             pattern = [PatternPath(p.contour.reversed() if p.contour.closed else p.contour, p.group)
                        for p in pattern]
-        pattern = self._link(pattern, inner, so, r, ctx.material.home[:2])
-
-        surface = -start
-        mb = MoveBuilder(ctx.safe_z, ctx.clearance, tool.feed_rate, tool.plunge_rate, surface)
-        floor = surface
+        pattern = self._link(pattern, inner, so, r, pos)
+        floor = mb.surface
         for z in levels:
             for k, pp in enumerate(pattern):
                 c = pp.contour
@@ -147,7 +161,7 @@ class PocketOp(Operation):
                     c = vectorops.set_start_point(c, mb.pos[:2])
                 mb.hop(c.start[0], c.start[1], levels[-1])
                 self._cut(mb, c, levels[-1])
-        return [self.make_toolpath(ctx, mb.finish())]
+        return "ok"
 
     # -- patterns -------------------------------------------------------------------
     def _offset(self, region: list[clip.Poly], first: float, so: float, tol: float) -> list[PatternPath]:

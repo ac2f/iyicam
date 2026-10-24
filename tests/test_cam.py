@@ -428,3 +428,17 @@ def test_tiling_splits_cuts_at_band_edges(axis):
     assert len(holes) == 1 and holes[0][0] == 2 and (holes[0][1].x, holes[0][1].y)[ax] == pytest.approx(50)
     assert [t.sheet.thickness for t in tiles] == [s.thickness] * 3
     assert (tiles[0].sheet.width, tiles[0].sheet.height)[ax] == 200
+
+
+def test_pocket_finishes_one_area_before_the_next():
+    a, b = shapes.rectangle(0, 0, 60, 40), shapes.rectangle(100, 0, 60, 40)
+    p, s, objs = make_project([a, b])
+    tp = run(p, s, add_tp(p, "pocket", end_mill(6), {"cut_depth": 6, "stepdown": 3}, objs)).toolpaths[0]
+    pos, crossings = None, 0
+    for m in tp.moves:
+        if hasattr(m, "x"):
+            if pos is not None and (pos[0] < 80) != (m.x < 80):
+                crossings += 1
+            pos = (m.x, m.y, m.z)
+    assert crossings == 1  # both depth levels of the first area, then the second
+    assert cut_length([tp]) > 0
