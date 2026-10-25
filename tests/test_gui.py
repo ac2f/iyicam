@@ -406,3 +406,29 @@ def test_start_points_dialog_and_tool(win):
     assert cut["start"] == pytest.approx((47, 150), abs=0.5)
     QTest.mouseClick(cv, Qt.RightButton, Qt.NoModifier, at(cv, 50, 150))
     assert o.locked_starts == []
+
+
+def test_cutting_direction_per_strategy(win):
+    from iyicam.gui.sequence_dialogs import CutOrderDialog, DirectionsDialog
+    ctrl, t, objs = _parts_with_profile(win)
+    dlg = CutOrderDialog(ctrl, t.id, win)
+    dlg.strategy.setCurrentIndex(dlg.strategy.findData("rows_br"))
+    dlg.direction.setCurrentIndex(dlg.direction.findData("conventional"))
+    dlg.strategy.setCurrentIndex(dlg.strategy.findData("rows_bl"))
+    assert dlg.direction.currentData() == "toolpath"  # rows_bl keeps its own setting
+    dlg.direction.setCurrentIndex(dlg.direction.findData("climb"))
+    assert t.sequence["directions"] == {"rows_br": "conventional", "rows_bl": "climb"}
+    cuts = ctrl.sheet_toolpaths()[0].cuts
+    assert all(not c["loop"].is_ccw() for c in cuts)  # climb outside: clockwise
+    dlg.strategy.setCurrentIndex(dlg.strategy.findData("rows_br"))
+    assert dlg.direction.currentData() == "conventional"
+    assert all(c["loop"].is_ccw() for c in ctrl.sheet_toolpaths()[0].cuts)
+    table = DirectionsDialog(ctrl, t.sequence, win)
+    table.combos["diag_tr"].setCurrentIndex(table.combos["diag_tr"].findData("cw"))
+    assert table.directions()["diag_tr"] == "cw" and table.directions()["rows_br"] == "conventional"
+    # defaults for new toolpaths
+    from iyicam.core.document import Selection, ToolpathDef
+    ctrl.settings.strategy_directions = table.directions()
+    t2 = ToolpathDef("Second", "profile", t.tool, {"through": True}, Selection("vectors", [objs[0].id]))
+    ctrl.add_toolpath(t2)
+    assert t2.sequence["directions"]["diag_tr"] == "cw"

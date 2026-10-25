@@ -17,6 +17,7 @@ class Settings:
     show_tool_width: bool = False
     show_directions: bool = False
     show_cut_order: bool = False      # number the cuts of the toolpaths on the drawing
+    strategy_directions: dict = field(default_factory=dict)  # cutting direction per cut order strategy
     auto_recalculate: bool = True     # recalculate toolpaths after edits (small projects)
     recent_files: list[str] = field(default_factory=list)
     disabled_plugins: list[str] = field(default_factory=list)

@@ -58,10 +58,12 @@ GROUPINGS: list[tuple[str, str]] = [
 ]
 
 DIRECTIONS: list[tuple[str, str]] = [
-    ("toolpath", "As the toolpath says (climb / conventional)"),
-    ("mirror", "Mirrored with the sweep (clockwise for bottom left → top right)"),
+    ("toolpath", "As the toolpath says"),
+    ("climb", "Climb milling"),
+    ("conventional", "Conventional milling"),
     ("cw", "Outlines clockwise"),
     ("ccw", "Outlines counter-clockwise"),
+    ("mirror", "Mirrored with the sweep (clockwise for bottom left → top right)"),
 ]
 
 DEFAULTS: dict = {
@@ -74,6 +76,7 @@ DEFAULTS: dict = {
     "start_margin": 1.0,       # keep the plunge this far from machined areas
     "corner_distance": 0.0,    # keep the start this far from corners (0 = automatic)
     "direction": "toolpath",   # cutting direction of part outlines, see DIRECTIONS
+    "directions": {},          # the same per strategy: {strategy: direction}, over "direction"
 }
 
 _CORNERS = {"bl": (1.0, 1.0), "br": (-1.0, 1.0), "tl": (1.0, -1.0), "tr": (-1.0, -1.0)}
@@ -113,12 +116,32 @@ def mirrored_clockwise(strategy: str) -> bool | None:
     return h[0] * h[1] > 0
 
 
-def outline_clockwise(cfg: dict) -> bool | None:
-    """Requested direction of part outlines (``None``: as the toolpath says)."""
-    d = cfg.get("direction", "toolpath")
+def direction_for(cfg: dict) -> str:
+    """The cutting direction chosen for the strategy in use (see DIRECTIONS)."""
+    s = settings(cfg)
+    return (s.get("directions") or {}).get(s["strategy"], s["direction"])
+
+
+def milling(cfg: dict, side: str, climb: bool) -> tuple[bool, bool | None]:
+    """``(climb, clockwise)`` for a profile cut on ``side`` whose own setting is ``climb``.
+
+    Climb milling runs clockwise around the outside of a part and counter-clockwise
+    inside it. ``clockwise`` is only set for cuts on the line, which have no side
+    to mill on: their closed vectors are then turned that way.
+    """
+    d = direction_for(cfg)
+    if d in ("climb", "conventional"):
+        return (d == "climb", None)
+    cw = {"cw": True, "ccw": False}.get(d)
     if d == "mirror":
-        return mirrored_clockwise(cfg.get("strategy", "nearest"))
-    return {"cw": True, "ccw": False}.get(d)
+        cw = mirrored_clockwise(settings(cfg)["strategy"])
+    if cw is None:
+        return (climb, None)
+    if side == "outside":
+        return (cw, None)
+    if side == "inside":
+        return (not cw, None)
+    return (climb, cw)
 
 
 def settings(d: dict | None) -> dict:
@@ -126,6 +149,7 @@ def settings(d: dict | None) -> dict:
     out = dict(DEFAULTS)
     out.update(d or {})
     out["order"] = list(out.get("order") or [])
+    out["directions"] = dict(out.get("directions") or {})
     return out
 
 

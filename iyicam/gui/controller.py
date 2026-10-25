@@ -233,6 +233,8 @@ class Controller(QObject):
 
     # -- toolpaths -----------------------------------------------------------------------------------
     def add_toolpath(self, tdef: ToolpathDef) -> None:
+        if self.settings.strategy_directions and "directions" not in tdef.sequence:
+            tdef.sequence["directions"] = dict(self.settings.strategy_directions)
         with self.edit(f"Add toolpath {tdef.name}", geometry=False):
             self.project.toolpaths.append(tdef)
         self.recalculate({tdef.id})

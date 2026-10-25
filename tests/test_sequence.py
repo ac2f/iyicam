@@ -516,3 +516,36 @@ def test_creeping_passes_still_close_where_planned(ramp, overlap):
     assert math.dist(closing, c["close"]) < 1.5
     side, d = edge_of(c["close"], objs[0].bbox())
     assert side == "right" and d["bottom"] == pytest.approx(TOOL_R, abs=0.3)
+
+
+def _cut_directions(tp):
+    """{key: clockwise} of the closed cuts."""
+    return {c["key"]: not c["loop"].is_ccw() for c in tp.cuts if c["closed"]}
+
+
+def test_every_strategy_has_its_own_cutting_direction():
+    part = [shapes.rectangle(20, 20, 60, 40), shapes.circle((50, 40), 8)]
+    p, s, objs = make_project([part], size=(120, 100))
+    t = add_tp(p, "profile", end_mill(6), {"through": True, "direction": "climb"}, objs)
+    outline, hole = f"{objs[0].id}:0", f"{objs[0].id}:1"
+    dirs = {"rows_bl": "climb", "rows_br": "conventional", "rows_tl": "cw", "rows_tr": "ccw"}
+    expect = {"rows_bl": True, "rows_br": False, "rows_tl": True, "rows_tr": False,
+              "diag_bl": False, "zigzag_up": False}  # the last two fall back to "direction": conventional
+    for strategy, cw in expect.items():
+        t.sequence = {"strategy": strategy, "directions": dirs, "direction": "conventional"}
+        d = _cut_directions(compute_toolpath(p, t, s).toolpaths[0])
+        assert d[outline] == cw, strategy
+        assert d[hole] == (not cw), strategy  # holes mill like their outline: the other way round
+
+
+def test_direction_choices_for_inside_and_on_the_line_cuts():
+    p, s, objs = make_project([shapes.rectangle(20, 20, 60, 40)], size=(120, 100))
+    key = f"{objs[0].id}:0"
+    t = add_tp(p, "profile", end_mill(6), {"through": True, "side": "inside"}, objs)
+    for choice, cw in (("cw", True), ("ccw", False), ("climb", False), ("conventional", True)):
+        t.sequence = {"direction": choice}
+        assert _cut_directions(compute_toolpath(p, t, s).toolpaths[0])[key] == cw, choice
+    e = add_tp(p, "engrave", end_mill(3), {"cut_depth": 1}, objs)
+    for choice, cw in (("cw", True), ("ccw", False)):
+        e.sequence = {"direction": choice}
+        assert _cut_directions(compute_toolpath(p, e, s).toolpaths[0])[key] == cw, choice

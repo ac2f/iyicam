@@ -161,7 +161,7 @@ class ProfileOp(Operation):
         sources = [(f"{o.id}:{i}", c) for o in ctx.objects for i, c in enumerate(o.contours) if c.segs]
         cfg = seq.settings(ctx.tdef.sequence)
         self._sheet = BBox(0.0, 0.0, ctx.sheet.width, ctx.sheet.height)
-        items = self._items(ctx, sources, r, seq.outline_clockwise(cfg))
+        items = self._items(ctx, sources, r, *seq.milling(cfg, v["side"], v["direction"] == "climb"))
         if not items:
             ctx.warn("No vectors to machine")
             return []
@@ -236,12 +236,12 @@ class ProfileOp(Operation):
         tp.cuts = cuts
         return [tp]
 
-    def _items(self, ctx: OpContext, sources: list[tuple[str, Contour]], r: float,
+    def _items(self, ctx: OpContext, sources: list[tuple[str, Contour]], r: float, climb: bool = True,
                clockwise: bool | None = None) -> list[CutItem]:
         """Loops to cut, each tagged with the key of the vector contour it belongs to.
 
-        ``clockwise`` overrides the direction of part outlines (holes keep the same
-        climb / conventional milling as their outline)."""
+        ``climb`` is the milling of outside / inside cuts (holes mill like their
+        outline); ``clockwise`` turns closed vectors cut on the line."""
         v = self.values
         tol = ctx.tolerance
         closed = [(k, c) for k, c in sources if c.closed]
@@ -257,9 +257,6 @@ class ProfileOp(Operation):
         elif closed:
             base = r + v["allowance"]
             sign = 1.0 if v["side"] == "outside" else -1.0
-            climb = v["direction"] == "climb"
-            if clockwise is not None:  # climb milling runs clockwise around the outside of a part
-                climb = clockwise if v["side"] == "outside" else not clockwise
             # Clipper keeps the solid on the left; for outside cuts that is the part.
             reverse = climb if v["side"] == "outside" else not climb
             fin = v["finish_pass"] or 0.0

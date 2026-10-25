@@ -50,6 +50,26 @@ outlines** (the sheet stays whole the longest) or **part by part**. Rows and
 columns are found automatically (a new row starts where the next part is more
 than half a part size further on) or use a fixed **row / column size**.
 
+### Cutting direction per strategy
+
+Every strategy has its own cutting direction (**Cut Order ▸ Direction (this
+strategy)**; **All strategies...** sets them all at once and can keep them for new
+toolpaths). Switching the strategy switches the direction with it, e.g. climb
+milling for bottom left → top right and conventional for top right → bottom left.
+
+| Direction | Outside cuts | Their holes | Inside cuts |
+|---|---|---|---|
+| As the toolpath says | the toolpath's climb / conventional | same milling as the outline | the toolpath's setting |
+| Climb milling | clockwise | counter-clockwise | counter-clockwise |
+| Conventional milling | counter-clockwise | clockwise | clockwise |
+| Outlines clockwise | clockwise | counter-clockwise (same milling) | clockwise |
+| Outlines counter-clockwise | counter-clockwise | clockwise (same milling) | counter-clockwise |
+| Mirrored with the sweep | clockwise for bottom left → top right and top right → bottom left, otherwise counter-clockwise | same milling as the outline | as the outlines |
+
+Directions are for a clockwise turning spindle (M3). Vectors cut on the line have
+no side: clockwise / counter-clockwise turns them, climb / conventional leaves
+them as drawn. Smart start points always plan with the direction that is cut.
+
 With automatic ordering off, the order is frozen: new vectors are added at the
 end, deleted ones leave, and only the rules above can move a cut. Picking the
 order on the drawing or moving a row freezes the order.
@@ -77,11 +97,8 @@ points put it where the part stays held best until the very last moment:
   distance above the bottom right corner (the cut runs along the bottom, up the
   left, along the top and finishes down the right side); when its right side faces
   a neighbour that is already cut, it closes at the top right instead. The mirror
-  images follow for the other sweeps. **Cut Order ▸ Outline direction** keeps the
-  toolpath's climb / conventional setting, mirrors it with the sweep (clockwise for
-  bottom left → top right and top right → bottom left, counter-clockwise for the
-  other two) or sets clockwise / counter-clockwise; holes keep the same milling as
-  their outline.
+  images follow for the other sweeps. The direction is part of the cut order, see
+  below.
 * **Long narrow parts and letters** (strips with a length of 2.5 times their
   width or more, shapes far from convex such as letters, L and T shapes) always
   close a corner distance before their bottom right corner in a bottom left → top

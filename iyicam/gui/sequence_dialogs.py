@@ -109,9 +109,14 @@ class CutOrderDialog(_ToolpathDialog):
         self.direction = QComboBox()
         for k, label in seq.DIRECTIONS:
             self.direction.addItem(label, k)
-        self.direction.setToolTip("Direction the part outlines are cut in; holes follow with the same climb or "
-                                  "conventional milling. Start points take the direction into account.")
-        form.addRow("Outline direction", self.direction)
+        self.direction.setToolTip("Cutting direction used with this strategy (every strategy keeps its own); "
+                                  "holes mill like their outline. Start points take the direction into account.")
+        self.all_dirs = QPushButton("All strategies...")
+        self.all_dirs.setToolTip("Set the direction of every strategy at once, and the defaults of new toolpaths")
+        row = QHBoxLayout()
+        row.addWidget(self.direction, 1)
+        row.addWidget(self.all_dirs)
+        form.addRow("Direction (this strategy)", row)
         lay.addLayout(form)
         note = QLabel("Whatever the strategy, vectors inside others (holes, parts in holes, engravings) are "
                       "always cut before the vector around them, so nothing is cut once it is loose.")
@@ -148,7 +153,8 @@ class CutOrderDialog(_ToolpathDialog):
         self.strategy.currentIndexChanged.connect(lambda: self._set(strategy=self.strategy.currentData()))
         self.grouping.currentIndexChanged.connect(lambda: self._set(grouping=self.grouping.currentData()))
         self.band.editingFinished.connect(lambda: self._set(band=ctrl.units.from_display(self.band.value())))
-        self.direction.currentIndexChanged.connect(lambda: self._set(direction=self.direction.currentData()))
+        self.direction.currentIndexChanged.connect(self._set_direction)
+        self.all_dirs.clicked.connect(self._all_directions)
         self.reorder.clicked.connect(self._reorder)
         self.up.clicked.connect(lambda: self._move(-1))
         self.down.clicked.connect(lambda: self._move(1))
@@ -160,7 +166,7 @@ class CutOrderDialog(_ToolpathDialog):
         c = self.cfg()
         self._loading = True
         for w, v in ((self.auto, None), (self.strategy, c["strategy"]), (self.grouping, c["grouping"]),
-                     (self.direction, c["direction"])):
+                     (self.direction, seq.direction_for(c))):
             w.blockSignals(True)
             if v is None:
                 w.setChecked(bool(c["auto_order"]))
@@ -193,7 +199,27 @@ class CutOrderDialog(_ToolpathDialog):
     def _set(self, **changes) -> None:
         if not self._loading and self.tid:
             self.ctrl.set_sequence(self.tid, **changes)
+            if "strategy" in changes:  # every strategy has its own direction
+                self.direction.blockSignals(True)
+                self.direction.setCurrentIndex(max(0, self.direction.findData(seq.direction_for(self.cfg()))))
+                self.direction.blockSignals(False)
             self._fill()
+
+    def _set_direction(self) -> None:
+        dirs = dict(self.cfg()["directions"])
+        dirs[self.strategy.currentData()] = self.direction.currentData()
+        self._set(directions=dirs)
+
+    def _all_directions(self) -> None:
+        if not self.tid:
+            return
+        dlg = DirectionsDialog(self.ctrl, self.cfg(), self)
+        if dlg.exec():
+            self._set(directions=dlg.directions())
+            if dlg.as_default.isChecked():
+                self.ctrl.settings.strategy_directions = dlg.directions()
+                self.ctrl.settings.save()
+            self.load()
 
     def _reorder(self) -> None:
         if self.tid:
@@ -216,6 +242,39 @@ class CutOrderDialog(_ToolpathDialog):
             return
         canvas.set_tool(OrderTool(canvas, self.tid, self.start_at.value() - 1))
         self.accept()
+
+
+class DirectionsDialog(QDialog):
+    """Cutting direction of every strategy."""
+
+    def __init__(self, ctrl, cfg: dict, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Cutting direction per strategy")
+        lay = QVBoxLayout(self)
+        note = QLabel("Each strategy cuts in its own direction. Climb milling runs clockwise around the outside "
+                      "of a part; holes always mill like their outline.")
+        note.setWordWrap(True)
+        lay.addWidget(note)
+        form = QFormLayout()
+        self.combos: dict[str, QComboBox] = {}
+        current = seq.settings(cfg)
+        for k, label in seq.STRATEGIES:
+            box = QComboBox()
+            for d, dl in seq.DIRECTIONS:
+                box.addItem(dl, d)
+            box.setCurrentIndex(max(0, box.findData(current["directions"].get(k, current["direction"]))))
+            form.addRow(label, box)
+            self.combos[k] = box
+        lay.addLayout(form)
+        self.as_default = QCheckBox("Use these for new toolpaths too")
+        lay.addWidget(self.as_default)
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+
+    def directions(self) -> dict[str, str]:
+        return {k: box.currentData() for k, box in self.combos.items()}
 
 
 class StartPointsDialog(_ToolpathDialog):
