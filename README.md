@@ -9,14 +9,14 @@ with Python plugins.
 > **Türkçe özet:** iyiCAM, CNC router'lar için ArtCAM'in 2D tarafına alternatif, modüler bir CAM
 > yazılımıdır. Vektör katmanları, sheet'ler, malzeme/derinlik ayarı, kontür (profil), cep, delme,
 > gravür, V-oyma ve kakma (inlay) takım yolları, döner eksen (A) sarma, döşeme (tiling), MDF kapak
-> sihirbazı, tek çizgi (orta hat) yazı ve izleme, kesim sırası stratejileri ve akıllı başlangıç
-> noktaları, köprüler (tab), rampa ve giriş/çıkış yayları, gerçek şekil nesting, NcStudio / Mach3
-> / Mach4 / Fanuc / LinuxCNC / Syntec postprocessor'ları, takım veritabanı ve kesme hızı
-> hesaplayıcı, malzeme kaldırma simülasyonu, G-kod görüntüleme, bitmap'ten vektöre izleme, vektör
-> doktoru, kırpma aracı ve Python eklenti sistemi içerir. Arayüz İngilizcedir. Kurulum ve kullanım
-> aşağıdadır; eklenti yazımı için [docs/plugins.md](docs/plugins.md), postprocessor düzenleme için
-> [docs/postprocessors.md](docs/postprocessors.md), kesim sırası ve akıllı başlangıç noktaları
-> için [docs/cut_order.md](docs/cut_order.md) dosyalarına bakın.
+> sihirbazı, tek çizgi (orta hat) yazı ve izleme, her biri kendi kesim yönüyle kesim sırası
+> stratejileri ve akıllı başlangıç noktaları, köprüler (tab), rampa ve giriş/çıkış yayları, gerçek
+> şekil nesting, NcStudio / Mach3 / Mach4 / Fanuc / LinuxCNC / Syntec postprocessor'ları, takım
+> veritabanı ve kesme hızı hesaplayıcı, malzeme kaldırma simülasyonu, G-kod görüntüleme, bitmap'ten
+> vektöre izleme, vektör doktoru, kırpma aracı ve Python eklenti sistemi içerir. Arayüz
+> İngilizcedir. Kurulum ve kullanım aşağıdadır; eklenti yazımı için [docs/plugins.md](docs/plugins.md),
+> postprocessor düzenleme için [docs/postprocessors.md](docs/postprocessors.md), kesim sırası ve
+> akıllı başlangıç noktaları için [docs/cut_order.md](docs/cut_order.md) dosyalarına bakın.
 
 ## Features
 
@@ -75,8 +75,9 @@ with Python plugins.
   (G93) or corrected feed rates
 - **Cut order**: shortest travel, rows / columns / diagonals from any corner, zig-zag sweeps,
   smallest parts first, centre out or edges in; automatic or frozen, picked on the drawing from any
-  position. Inside-first and loose-scrap rules guarantee nothing is cut once it is free
-  ([docs/cut_order.md](docs/cut_order.md))
+  position; every strategy with its own cutting direction (climb, conventional, clockwise,
+  counter-clockwise or mirrored with the sweep). Inside-first and loose-scrap rules guarantee
+  nothing is cut once it is free ([docs/cut_order.md](docs/cut_order.md))
 - **Smart start points**: a cut closes where it starts, so the start is put where the part stays
   held best to the last moment (ahead of the sweep, away from neighbours already cut), with the well
   held sides cut last, for the actual cutting direction; long narrow parts and letters close just
@@ -189,3 +190,9 @@ the origin, Z zero and unit conversions when writing G-code.
 pip install -e ".[dev]"
 QT_QPA_PLATFORM=offscreen pytest
 ```
+
+`tests/test_gcode_integrity.py` posts jobs with many combinations of settings through
+the real post-processors and checks the G-code text itself against the drawing:
+pass depths and step (against a model of the material left), final depth, rapids,
+feed rates, tool clearance, cutting direction, cut-out, tool changes and the
+program frame. It also damages good G-code to prove each check notices.

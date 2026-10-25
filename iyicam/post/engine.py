@@ -77,6 +77,7 @@ DEFAULT_BLOCKS: dict[str, str] = {
     "arc_r": "{G} {X} {Y} {Z} {R} {F}",
     "drill": "G98 G81 {X} {Y} {Z} {R} {F}",
     "drill_peck": "G98 G83 {X} {Y} {Z} {R} {Q} {F}",
+    "drill_dwell": "G98 G82 {X} {Y} {Z} {R} {P} {F}",
     "drill_next": "{X} {Y}",
     "drill_end": "G80",
     "dwell": "G4 P{dwell}",
@@ -191,7 +192,9 @@ class PostProcessor:
         return s
 
     def fmt_feed(self, f: float) -> str:
-        return self.fmt(f * self._k, self.options["feed_decimals"], coord=False)
+        # an inch is 25.4 mm: one more decimal keeps inch feeds as close as whole mm/min (F39.4, not F39)
+        d = self.options["feed_decimals"] + (1 if self._k != 1.0 else 0)
+        return self.fmt(f * self._k, d, coord=False)
 
     def gcode(self, n: int) -> str:
         return f"G{n:02d}" if self.options["g_leading_zero"] else f"G{n}"
@@ -481,7 +484,9 @@ class PostProcessor:
 
     # -- drilling ------------------------------------------------------------------------------
     def drill(self, m: DrillCycle, tv: dict) -> None:
-        if not self.options["drill_cycles"] or self._inverse:
+        block = "drill_peck" if m.peck > 0 else "drill_dwell" if m.dwell > 0 else "drill"
+        # a cycle block that cannot say the dwell (e.g. G83) is written as moves, the dwell is never dropped
+        if not self.options["drill_cycles"] or self._inverse or (m.dwell > 0 and "{P}" not in self.blocks[block]):
             z0 = self._pos[2] if self._pos else m.r
             for sub in drill_expand(z0, m):
                 self.move(sub, tv)
@@ -507,7 +512,7 @@ class PostProcessor:
                      "P": "P" + self.fmt(m.dwell * (1000 if self.options["dwell_units"] == "ms" else 1), 3,
                                          coord=False) if m.dwell > 0 else "",
                      "F": "F" + self.fmt_feed(m.f), "G": "", "N": ""}
-            self.block("drill_peck" if m.peck > 0 else "drill", {**tv, **words})
+            self.block(block, {**tv, **words})
             self._last["F"] = self.fmt_feed(m.f)
             self._cycle = m
         self._pos = [m.x, m.y, self._cycle_z0]

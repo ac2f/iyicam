@@ -118,7 +118,7 @@ def test_units_origin_and_z_zero():
     tp = Toolpath("t", end_mill(), [Rapid(0, 0, 10), Feed(0, 0, -5, 1000), Feed(100, 0, -5, 1000)])
     post = PostProcessor({"id": "x", "options": {"units": "inch", "decimals": 4}})
     text = post.generate(__import__("iyicam.post.engine", fromlist=["PostJob"]).PostJob([tp], p, s))
-    assert "X3.937" in text and "G20" in text and "F39" in text
+    assert "X3.937" in text and "G20" in text and "F39.4" in text
     p.material.z_zero = "bottom"
     p.material.xy_origin = "center"
     post = PostProcessor({"id": "y"})

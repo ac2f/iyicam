@@ -33,7 +33,7 @@ G4 P5
 | `units` | `"mm"` | `mm` or `inch` (coordinates and feeds are converted) |
 | `line_ending` | `"lf"` | `lf` or `crlf` |
 | `decimals` | `3` | decimals of coordinates |
-| `feed_decimals` | `0` | decimals of feed rates |
+| `feed_decimals` | `0` | decimals of feed rates (one more in inches) |
 | `trailing_zeros` | `false` | `X10.500` instead of `X10.5` |
 | `leading_zero` | `true` | `X0.5` instead of `X.5` |
 | `integer_point` | `false` | `X10.` instead of `X10` (Fanuc style) |
@@ -72,7 +72,7 @@ G4 P5
 | `tool_same` | next toolpath with the same tool (optional) |
 | `toolpath_start`, `toolpath_end` | around every toolpath |
 | `rapid`, `linear`, `arc`, `arc_r` | moves (`arc_r` is used when `arcs = "r"`) |
-| `drill`, `drill_peck`, `drill_next`, `drill_end` | canned cycles (`G81`, `G83`, next hole, `G80`) |
+| `drill`, `drill_peck`, `drill_dwell`, `drill_next`, `drill_end` | canned cycles (`G81`, `G83`, `G82` with the dwell, next hole, `G80`); a dwell the chosen block has no `{P}` for is written as moves with `G4` |
 | `dwell` | pauses |
 | `comment` | comments coming from toolpaths (`{text}`) |
 | `footer` | end of the file |
