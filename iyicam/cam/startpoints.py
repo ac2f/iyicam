@@ -21,6 +21,7 @@ from typing import Callable, Iterable, Sequence
 
 import numpy as np
 
+from ..core import clip
 from ..core.geom import Arc, BBox, Contour, Line, Pt, polygon_area
 from .moves import ArcMove, Feed, arc_sweep
 from .pathutil import PathWalker
@@ -273,8 +274,12 @@ def support(walker: PathWalker, r: float, machined: Machined, hold: Pt | None, s
     Q = np.concatenate([P + N * (r + d) for d, _ in rings])
     present = machined.gap(Q, 1.0) > 0 if len(machined) else np.ones(len(Q), bool)
     if sheet is not None:
-        present &= ((Q[:, 0] >= sheet.xmin) & (Q[:, 0] <= sheet.xmax)
-                    & (Q[:, 1] >= sheet.ymin) & (Q[:, 1] <= sheet.ymax))
+        region = getattr(sheet, "region", None)
+        if region:  # a leftover: nothing holds beyond its outline
+            present &= clip.region_mask(Q, region)
+        else:
+            present &= ((Q[:, 0] >= sheet.xmin) & (Q[:, 0] <= sheet.xmax)
+                        & (Q[:, 1] >= sheet.ymin) & (Q[:, 1] <= sheet.ymax))
     local = sum(wgt * present[k * n:(k + 1) * n] for k, (_, wgt) in enumerate(rings))
     pw = 0.5 if hold is not None else 0.25
     return ss, P, pw * prior + (1 - pw) * local, cw

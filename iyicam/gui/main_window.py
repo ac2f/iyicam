@@ -19,8 +19,9 @@ from ..core.params import Param
 from .canvas import Canvas
 from .console import Console
 from .controller import Controller
-from .dialogs import (CommandDialog, ExportDialog, ImportDialog, MaterialDialog, NestingDialog, PluginsDialog,
-                      PostEditorDialog, PreferencesDialog, ToolDatabaseDialog, ToolpathDialog, buttons)
+from .dialogs import (CommandDialog, ExportDialog, ImportDialog, LeftoverDialog, MaterialDialog, NestingDialog,
+                      PluginsDialog, PostEditorDialog, PreferencesDialog, StockDialog, ToolDatabaseDialog,
+                      ToolpathDialog, buttons)
 from .forms import ParamForm
 from .icons import icon
 from .panels import LayersPanel, PropertiesPanel, SheetsPanel, ToolpathsPanel
@@ -234,6 +235,13 @@ class MainWindow(QMainWindow):
 
         m = mb.addMenu("&Nesting")
         self._act(m, "&Nest Parts...", self.nest, "Ctrl+Shift+N")
+        m.addSeparator()
+        self._act(m, "&Stock of Plates...", lambda: StockDialog(c, self).exec())
+        self._act(m, "Add Selected Vectors to Stock", self.stock_from_selection)
+        self._act(m, "Add &Leftover of Current Sheet to Stock...", self.leftover_to_stock)
+        m.addSeparator()
+        self._act(m, "Set Sheet &Outline from Selected Vectors", self.sheet_outline_from_selection)
+        self._act(m, "&Clear Sheet Outline", lambda: c.set_sheet_outline(None))
 
         m = mb.addMenu("&Plugins")
         if self.pm is not None:
@@ -701,7 +709,7 @@ class MainWindow(QMainWindow):
             QApplication.processEvents()
 
         hm = simulate(tps, sh.width, sh.height, c.project.sheet_thickness(sh), c.settings.sim_resolution,
-                      progress, prog.wasCanceled)
+                      progress, prog.wasCanceled, sh.outline)
         prog.close()
         rgb = shade(hm)
         h, w, _ = rgb.shape
@@ -766,11 +774,35 @@ class MainWindow(QMainWindow):
         if dlg.exec():
             out = dlg.run()
             r = out.result
-            util = ", ".join(f"{u * 100:.1f}%" for u in r.utilization)
-            msg = f"Placed {out.placed} part(s) on {r.sheets} sheet(s) (usage {util})."
+            lines = [f"Placed {out.placed} part(s) on {r.sheets} plate(s):"]
+            for sh, u in zip(out.sheets, r.utilization):
+                lines.append(f"  {sh.name}: {u * 100:.1f}% used")
             if out.unplaced:
-                msg += f"\n{out.unplaced} part(s) did not fit."
-            QMessageBox.information(self, "Nesting", msg)
+                lines.append(f"\n{out.unplaced} part(s) did not fit.")
+            QMessageBox.information(self, "Nesting", "\n".join(lines))
+            self.canvas.zoom_extents()
+
+    def stock_from_selection(self) -> None:
+        items = self.ctrl.stock_from_selection()
+        if items:
+            QMessageBox.information(self, "Stock", f"Added {len(items)} plate(s) to the stock.")
+        else:
+            QMessageBox.information(self, "Stock", "Select closed vectors that outline the plates first.")
+
+    def leftover_to_stock(self) -> None:
+        dlg = LeftoverDialog(self.ctrl, self)
+        if dlg.exec():
+            items = self.ctrl.leftover_to_stock(self.ctrl.sheet, *dlg.values())
+            msg = (f"Added {len(items)} plate(s) to the stock: " + ", ".join(
+                f"{it.width:.0f} x {it.height:.0f}" for it in items)) if items else \
+                "Nothing worth keeping is left on this sheet."
+            QMessageBox.information(self, "Stock", msg)
+
+    def sheet_outline_from_selection(self) -> None:
+        if not self.ctrl.set_sheet_outline_from_selection():
+            QMessageBox.information(self, "Sheet outline", "Select the closed vectors that outline the plate "
+                                    "(and its holes) first.")
+        else:
             self.canvas.zoom_extents()
 
     def export_image(self) -> None:

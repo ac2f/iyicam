@@ -5,8 +5,9 @@ from collections import OrderedDict
 from dataclasses import dataclass
 
 from ..core import arcfit, clip, vectorops
-from ..core.geom import Arc, BBox, Contour, Line, Pt, add, dist, mul, perp, sub, unit
+from ..core.geom import Arc, Contour, Line, Pt, add, dist, mul, perp, sub, unit
 from ..core.params import Param
+from ..core.plate import Plate
 from . import sequence as seq
 from .builder import MoveBuilder
 from .moves import Toolpath
@@ -160,7 +161,7 @@ class ProfileOp(Operation):
                      tuple(levels), surface, final, ctx.safe_z, ctx.clearance)
         sources = [(f"{o.id}:{i}", c) for o in ctx.objects for i, c in enumerate(o.contours) if c.segs]
         cfg = seq.settings(ctx.tdef.sequence)
-        self._sheet = BBox(0.0, 0.0, ctx.sheet.width, ctx.sheet.height)
+        self._sheet = Plate.of(ctx.sheet)
         items = self._items(ctx, sources, r, *seq.milling(cfg, v["side"], v["direction"] == "climb"))
         if not items:
             ctx.warn("No vectors to machine")
@@ -184,7 +185,7 @@ class ProfileOp(Operation):
                                       solid=self._solids.get(key)))
         if through and v["finish_pass"] and v["side"] != "on" and not v["tabs"]:
             ctx.warn("The finish pass runs along parts the roughing pass has already cut free: add tabs")
-        sheet = BBox(0.0, 0.0, ctx.sheet.width, ctx.sheet.height)
+        sheet = Plate.of(ctx.sheet)
         home = ctx.material.home[:2]
         order, notes = seq.sequence(sitems, cfg, home, sheet)
         for n in notes:

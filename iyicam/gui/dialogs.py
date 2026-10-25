@@ -19,7 +19,9 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QButtonGroup, QC
 from ..core import paths
 from ..core.document import XY_ORIGINS, Selection, ToolpathDef
 from ..core.params import Param
+from ..core.stock import StockItem, load_stock, save_stock
 from ..core.tooling import TOOL_TYPES, Tool
+from ..nesting.stock import leftover_of_sheet, stock_from_vectors, use_up
 from .forms import ParamForm
 
 
@@ -95,6 +97,9 @@ class SheetDialog(QDialog):
         self.form = ParamForm(params, None, u)
         lay.addWidget(self.form)
         presets.activated.connect(lambda i: self._preset(presets.itemData(i)))
+        self.plain = QCheckBox("Plain rectangle (remove the outline of this leftover)")
+        self.plain.setVisible(bool(sheet.outline))
+        lay.addWidget(self.plain)
         lay.addWidget(buttons(self))
 
     def _preset(self, wh) -> None:
@@ -110,6 +115,8 @@ class SheetDialog(QDialog):
             s = self.sheet
             s.name, s.width, s.height = v["name"], v["width"], v["height"]
             s.thickness = v["thickness"] if v["own_thickness"] else None
+            if self.plain.isChecked():
+                s.outline = None
         self.ctrl.sheet_changed.emit()
         super().accept()
 
@@ -549,6 +556,236 @@ class ToolpathDialog(QDialog):
 # nesting
 # ---------------------------------------------------------------------------
 
+class StockTable(QTableWidget):
+    """The plates of the stock: name, size, quantity (0 = unlimited), leftover, own thickness."""
+
+    COLUMNS = ["Use", "Name", "Size", "Quantity", "Leftover", "Thickness"]
+
+    def __init__(self, ctrl, items: list[StockItem], checkable: bool = False, parent=None):
+        super().__init__(len(items), len(self.COLUMNS), parent)
+        self.ctrl, self.items = ctrl, items
+        u = ctrl.units
+        self.setHorizontalHeaderLabels(self.COLUMNS)
+        self.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.setColumnHidden(0, not checkable)
+        self.use, self.qty, self.left, self.thick = [], [], [], []
+        for r, it in enumerate(items):
+            use = QCheckBox()
+            use.setChecked(True)
+            self.setCellWidget(r, 0, use)
+            self.setItem(r, 1, QTableWidgetItem(it.name))
+            size = QTableWidgetItem(f"{u.fmt(it.width)} x {u.fmt(it.height)}" + ("" if it.is_rect else "  (shape)"))
+            size.setFlags(size.flags() & ~Qt.ItemIsEditable)
+            self.setItem(r, 2, size)
+            qty = QSpinBox()
+            qty.setRange(0, 9999)
+            qty.setSpecialValueText("unlimited")
+            qty.setValue(it.quantity)
+            self.setCellWidget(r, 3, qty)
+            left = QCheckBox()
+            left.setChecked(it.leftover)
+            left.setToolTip("Leftovers are used before new sheets")
+            self.setCellWidget(r, 4, left)
+            thick = QDoubleSpinBox()
+            thick.setDecimals(u.decimals)
+            thick.setRange(0.0, 1e4)
+            thick.setSuffix(u.suffix)
+            thick.setSpecialValueText("material")
+            thick.setValue(u.to_display(it.thickness) if it.thickness else 0.0)
+            self.setCellWidget(r, 5, thick)
+            self.use.append(use)
+            self.qty.append(qty)
+            self.left.append(left)
+            self.thick.append(thick)
+
+    def used(self, r: int) -> bool:
+        return self.use[r].isChecked()
+
+    def item(self, r: int) -> StockItem:  # type: ignore[override]
+        """The plate of row ``r`` with the edits (a copy that keeps the id)."""
+        it = self.items[r].copy()
+        it.id = self.items[r].id
+        name = QTableWidget.item(self, r, 1)
+        it.name = name.text() if name is not None else it.name
+        it.quantity = self.qty[r].value()
+        it.leftover = self.left[r].isChecked()
+        it.thickness = self.ctrl.units.from_display(self.thick[r].value()) or None
+        return it
+
+    def edited_items(self) -> list[StockItem]:
+        return [self.item(r) for r in range(len(self.items))]
+
+
+class PlateDialog(QDialog):
+    """A plate for the stock: a rectangle of a size."""
+
+    def __init__(self, ctrl, parent=None):
+        super().__init__(parent)
+        self.ctrl = ctrl
+        self.setWindowTitle("Add Plate")
+        s = ctrl.sheet
+        params = [Param("name", "Name", "str", "Leftover"),
+                  Param("width", "Width (X)", "length", s.width, min=1.0),
+                  Param("height", "Height (Y)", "length", s.height, min=1.0),
+                  Param("quantity", "Quantity (0 = unlimited)", "int", 1, min=0, max=9999),
+                  Param("leftover", "Leftover (use before new sheets)", "bool", True)]
+        lay = QVBoxLayout(self)
+        presets = QComboBox()
+        presets.addItem("Preset sheet sizes...")
+        for name, w, h in SHEET_PRESETS:
+            presets.addItem(name, (w, h))
+        lay.addWidget(presets)
+        self.form = ParamForm(params, None, ctrl.units)
+        presets.activated.connect(lambda i: self._preset(presets.itemData(i)))
+        lay.addWidget(self.form)
+        lay.addWidget(buttons(self))
+
+    def _preset(self, wh) -> None:
+        if wh:
+            u = self.ctrl.units
+            self.form.widgets["width"].setValue(u.to_display(wh[0]))
+            self.form.widgets["height"].setValue(u.to_display(wh[1]))
+
+    def item(self) -> StockItem:
+        v = self.form.values()
+        return StockItem(v["name"], v["width"], v["height"], None, v["quantity"], v["leftover"])
+
+
+class LeftoverDialog(QDialog):
+    """What of a cut sheet is worth keeping."""
+
+    def __init__(self, ctrl, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Leftover of the Sheet")
+        tool_d = max((t.tool.diameter for t in ctrl.project.toolpaths if t.op == "profile"), default=6.0)
+        params = [Param("clearance", "Cut width round the parts", "length", tool_d / 2 + 1.0, min=0.0,
+                        help="How far the cuts reach beyond the parts: the tool radius and a little more"),
+                  Param("min_width", "Narrowest strip worth keeping", "length", 30.0, min=0.0),
+                  Param("min_area", "Smallest piece worth keeping (cm²)", "float", 25.0, min=0.0)]
+        lay = QVBoxLayout(self)
+        lay.addWidget(QLabel(f"The material that is left on <b>{ctrl.sheet.name}</b> after its parts are cut out "
+                             "becomes plates of the stock."))
+        self.form = ParamForm(params, None, ctrl.units)
+        lay.addWidget(self.form)
+        lay.addWidget(buttons(self))
+
+    def values(self) -> tuple[float, float, float]:
+        v = self.form.values()
+        return v["clearance"], v["min_width"], v["min_area"] * 100.0
+
+
+class StockDialog(QDialog):
+    """The stock of plates that jobs are nested onto."""
+
+    def __init__(self, ctrl, parent=None):
+        super().__init__(parent)
+        self.ctrl = ctrl
+        self.setWindowTitle("Stock of Plates")
+        self.items: list[StockItem] = [it.copy() for it in ctrl.project.stock]
+        for new, old in zip(self.items, ctrl.project.stock):
+            new.id = old.id
+        lay = QVBoxLayout(self)
+        note = QLabel("Plates that jobs are nested onto: leftovers of any shape and the sheet sizes you buy. "
+                      "Leftovers are used first, the smallest first.")
+        note.setWordWrap(True)
+        lay.addWidget(note)
+        self.holder = QVBoxLayout()
+        lay.addLayout(self.holder)
+        self.table: StockTable | None = None
+        self._build()
+        row = QHBoxLayout()
+        for text, tip, slot in (("Add plate...", "A rectangle of a size", self._add),
+                                ("From selected vectors", "Closed vectors drawn as the outline of a plate; closed "
+                                 "vectors inside it are holes", self._from_vectors),
+                                ("Leftover of sheet...", "The material left on the current sheet", self._leftover),
+                                ("Remove", "Remove the selected plates", self._remove)):
+            b = QPushButton(text)
+            b.setToolTip(tip)
+            b.clicked.connect(slot)
+            row.addWidget(b)
+        lay.addLayout(row)
+        row = QHBoxLayout()
+        for text, slot in (("Load...", self._load), ("Save...", self._save)):
+            b = QPushButton(text)
+            b.clicked.connect(slot)
+            row.addWidget(b)
+        row.addStretch(1)
+        lay.addLayout(row)
+        lay.addWidget(buttons(self))
+        self.resize(640, 420)
+
+    def _build(self) -> None:
+        if self.table is not None:
+            self.holder.removeWidget(self.table)
+            self.table.deleteLater()
+        self.table = StockTable(self.ctrl, self.items)
+        self.holder.addWidget(self.table)
+
+    def _commit(self) -> None:
+        """Keep the edits in the table before the list changes."""
+        if self.table is not None:
+            self.items = self.table.edited_items()
+
+    def _add(self) -> None:
+        dlg = PlateDialog(self.ctrl, self)
+        if dlg.exec():
+            self._commit()
+            self.items.append(dlg.item())
+            self._build()
+
+    def _from_vectors(self) -> None:
+        items = stock_from_vectors(self.ctrl.selected_objects())
+        if not items:
+            QMessageBox.information(self, "Stock", "Select closed vectors that outline the plates first.")
+            return
+        self._commit()
+        self.items += items
+        self._build()
+
+    def _leftover(self) -> None:
+        dlg = LeftoverDialog(self.ctrl, self)
+        if not dlg.exec():
+            return
+        items = leftover_of_sheet(self.ctrl.sheet, *dlg.values())
+        if not items:
+            QMessageBox.information(self, "Stock", "Nothing worth keeping is left on this sheet.")
+            return
+        self._commit()
+        self.items += items
+        self._build()
+
+    def _remove(self) -> None:
+        rows = {i.row() for i in self.table.selectedIndexes()}
+        if rows:
+            self._commit()
+            self.items = [it for r, it in enumerate(self.items) if r not in rows]
+            self._build()
+
+    def _load(self) -> None:
+        fn, _ = QFileDialog.getOpenFileName(self, "Load stock", "", "Stock (*.json)")
+        if not fn:
+            return
+        try:
+            loaded = load_stock(fn)
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.warning(self, "Stock", f"Could not read the stock file:\n{e}")
+            return
+        self._commit()
+        self.items += loaded
+        self._build()
+
+    def _save(self) -> None:
+        fn, _ = QFileDialog.getSaveFileName(self, "Save stock", "stock.json", "Stock (*.json)")
+        if fn:
+            self._commit()
+            save_stock(fn, self.items)
+
+    def accept(self) -> None:
+        self._commit()
+        self.ctrl.set_stock(self.items)
+        super().accept()
+
+
 class NestingDialog(QDialog):
     def __init__(self, ctrl, parent=None):
         super().__init__(parent)
@@ -561,14 +798,19 @@ class NestingDialog(QDialog):
         s = ctrl.sheet
         tool_d = max((t.tool.diameter for t in ctrl.project.toolpaths if t.op == "profile"), default=6.0)
         params = [
-            Param("width", "Sheet width", "length", s.width, min=1.0, group="Sheets"),
-            Param("height", "Sheet height", "length", s.height, min=1.0, group="Sheets"),
+            Param("width", "New sheet width", "length", s.width, min=1.0, group="Sheets"),
+            Param("height", "New sheet height", "length", s.height, min=1.0, group="Sheets"),
             Param("margin", "Border gap", "length", 10.0, min=0.0, group="Sheets"),
             Param("spacing", "Gap between parts", "length", tool_d + 2.0, min=0.0, group="Sheets",
                   help="Usually the cutter diameter plus a little clearance"),
             Param("target", "Place on", "choice", "current",
-                  choices=[("current", "Current sheet first, then new sheets"), ("new", "New sheets only")],
+                  choices=[("current", "Current sheet first (around what stays on it), then the stock"),
+                           ("all", "All sheets first (around what stays on them), then the stock"),
+                           ("new", "The stock and new sheets only")],
                   group="Sheets"),
+            Param("new_sheets", "Start new sheets when needed", "bool", True, group="Sheets"),
+            Param("use_up", "Take the plates used out of the stock", "bool", True, group="Sheets",
+                  help="Leftovers with a quantity are counted down, used up ones are removed"),
             Param("rotation", "Rotation", "choice", "90",
                   choices=[("0", "No rotation"), ("180", "0 / 180°"), ("90", "90° steps"),
                            ("45", "45° steps"), ("15", "15° steps")], group="Strategy"),
@@ -588,6 +830,14 @@ class NestingDialog(QDialog):
         self.form = ParamForm(params, None, ctrl.units)
         presets.activated.connect(lambda i: self._preset(presets.itemData(i)))
         lay.addWidget(self.form)
+        self.stock_holder = QVBoxLayout()
+        lay.addLayout(self.stock_holder)
+        self.stock_table: StockTable | None = None
+        self._build_stock()
+        manage = QPushButton("Manage stock...")
+        manage.setToolTip("Add leftovers of any shape, sheet sizes and quantities")
+        manage.clicked.connect(self._manage_stock)
+        lay.addWidget(manage)
         lay.addWidget(QLabel(f"<b>{len(self.parts)}</b> part(s) found. Set the quantities:"))
         self.table = QTableWidget(len(self.parts), 3)
         self.table.setHorizontalHeaderLabels(["Part", "Size", "Quantity"])
@@ -608,7 +858,26 @@ class NestingDialog(QDialog):
             self.qty.append(sp)
         lay.addWidget(self.table)
         lay.addWidget(buttons(self, "Nest"))
-        self.resize(480, 700)
+        self.resize(560, 760)
+
+    def _build_stock(self) -> None:
+        if self.stock_table is not None:
+            self.stock_holder.removeWidget(self.stock_table)
+            self.stock_table.deleteLater()
+        stock = self.ctrl.project.stock
+        self.stock_table = StockTable(self.ctrl, list(stock), checkable=True)
+        self.stock_table.setMaximumHeight(150)
+        label = "Plates of the stock (leftovers are used first):" if stock else \
+            "The stock is empty: add leftovers of any shape below to nest onto them."
+        if getattr(self, "stock_label", None) is None:
+            self.stock_label = QLabel()
+            self.stock_holder.addWidget(self.stock_label)
+        self.stock_label.setText(label)
+        self.stock_holder.addWidget(self.stock_table)
+
+    def _manage_stock(self) -> None:
+        if StockDialog(self.ctrl, self).exec():
+            self._build_stock()
 
     def _preset(self, wh) -> None:
         if wh:
@@ -636,10 +905,20 @@ class NestingDialog(QDialog):
             QApplication.processEvents()
 
         ctrl = self.ctrl
-        targets = [ctrl.sheet] if v["target"] == "current" else []
+        table = self.stock_table
+        stock = [table.item(r) for r in range(len(table.items)) if table.used(r)]
+        target = v["target"]
+        use_sheets = [ctrl.sheet] if target == "current" else list(ctrl.project.sheets) if target == "all" else []
         ctrl.checkpoint("Nesting")
         try:
-            out = nest_objects(ctrl.project, self.objs, st, quantities, targets, progress, prog.wasCanceled)
+            moving = {o.id for p in self.parts for o in p.objects}
+            sheet = ctrl.sheet
+            if target == "current" and not sheet.outline and all(o.id in moving for o in sheet.vectors):
+                sheet.width, sheet.height = v["width"], v["height"]  # a blank sheet takes the size asked for
+            out = nest_objects(ctrl.project, self.objs, st, quantities, [], progress, prog.wasCanceled,
+                               stock=stock, use_sheets=use_sheets, new_sheets=v["new_sheets"])
+            if v["use_up"]:
+                self._use_up(out)
         except Exception:
             ctrl.undo_stack.rollback(ctrl.project)
             raise
@@ -649,6 +928,10 @@ class NestingDialog(QDialog):
         if out.sheets:
             ctrl.set_sheet(out.sheets[0].id)
         return out
+
+    def _use_up(self, out) -> None:
+        """Count the plates used down in the project's stock; used up ones leave it."""
+        self.ctrl.project.stock = use_up(self.ctrl.project.stock, out.plates)
 
 
 # ---------------------------------------------------------------------------

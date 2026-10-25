@@ -27,7 +27,7 @@ from conftest import add_tp, end_mill, make_project, vbit
 from iyicam.cam.gcode_reader import ReadOptions, read_gcode
 from iyicam.cam.job import compute_toolpath
 from iyicam.cam.moves import ArcMove, DrillCycle, Dwell, Feed, Rapid, arc_sweep
-from iyicam.core import shapes
+from iyicam.core import clip, shapes
 from iyicam.core.registry import REGISTRY
 from iyicam.post.engine import ORIGINS, PostProcessor
 from iyicam.post.export import post_toolpaths
@@ -244,10 +244,11 @@ def _runs_fill(seed, free):
             return reach
 
 
-def separated(bottom, tool_r, size, inside_pts, slugs, cell=0.25):
+def separated(bottom, tool_r, size, inside_pts, slugs, cell=0.25, plate=None):
     """Whether the full depth cut parts every ``inside_pts`` point from the sheet frame and from the ``slugs``.
 
-    The kerf is rasterised a little narrower than the tool so a thread of material is never missed."""
+    The kerf is rasterised a little narrower than the tool so a thread of material is never missed.
+    ``plate``: outlines of the material of a leftover; beyond them is the frame."""
     nx, ny = int(size[0] / cell) + 1, int(size[1] / cell) + 1
     cut = np.zeros((ny, nx), bool)
     rr = tool_r - 0.15
@@ -262,6 +263,10 @@ def separated(bottom, tool_r, size, inside_pts, slugs, cell=0.25):
     free = ~cut
     frame = np.zeros_like(free)
     frame[0, :] = frame[-1, :] = frame[:, 0] = frame[:, -1] = True
+    if plate:
+        yy, xx = np.mgrid[0:ny, 0:nx]
+        grid = np.c_[xx.ravel() * cell, yy.ravel() * cell]
+        frame |= ~clip.region_mask(grid, plate).reshape(ny, nx)
     outside = _runs_fill(frame, free)
     for q in inside_pts:
         cq = (int(round(q[1] / cell)), int(round(q[0] / cell)))
@@ -706,3 +711,45 @@ def test_the_checks_see_damaged_gcode():
     p, s, parts, tool, tps = profile_job(tparams, {})
     feeds = [q for q in samples([m for tp in tps for m in tp.moves]) if q[3] == "feed"]
     assert not separated([q[:2] for q in feeds if q[2] <= -THICK - 0.2 + 1e-6], tool.radius, SHEET, INSIDE, SLUGS)
+
+
+@pytest.mark.parametrize("post", ["mach3", "fanuc"])
+def test_job_nested_onto_an_irregular_leftover(post):
+    """Parts nested onto a leftover with a missing corner and a hole are cut free of it, inside its outline."""
+    from iyicam.core.stock import StockItem
+    from iyicam.nesting.nest import NestSettings
+    from iyicam.nesting.parts import nest_objects
+    plate = [[(0, 0), (500, 0), (500, 220), (260, 220), (260, 400), (0, 400)],
+             shapes.circle((130, 300), 30).flatten(0.2)]
+    item = StockItem("L leftover", 500, 400, plate, 1, True)
+    parts = [[shapes.rectangle(0, 0, 90, 60)], [shapes.circle((200, 40), 40)],
+             [shapes.polyline([(400, 0), (520, 0), (520, 40), (440, 40), (440, 100), (400, 100)], True)]]
+    p, s, objs = make_project(parts, thickness=THICK, size=(300, 300))
+    out = nest_objects(p, objs, NestSettings(margin=12, spacing=10, rotations=[0, 90, 180, 270]),
+                       {objs[0].id: 5, objs[1].id: 3, objs[2].id: 2}, [], stock=[item], new_sheets=False)
+    assert out.unplaced == 0 and len(out.sheets) == 1
+    sheet = out.sheets[0]
+    assert sheet.outline and len(sheet.vectors) == 10
+    tool = end_mill(6, feed_rate=FEED, plunge_rate=PLUNGE, stepdown=4.0)
+    res = compute_toolpath(p, add_tp(p, "profile", tool, {"through": True}, sheet.vectors), sheet)
+    assert res.error is None and not [w for w in res.warnings if "outside" in w], res.warnings
+    texts, opt, inch = gcode_files(p, sheet, res.toolpaths, post)
+    for text in texts:
+        check_program(text, {tool.number: tool.spindle_speed}, opt, inch)
+    v = REGISTRY.operations["profile"]({"through": True}).values
+    final = THICK + v["overcut"]
+    back = read_back(texts, opt)
+    cut_parts = [[c for c in o.contours] for o in sheet.vectors]
+    # one point inside every part, found on a grid
+    inside_pts = []
+    for o in sheet.vectors:
+        bb, polys = o.bbox(), clip.contours_to_polys(o.contours)
+        inside_pts.append(next((x, y) for x in np.arange(bb.xmin + 2, bb.xmax, 2.0)
+                               for y in np.arange(bb.ymin + 2, bb.ymax, 2.0) if clip.point_in_region((x, y), polys)))
+    check_moves(back, surface=0.0, final=final, levels=expected_levels(0.0, final, 4.0), step=4.0, r=tool.radius,
+                parts=cut_parts, size=(500, 400))
+    bottom = [q[:2] for q in samples(back) if q[3] == "feed" and q[2] <= -final + TOL]
+    assert separated(bottom, tool.radius, (500, 400), inside_pts, [], cell=0.5, plate=clip.normalize(sheet.outline))
+    # everything stays on the plate: the tool centre is never beyond its outline
+    P = np.array([q[:2] for q in samples(back) if q[3] == "feed"])
+    assert clip.region_mask(P, clip.offset(clip.normalize(sheet.outline), 0.01)).all()

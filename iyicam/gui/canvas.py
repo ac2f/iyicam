@@ -293,6 +293,18 @@ class Canvas(QWidget):
             g /= 5 if str(g)[0] in "15" else 2
         return g
 
+    @staticmethod
+    def _outline_path(sh) -> QPainterPath:
+        """The material of a leftover (outer boundaries and holes, even-odd)."""
+        path = QPainterPath()
+        path.setFillRule(Qt.OddEvenFill)
+        for poly in sh.outline:
+            path.moveTo(*poly[0])
+            for q in poly[1:]:
+                path.lineTo(*q)
+            path.closeSubpath()
+        return path
+
     def paintEvent(self, ev) -> None:
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
@@ -301,7 +313,11 @@ class Canvas(QWidget):
         T = self.view_transform()
         # sheet
         p.setTransform(T)
-        p.fillRect(QRectF(0, 0, sh.width, sh.height), QColor("#fbf7ee"))
+        if sh.outline:  # a leftover: material only inside its outline
+            p.fillRect(QRectF(0, 0, sh.width, sh.height), QColor("#c9ccd2"))
+            p.fillPath(self._outline_path(sh), QColor("#fbf7ee"))
+        else:
+            p.fillRect(QRectF(0, 0, sh.width, sh.height), QColor("#fbf7ee"))
         if self.show_sim and self.sim_image is not None and self.sim_rect is not None:
             p.save()
             p.translate(self.sim_rect.x(), self.sim_rect.y() + self.sim_rect.height())
@@ -313,7 +329,10 @@ class Canvas(QWidget):
         pen.setCosmetic(True)
         p.setPen(pen)
         p.setBrush(Qt.NoBrush)
-        p.drawRect(QRectF(0, 0, sh.width, sh.height))
+        if sh.outline:
+            p.drawPath(self._outline_path(sh))
+        else:
+            p.drawRect(QRectF(0, 0, sh.width, sh.height))
         self._paint_origin(p, sh)
         # vectors
         sel = set(self.ctrl.selection)

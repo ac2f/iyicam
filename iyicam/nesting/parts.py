@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Callable
 
 from ..core import clip, vectorops
 from ..core.document import Project, Sheet, VectorObject
 from ..core.geom import Transform
-from .nest import NestResult, NestSettings, NestShape, nest
+from ..core.stock import StockItem
+from .nest import Container, NestResult, NestSettings, NestShape, nest
 
 
 @dataclass
@@ -95,28 +96,61 @@ class NestOutcome:
     sheets: list[Sheet]
     placed: int
     unplaced: int
+    plates: list = field(default_factory=list)  # what each sheet was made from: StockItem, Sheet or None (new)
 
 
 def nest_objects(project: Project, objects: list[VectorObject], settings: NestSettings,
                  quantities: dict[str, int] | None = None, target_sheets: list[Sheet] | None = None,
-                 progress: Callable | None = None, cancel: Callable[[], bool] | None = None) -> NestOutcome:
-    """Nest ``objects`` onto sheets of ``settings`` size and move them there.
+                 progress: Callable | None = None, cancel: Callable[[], bool] | None = None,
+                 stock: list[StockItem] | None = None, use_sheets: list[Sheet] | None = None,
+                 new_sheets: bool = True) -> NestOutcome:
+    """Nest ``objects`` onto plates and move them there.
+
+    Without ``stock`` and ``use_sheets`` the parts go onto sheets of ``settings`` size
+    (``target_sheets`` are reused, in order, before new sheets are created).
+
+    With them the plates are, in the order they are filled: the free areas of ``use_sheets`` (around
+    what stays on them), the ``stock`` plates (leftovers of any shape first) and, when ``new_sheets``
+    is set, as many new sheets of ``settings`` size as needed. Stock plates become sheets with their
+    own size, outline and thickness.
 
     ``quantities`` maps a part's root object id to the number of copies.
-    ``target_sheets`` are reused (in order) before new sheets are created.
     """
+    from .stock import sheet_container, to_container
     parts = group_parts(objects)
     shapes = []
     for p in parts:
         q = (quantities or {}).get(p.root.id, p.quantity)
         shapes.append(NestShape(part_outline(p), q, p))
+    use_plates = stock is not None or use_sheets is not None
+    if use_plates:
+        moving_ids = {o.id for p in parts for o in p.objects}
+        containers = [sheet_container(s, moving_ids) for s in use_sheets or []]
+        containers += [to_container(it) for it in stock or []]
+        if new_sheets:
+            containers.append(Container.rect(settings.sheet_width, settings.sheet_height))
+        settings = replace(settings, containers=containers)
     res = nest(shapes, settings, progress, cancel)
-    sheets = list(target_sheets or [])
-    while len(sheets) < res.sheets:
-        s = project.add_sheet(None, settings.sheet_width, settings.sheet_height)
+    # the sheet of every plate that was used
+    spare = list(target_sheets or [])
+    sheets: list[Sheet] = []
+    for k in range(res.sheets):
+        c = settings.containers[res.stock[k]] if use_plates else None
+        if c is not None and isinstance(c.payload, Sheet):
+            sheets.append(c.payload)  # an existing sheet keeps its size and what is on it
+            continue
+        s = spare.pop(0) if spare else project.add_sheet(None, settings.sheet_width, settings.sheet_height)
+        item = c.payload if c is not None else None
+        if isinstance(item, StockItem):
+            s.width, s.height = item.width, item.height
+            s.outline = [list(p) for p in item.outline] if item.outline else None
+            s.thickness = item.thickness
+            if item.name:
+                s.name = item.name if item.quantity == 1 else f"{item.name} {res.units[k] + 1}"
+        else:
+            s.width, s.height = settings.sheet_width, settings.sheet_height
+            s.outline = None
         sheets.append(s)
-    for s in sheets[:res.sheets]:
-        s.width, s.height = settings.sheet_width, settings.sheet_height
     # parts that were placed leave their old position; unplaced parts stay untouched
     placed_parts = {pl.shape for pl in res.placements}
     moving = {o.id for i in placed_parts for o in parts[i].objects}
@@ -135,4 +169,5 @@ def nest_objects(project: Project, objects: list[VectorObject], settings: NestSe
         for o in objs:
             o.transform(T)
             sheets[pl.sheet].vectors.append(o)
-    return NestOutcome(res, sheets[:res.sheets], len(res.placements), len(res.unplaced))
+    made_from = [settings.containers[i].payload for i in res.stock] if use_plates else [None] * res.sheets
+    return NestOutcome(res, sheets, len(res.placements), len(res.unplaced), made_from)

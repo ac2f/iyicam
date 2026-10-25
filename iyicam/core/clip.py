@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Iterable, Sequence
 
+import numpy as np
 import pyclipper
 
 from .geom import Contour, Pt, polygon_area
@@ -175,3 +176,20 @@ def simplify(polys: Iterable[Sequence[Pt]], tol: float) -> list[Poly]:
         if len(c) >= 3:
             out.append(from_int(c))
     return out
+
+
+def region_mask(points, polys: Iterable[Sequence[Pt]], chunk: int = 20000) -> np.ndarray:
+    """Even-odd membership of many points (n x 2) in a set of polygons, as a boolean array."""
+    P = np.asarray(points, float).reshape(-1, 2)
+    inside = np.zeros(len(P), bool)
+    for poly in polys:
+        A = np.asarray(poly, float)
+        B = np.roll(A, -1, axis=0)
+        dy = B[:, 1] - A[:, 1]
+        slope = np.where(dy == 0, 0.0, (B[:, 0] - A[:, 0]) / np.where(dy == 0, 1.0, dy))
+        for k in range(0, len(P), max(1, chunk // max(1, len(A)))):
+            x, y = P[k:k + max(1, chunk // max(1, len(A))), :1], P[k:k + max(1, chunk // max(1, len(A))), 1:]
+            crosses = ((A[:, 1] > y) != (B[:, 1] > y)) & (x < A[:, 0] + slope * (y - A[:, 1]))
+            n = len(crosses)
+            inside[k:k + n] ^= (crosses.sum(axis=1) % 2 == 1)
+    return inside

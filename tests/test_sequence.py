@@ -549,3 +549,69 @@ def test_direction_choices_for_inside_and_on_the_line_cuts():
     for choice, cw in (("cw", True), ("ccw", False)):
         e.sequence = {"direction": choice}
         assert _cut_directions(compute_toolpath(p, e, s).toolpaths[0])[key] == cw, choice
+
+
+# ---------------------------------------------------------------------------
+# leftovers: the material ends at the outline of the plate
+# ---------------------------------------------------------------------------
+
+L_PLATE = [(0, 0), (400, 0), (400, 150), (200, 150), (200, 300), (0, 300)]  # the corner at top right is missing
+
+
+class LeftoverSheet:
+    width, height, outline = 400.0, 300.0, [L_PLATE]
+
+
+def ring(x0, y0, x1, y1, w=6.0):
+    """A closed cut round a rectangle: the cut area as an outer polygon and a hole."""
+    return [[(x0 - w, y0 - w), (x1 + w, y0 - w), (x1 + w, y1 + w), (x0 - w, y1 + w)],
+            [(x0, y0), (x0, y1), (x1, y1), (x1, y0)]]
+
+
+def test_plate_outline_is_the_frame_of_a_leftover():
+    from iyicam.core.plate import Plate
+    plate = Plate.of(LeftoverSheet)
+    assert plate.contains([[100, 100], [300, 250], [300, 100]]).tolist() == [True, False, True]
+    assert Plate.of(type("S", (), {"width": 10.0, "height": 5.0, "outline": None})).region is None
+    frame = seq._Frame([], plate)
+    # a piece cut free in the middle of the plate is detached; one that reaches the edge of the plate
+    # is not, whether that edge is a side of the bounding box or the edge of the missing corner
+
+    def box(x0, y0, x1, y1):
+        return [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+
+    assert seq._detached(ring(50, 50, 120, 120), frame)
+    at_left = [box(0, 114, 66, 126), box(0, 44, 66, 56), box(60, 44, 66, 126)]  # no cut along x = 0
+    assert not seq._detached(at_left, frame)
+    at_notch = [box(140, 280, 206, 292), box(140, 190, 206, 202), box(134, 190, 146, 292)]  # none along x = 200
+    assert not seq._detached(at_notch, frame)
+    # in a full rectangle the same cuts in the missing corner would cut a piece free
+    rect = seq._Frame([], seq.BBox(0, 0, 400, 300))
+    assert seq._detached(ring(260, 200, 340, 280), rect)
+    assert not seq._detached(ring(260, 200, 340, 280), frame)  # nothing there to cut
+
+
+def test_leftover_sheet_gets_orders_and_cutting_in_the_air_is_reported():
+    parts = [shapes.rectangle(20, 20, 160, 100), shapes.rectangle(210, 20, 160, 100),
+             shapes.rectangle(30, 160, 120, 100)]
+    p, s, objs = make_project(parts, size=(400, 300))
+    s.outline = [L_PLATE]
+    t = add_tp(p, "profile", end_mill(6), {"through": True}, objs)
+    t.sequence = {"strategy": "rows_bl", "smart_starts": True}
+    res = compute_toolpath(p, t, s)
+    assert res.error is None and len(res.order) == 3
+    assert not [w for w in res.warnings if "outline" in w]
+    # a part drawn in the missing corner is cut where there is no material
+    p, s, objs = make_project(parts + [shapes.rectangle(250, 190, 100, 80)], size=(400, 300))
+    s.outline = [L_PLATE]
+    res = compute_toolpath(p, add_tp(p, "profile", end_mill(6), {"through": True}, objs), s)
+    assert [w for w in res.warnings if "outside the outline" in w]
+    s.outline = None  # on a plain sheet it is fine
+    res = compute_toolpath(p, add_tp(p, "profile", end_mill(6), {"through": True}, objs), s)
+    assert not [w for w in res.warnings if "outline" in w]
+
+
+def test_simulation_has_no_material_outside_the_outline():
+    from iyicam.cam.simulate import simulate
+    hm = simulate([], 400, 300, 18.0, 5.0, outline=[L_PLATE])
+    assert hm.at(100, 100) == 0.0 and hm.at(300, 250) == -18.0

@@ -210,7 +210,8 @@ class SheetsPanel(QWidget):
         u = self.ctrl.units
         for s in self.ctrl.project.sheets:
             t = self.ctrl.project.sheet_thickness(s)
-            it = QListWidgetItem(f"{s.name}  —  {u.fmt(s.width)} x {u.fmt(s.height)} x {u.fmt(t)}  "
+            shape = "  (shape)" if s.outline else ""
+            it = QListWidgetItem(f"{s.name}  —  {u.fmt(s.width)} x {u.fmt(s.height)} x {u.fmt(t)}{shape}  "
                                  f"[{len(s.vectors)}]")
             it.setData(Qt.UserRole, s.id)
             self.list.addItem(it)
@@ -232,6 +233,7 @@ class SheetsPanel(QWidget):
         with self.ctrl.edit("Duplicate sheet", geometry=False):
             s = self.ctrl.project.add_sheet(src.name + " copy", src.width, src.height)
             s.thickness = src.thickness
+            s.outline = [list(poly) for poly in src.outline] if src.outline else None
             s.vectors = [v.copy() for v in src.vectors]
         self.ctrl.set_sheet(s.id)
 

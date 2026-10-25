@@ -4,9 +4,12 @@ from __future__ import annotations
 import traceback
 from dataclasses import dataclass, field
 
+import numpy as np
+
 from ..core import clip
 from ..core.document import Project, Sheet, ToolpathDef
 from ..core.geom import BBox
+from ..core.plate import Plate
 from ..core.registry import REGISTRY, Registry
 from .moves import ArcMove, DrillCycle, Feed, Toolpath
 from .operation import OpContext
@@ -74,6 +77,14 @@ def safety_warnings(project: Project, sheet: Sheet, toolpaths: list[Toolpath],
                 or (not wraps and (st.ymin < -margin or st.ymax > sheet.height + margin))):
             out.append(f"{tp.name}: cuts outside the sheet ({st.xmin:.1f}, {st.ymin:.1f}) - "
                        f"({st.xmax:.1f}, {st.ymax:.1f})")
+        if sheet.outline and not wraps:
+            pts = tp.cut_points()
+            if pts:
+                out_of = ~Plate.of(sheet).contains(np.asarray(pts), margin)
+                if out_of.any():
+                    x, y = pts[int(np.argmax(out_of))]
+                    out.append(f"{tp.name}: cuts outside the outline of the plate ({sheet.name}) at "
+                               f"({x:.1f}, {y:.1f})")
         fl = tp.tool.flute_length
         if fl > 0 and -st.zmin > fl + 1e-6 and tp.tool.type in ("end_mill", "ball_nose", "bull_nose"):
             out.append(f"{tp.name}: {-st.zmin:.2f} mm deep but the tool's flutes are only {fl:g} mm long")

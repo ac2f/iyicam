@@ -186,6 +186,92 @@ def test_nesting_dialog(win):
     assert sum(len(s.vectors) for s in ctrl.project.sheets) == 3
 
 
+L_PLATE = [(0, 0), (500, 0), (500, 200), (250, 200), (250, 400), (0, 400)]
+
+
+def test_stock_dialog_and_nesting_onto_a_leftover(win, tmp_path):
+    from iyicam.core.stock import StockItem
+    from iyicam.gui.dialogs import NestingDialog, StockDialog
+    ctrl = win.ctrl
+    # a leftover drawn as an outline with a hole, entered from the selected vectors
+    outline = VectorObject([shapes.polyline([(1000 + x, 1000 + y) for x, y in L_PLATE], True)], ctrl.layer_id)
+    hole = VectorObject([shapes.circle((1100, 1100), 30)], ctrl.layer_id)
+    ctrl.add_vectors([outline, hole])
+    ctrl.select([outline.id, hole.id])
+    dlg = StockDialog(ctrl, win)
+    dlg._from_vectors()
+    assert len(dlg.items) == 1 and len(dlg.items[0].outline) == 2 and dlg.items[0].quantity == 1
+    dlg.items.append(StockItem("Offcut", 700, 300, None, 2, True))
+    dlg._build()
+    dlg.table.qty[0].setValue(1)
+    dlg.accept()
+    assert [(i.name, i.quantity) for i in ctrl.project.stock][1:] == [("Offcut", 2)]
+    ctrl.undo()
+    assert ctrl.project.stock == []
+    ctrl.redo()
+    assert len(ctrl.project.stock) == 2
+    # parts to nest onto the plates of the stock only
+    ctrl.select([])
+    ctrl.project.sheets[0].vectors = []
+    ctrl.add_vectors([VectorObject([shapes.rectangle(0, 0, 120, 80)], ctrl.layer_id)])
+    nd = NestingDialog(ctrl, win)
+    nd.form.widgets["target"].setCurrentIndex(nd.form.widgets["target"].findData("new"))
+    nd.form.widgets["new_sheets"].setChecked(False)
+    nd.qty[0].setValue(14)
+    out = nd.run()
+    # the plates are used smallest first: the shaped leftover, then the two offcuts; what does not fit is reported
+    assert out.placed + out.unplaced == 14 and out.placed > 8
+    assert out.sheets[0].outline and out.sheets[0].name.startswith("Leftover")
+    assert [sh.name for sh in out.sheets[1:]] == [f"Offcut {k + 1}" for k in range(len(out.sheets) - 1)]
+    shaped = [sh for sh in out.sheets if sh.outline]
+    assert len(shaped) == 1 and shaped[0].width == pytest.approx(500) and shaped[0].height == pytest.approx(400)
+    # the shaped leftover (one only) is used up and leaves the stock, the offcuts are counted down
+    used_offcuts = len(out.sheets) - 1
+    left = {i.name: i.quantity for i in ctrl.project.stock}
+    assert left == ({"Offcut": 2 - used_offcuts} if used_offcuts < 2 else {})
+    ctrl.undo()
+    assert len(ctrl.project.stock) == 2 and [i.quantity for i in ctrl.project.stock][1] == 2
+    ctrl.redo()
+    # the canvas draws a leftover and the simulator takes the outline
+    ctrl.set_sheet(shaped[0].id)
+    win.canvas.zoom_extents()
+    QApplication.processEvents()
+    assert not win.canvas.grab().isNull()
+    # saving and loading keeps the plates
+    ctrl.project.save(tmp_path / "x.icam")
+    from iyicam.core.document import Project
+    assert [sh.outline is not None for sh in Project.load(tmp_path / "x.icam").sheets].count(True) == len(shaped)
+
+
+def test_leftover_of_a_sheet_goes_to_the_stock_and_the_outline_is_set_from_vectors(win):
+    ctrl = win.ctrl
+    ctrl.project.sheets[0].width, ctrl.project.sheets[0].height = 600, 400
+    parts = [VectorObject([shapes.rectangle(20, 20, 250, 360)], ctrl.layer_id)]
+    ctrl.add_vectors(parts, select=False)
+    items = ctrl.leftover_to_stock(ctrl.sheet, 3.0, 30.0, 2500.0)
+    assert len(items) == 1 and items[0].leftover
+    assert items[0].area == pytest.approx(600 * 400 - 256 * 366 - 0, rel=0.4) and ctrl.project.stock == items
+    ctrl.undo()
+    assert ctrl.project.stock == []
+    # a drawn outline makes the sheet a plate of that shape; everything on it moves with it
+    ctrl.project.sheets[0].vectors = []
+    mark = VectorObject([shapes.circle((1200, 1100), 10)], ctrl.layer_id)
+    outline = VectorObject([shapes.polyline([(1000 + x, 1000 + y) for x, y in L_PLATE], True)], ctrl.layer_id)
+    ctrl.add_vectors([mark, outline], select=False)
+    ctrl.select([outline.id])
+    assert ctrl.set_sheet_outline_from_selection()
+    sh = ctrl.sheet
+    assert (sh.width, sh.height) == pytest.approx((500, 400)) and sh.outline and sh.vector(outline.id) is None
+    assert mark.bbox().center == pytest.approx((200, 100))  # moved with the sheet
+    ctrl.undo()
+    assert ctrl.sheet.outline is None and ctrl.sheet.vector(outline.id) is not None
+    ctrl.redo()
+    ctrl.set_sheet_outline(None)
+    assert ctrl.sheet.outline is None
+    ctrl.select([])
+    assert not ctrl.set_sheet_outline_from_selection()  # nothing selected
+
+
 def test_text_and_import(win, tmp_path):
     from iyicam.formats.dxf import export_dxf
     from iyicam.gui.qtgeom import text_contours

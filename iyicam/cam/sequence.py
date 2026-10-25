@@ -473,8 +473,7 @@ def island_constraints(items: list[SeqItem], sheet: BBox | None = None,
         return []
     frame = _frame(items, sheet)
     cut = clip.union([p for it in freeing for p in it.kerf])
-    rect = [(frame.xmin, frame.ymin), (frame.xmax, frame.ymin), (frame.xmax, frame.ymax), (frame.xmin, frame.ymax)]
-    material = clip.boolean([rect], cut, "difference")
+    material = frame.material(cut)
     kerfed = [it for it in items if it.kerf]
     boxes = _bboxes([it.kerf for it in kerfed])
     by_key = {it.key: it for it in items}
@@ -482,8 +481,7 @@ def island_constraints(items: list[SeqItem], sheet: BBox | None = None,
     ib = np.array([[it.bbox.xmin, it.bbox.ymin, it.bbox.xmax, it.bbox.ymax] for it in items])
     out = []
     for outer, holes in clip.polytree(material):
-        if any(x <= frame.xmin + 1.0 or x >= frame.xmax - 1.0 or y <= frame.ymin + 1.0 or y >= frame.ymax - 1.0
-               for x, y in outer):
+        if frame.touches(outer):
             continue  # still part of the sheet
         a = np.asarray(outer)
         lo, hi = a.min(axis=0), a.max(axis=0)
@@ -555,24 +553,50 @@ def gouges(items: list[SeqItem], tol: float = 0.05) -> list[tuple[str, str]]:
     return out
 
 
-def _frame(items: list[SeqItem], sheet: BBox | None) -> BBox:
-    bb = BBox() if sheet is None else BBox(sheet.xmin, sheet.ymin, sheet.xmax, sheet.ymax)
-    for it in items:
-        for poly in it.kerf or []:
-            for p in poly:
-                bb.add_point(p)
-    return bb.inflated(5.0)
+class _Frame:
+    """The sheet with a rim of held material round it: pieces of material that reach the rim's outer
+    edge are still part of the sheet. A leftover's rim follows its outline."""
+
+    RIM = 5.0
+
+    def __init__(self, items: list[SeqItem], sheet: BBox | None):
+        bb = BBox() if sheet is None else BBox(sheet.xmin, sheet.ymin, sheet.xmax, sheet.ymax)
+        region = getattr(sheet, "region", None)
+        if not region:  # a rectangle: the rim also takes in cuts that leave the sheet
+            for it in items:
+                for poly in it.kerf or []:
+                    for p in poly:
+                        bb.add_point(p)
+        self.bb = bb.inflated(self.RIM)
+        if region:
+            self.base = clip.offset(region, self.RIM)
+            self.inner = clip.offset(region, self.RIM - 1.0)
+        else:
+            f = self.bb
+            self.base = [[(f.xmin, f.ymin), (f.xmax, f.ymin), (f.xmax, f.ymax), (f.xmin, f.ymax)]]
+            self.inner = None
+
+    def material(self, cut: list) -> list:
+        return clip.boolean(self.base, cut, "difference")
+
+    def touches(self, outer, border: float = 1.0) -> bool:
+        """Whether a piece of material (its outer polygon) reaches the outer edge of the rim."""
+        if self.inner is not None:
+            return abs(clip.area(clip.boolean([outer], self.inner, "difference"))) > 1e-6
+        f = self.bb
+        return any(x <= f.xmin + border or x >= f.xmax - border or y <= f.ymin + border or y >= f.ymax - border
+                   for x, y in outer)
 
 
-def _detached(cut_union: list, frame: BBox, border: float = 1.0) -> list:
+def _frame(items: list[SeqItem], sheet: BBox | None) -> _Frame:
+    return _Frame(items, sheet)
+
+
+def _detached(cut_union: list, frame: _Frame) -> list:
     """Material pieces (polygons, holes included) that no longer touch the sheet frame."""
-    rect = [(frame.xmin, frame.ymin), (frame.xmax, frame.ymin), (frame.xmax, frame.ymax), (frame.xmin, frame.ymax)]
-    material = clip.boolean([rect], cut_union, "difference")
     out = []
-    for outer, holes in clip.polytree(material):
-        touches = any(x <= frame.xmin + border or x >= frame.xmax - border or
-                      y <= frame.ymin + border or y >= frame.ymax - border for x, y in outer)
-        if not touches:
+    for outer, holes in clip.polytree(frame.material(cut_union)):
+        if not frame.touches(outer):
             out += [outer] + holes
     return out
 

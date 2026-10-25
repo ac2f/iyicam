@@ -5,6 +5,7 @@
     python -m iyicam gcode job.icam --post mach3 --sheet all -o out/job.tap
     python -m iyicam import drawing.dxf -o job.icam --thickness 18
     python -m iyicam nest job.icam --width 2800 --height 2100 --spacing 8 -o nested.icam
+    python -m iyicam nest job.icam --leftover 900x600:2 --stock leftovers.json -o nested.icam
 """
 from __future__ import annotations
 
@@ -108,17 +109,32 @@ def cmd_import(a) -> int:
 
 
 def cmd_nest(a) -> int:
+    from .core.stock import StockItem, load_stock
     from .nesting.nest import NestSettings
     from .nesting.parts import nest_objects
+    from .nesting.stock import use_up
     p = Project.load(a.project)
     objs = [v for s in p.sheets for v in s.vectors]
     step = a.rotation
     rots = [0.0] if step <= 0 else [k * step for k in range(int(round(360 / step)))]
     st = NestSettings(a.width, a.height, a.margin, a.spacing, rots, a.gravity, iterations=a.iterations)
-    out = nest_objects(p, objs, st, {o.id: a.quantity for o in objs}, [p.sheets[0]])
+    stock = [] if a.no_project_stock else list(p.stock)
+    if a.stock:
+        stock += load_stock(a.stock)
+    for spec in a.leftover or []:  # WxH or WxH:quantity
+        size, _, qty = spec.partition(":")
+        w, _, h = size.lower().partition("x")
+        stock.append(StockItem(f"Leftover {w}x{h}", float(w), float(h), None, int(qty or 1), True))
+    plates = bool(stock) or a.no_new_sheets
+    out = nest_objects(p, objs, st, {o.id: a.quantity for o in objs}, [p.sheets[0]],
+                       stock=stock if plates else None, use_sheets=[] if plates else None,
+                       new_sheets=not a.no_new_sheets)
+    if plates and not a.keep_stock:
+        p.stock = use_up(p.stock, out.plates)
     p.save(a.output)
-    print(f"placed {out.placed}, unplaced {out.unplaced}, sheets {out.result.sheets}, usage "
-          + ", ".join(f"{u * 100:.1f}%" for u in out.result.utilization))
+    print(f"placed {out.placed}, unplaced {out.unplaced}, plates {out.result.sheets}")
+    for sh, u in zip(out.sheets, out.result.utilization):
+        print(f"  {sh.name}: {sh.width:g} x {sh.height:g}{' (shape)' if sh.outline else ''}, {u * 100:.1f}% used")
     return 0
 
 
@@ -150,6 +166,12 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--gravity", default="left", choices=["left", "bottom", "compact"])
     s.add_argument("--iterations", type=int, default=1)
     s.add_argument("--quantity", type=int, default=1)
+    s.add_argument("--leftover", action="append", metavar="WxH[:N]",
+                   help="a rectangular leftover plate to use first (N of them); can be repeated")
+    s.add_argument("--stock", metavar="FILE", help="stock file (JSON) with leftovers of any shape")
+    s.add_argument("--no-project-stock", action="store_true", help="ignore the stock saved in the project")
+    s.add_argument("--no-new-sheets", action="store_true", help="only use the leftovers and stock plates")
+    s.add_argument("--keep-stock", action="store_true", help="do not take the plates used out of the project's stock")
     a = ap.parse_args(argv)
     _setup(not a.no_plugins)
     return {"posts": cmd_posts, "plugins": cmd_plugins, "info": cmd_info, "gcode": cmd_gcode,

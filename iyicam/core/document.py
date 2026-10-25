@@ -8,7 +8,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Iterator
 
-from .geom import Arc, BBox, Bezier, Contour, Line, Segment, Transform, contours_bbox
+from .geom import Arc, BBox, Bezier, Contour, Line, Pt, Segment, Transform, contours_bbox
+from .stock import StockItem, rect_outline
 from .tooling import Tool
 
 FORMAT = "iyicam-project"
@@ -80,6 +81,15 @@ class Sheet:
     vectors: list[VectorObject] = field(default_factory=list)
     thickness: float | None = None  # overrides the material thickness when set
     id: str = field(default_factory=new_id)
+    # outlines of the material (outer boundaries and holes) when the plate is not a full rectangle
+    # (a leftover); the sheet size is then the bounding box of the outline
+    outline: list[list[Pt]] | None = None
+
+    def region(self) -> list[list[Pt]]:
+        """Outlines of the material: the outline of a leftover, else the rectangle."""
+        if self.outline:
+            return [list(p) for p in self.outline]
+        return rect_outline(self.width, self.height)
 
     def vector(self, vid: str) -> VectorObject | None:
         for v in self.vectors:
@@ -124,6 +134,7 @@ class Project:
         self.layers: list[Layer] = [Layer("Default", LAYER_COLORS[0])]
         self.sheets: list[Sheet] = [Sheet("Sheet 1", 600.0, 400.0)]
         self.toolpaths: list[ToolpathDef] = []
+        self.stock: list[StockItem] = []  # plates (leftovers, sheet sizes) that jobs are nested onto
         self.metadata: dict = {}
         self.path: Path | None = None
 
@@ -345,8 +356,10 @@ def project_to_dict(p: Project) -> dict:
         "layers": [{"id": l.id, "name": l.name, "color": l.color, "visible": l.visible,
                     "locked": l.locked} for l in p.layers],
         "sheets": [{"id": s.id, "name": s.name, "width": s.width, "height": s.height,
-                    "thickness": s.thickness, "vectors": [vector_to_dict(v) for v in s.vectors]}
+                    "thickness": s.thickness, "vectors": [vector_to_dict(v) for v in s.vectors],
+                    "outline": [[[x, y] for x, y in poly] for poly in s.outline] if s.outline else None}
                    for s in p.sheets],
+        "stock": [it.to_dict() for it in p.stock],
         "toolpaths": [toolpath_to_dict(t) for t in p.toolpaths],
         "metadata": copy.deepcopy(p.metadata),  # snapshots (undo) must not share it
     }
@@ -366,8 +379,10 @@ def project_from_dict(d: dict) -> Project:
     p.layers = [Layer(l["name"], l.get("color", "#1f77b4"), l.get("visible", True), l.get("locked", False),
                       l["id"]) for l in d.get("layers", [])] or p.layers
     p.sheets = [Sheet(s["name"], s.get("width", 600.0), s.get("height", 400.0),
-                      [vector_from_dict(v) for v in s.get("vectors", [])], s.get("thickness"), s["id"])
+                      [vector_from_dict(v) for v in s.get("vectors", [])], s.get("thickness"), s["id"],
+                      [[(float(x), float(y)) for x, y in poly] for poly in s["outline"]] if s.get("outline") else None)
                 for s in d.get("sheets", [])] or p.sheets
+    p.stock = [StockItem.from_dict(x) for x in d.get("stock", [])]
     p.toolpaths = [toolpath_from_dict(t) for t in d.get("toolpaths", [])]
     p.metadata = d.get("metadata", {})
     return p

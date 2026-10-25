@@ -1,10 +1,15 @@
 """True shape nesting with no-fit polygons.
 
 Every part is inflated by half the spacing, then placed one by one: the
-feasible positions on a sheet are the inner-fit rectangle minus the union of
+feasible positions on a plate are the plate's usable area minus the union of
 the no-fit polygons (Minkowski differences) of the parts already placed.  The
 best vertex of that region is chosen with a gravity rule.  Several randomised
 orders can be tried and the best layout is kept.
+
+Plates are :class:`Container`s: any shape (leftovers with cut-outs, damaged
+corners, holes), possibly with parts already fixed on them, in any number of
+sizes and quantities.  They are filled one after the other, leftovers first, so
+new sheets are only started when the leftovers are full.
 """
 from __future__ import annotations
 
@@ -30,8 +35,29 @@ class NestShape:
 
 
 @dataclass
+class Container:
+    """A plate the parts can be placed on.
+
+    ``region`` are the outlines of its material (outer boundaries and holes; even-odd,
+    in the plate's own coordinates); ``obstacles`` are parts already on the plate, which
+    new parts keep the spacing to.  ``quantity`` is how many such plates there are
+    (0 = as many as needed); ``leftover`` plates are used before new ones."""
+
+    region: list[list[Pt]]
+    obstacles: list[list[Pt]] = field(default_factory=list)
+    quantity: int = 0
+    leftover: bool = False
+    name: str = ""
+    payload: Any = None
+
+    @classmethod
+    def rect(cls, width: float, height: float, **kw) -> "Container":
+        return cls([[(0.0, 0.0), (width, 0.0), (width, height), (0.0, height)]], **kw)
+
+
+@dataclass
 class NestSettings:
-    sheet_width: float = 2800.0
+    sheet_width: float = 2800.0    # the plate when no ``containers`` are given
     sheet_height: float = 2100.0
     margin: float = 10.0
     spacing: float = 8.0
@@ -41,13 +67,15 @@ class NestSettings:
     iterations: int = 1            # randomised attempts, best result is kept
     seed: int = 1
     tolerance: float = 0.5         # outline simplification (parts get this much extra spacing at most)
+    containers: list[Container] | None = None  # the stock; None = unlimited sheets of the size above
+    stock_order: str = "leftovers"  # leftovers (leftovers first, small to large) | listed
 
 
 @dataclass
 class Placement:
     shape: int
     copy: int
-    sheet: int
+    sheet: int     # index into NestResult.stock / utilization (the plates used, in order)
     angle: float   # degrees, rotation about the shape's own coordinate origin
     x: float       # translation applied after the rotation
     y: float
@@ -58,7 +86,9 @@ class NestResult:
     placements: list[Placement] = field(default_factory=list)
     sheets: int = 0
     unplaced: list[tuple[int, int]] = field(default_factory=list)
-    utilization: list[float] = field(default_factory=list)
+    utilization: list[float] = field(default_factory=list)  # part area / free area, per plate used
+    stock: list[int] = field(default_factory=list)          # container index of every plate used
+    units: list[int] = field(default_factory=list)          # which of the container's plates (0, 1, ...)
 
 
 def is_convex(path: IntPath) -> bool:
@@ -237,16 +267,77 @@ def _translate(paths: list[IntPath], dx: int, dy: int) -> list[IntPath]:
     return [[(x + dx, y + dy) for x, y in p] for p in paths]
 
 
+def _axis_rect(polys: list[list[Pt]]) -> tuple[float, float, float, float] | None:
+    """``(x0, y0, x1, y1)`` when the polygons are one axis-parallel rectangle."""
+    if len(polys) != 1 or len(polys[0]) != 4:
+        return None
+    xs, ys = sorted({round(x, 6) for x, _ in polys[0]}), sorted({round(y, 6) for _, y in polys[0]})
+    if len(xs) != 2 or len(ys) != 2:
+        return None
+    a, b, c, d = polys[0]
+    if not ((a[0] == b[0] or a[1] == b[1]) and (b[0] == c[0] or b[1] == c[1])
+            and (c[0] == d[0] or c[1] == d[1]) and (d[0] == a[0] or d[1] == a[1])):
+        return None
+    return (min(x for x, _ in polys[0]), min(y for _, y in polys[0]),
+            max(x for x, _ in polys[0]), max(y for _, y in polys[0]))
+
+
+class _Box:
+    """A container prepared for nesting: the area the inflated parts must stay inside."""
+
+    def __init__(self, index: int, c: Container, margin: float, spacing: float, tol: float):
+        S = clip.SCALE
+        half = spacing / 2.0
+        self.index, self.c = index, c
+        region = clip.normalize(c.region)
+        self.material = abs(clip.area(region))
+        rect = None if c.obstacles else _axis_rect(region)
+        if rect:
+            x0, y0, x1, y1 = rect
+            self.rect = (round((x0 + margin - half) * S), round((y0 + margin - half) * S),
+                         round((x1 - margin + half) * S), round((y1 - margin + half) * S))
+            self.paths: list[IntPath] = []
+            self.bbox = self.rect
+            self.free = max(0.0, (x1 - x0) * (y1 - y0))
+            return
+        # the margin keeps off the plate's edge, the spacing off the parts fixed on it; the outline
+        # is simplified towards the inside so the parts stay on the safe side of it
+        ct = min(max(0.02, tol / 2), 0.1)
+        usable = clip.offset(region, half - margin - 1.5 * ct, "round", arc_tol=ct / 2)
+        usable = [q for q in (simplify_polyline(p + [p[0]], ct)[:-1] for p in usable) if len(q) >= 3]
+        if c.obstacles:
+            usable = clip.boolean(usable, clip.offset(clip.normalize(c.obstacles, "nonzero"), half), "difference")
+        usable = clip.normalize(usable)
+        self.free = abs(clip.area(clip.boolean(region, c.obstacles, "difference"))) if c.obstacles else self.material
+        self.rect = None
+        r = _axis_rect(usable)
+        if r:
+            self.rect = (round(r[0] * S), round(r[1] * S), round(r[2] * S), round(r[3] * S))
+            self.paths = []
+            self.bbox = self.rect
+            return
+        self.paths = [clip.to_int(p) for p in usable]
+        if self.paths:
+            xs = [q[0] for path in self.paths for q in path]
+            ys = [q[1] for path in self.paths for q in path]
+            self.bbox = (min(xs), min(ys), max(xs), max(ys))
+        else:
+            self.bbox = None
+
+    @property
+    def usable(self) -> bool:
+        return self.bbox is not None and (self.rect is None or (self.rect[2] >= self.rect[0]
+                                                                and self.rect[3] >= self.rect[1]))
+
+
 class Nester:
     def __init__(self, shapes: Sequence[NestShape], settings: NestSettings):
         self.shapes = list(shapes)
         self.st = settings
-        S = clip.SCALE
         half = settings.spacing / 2.0
-        self.ux0 = round((settings.margin - half) * S)
-        self.uy0 = round((settings.margin - half) * S)
-        self.ux1 = round((settings.sheet_width - settings.margin + half) * S)
-        self.uy1 = round((settings.sheet_height - settings.margin + half) * S)
+        conts = settings.containers or [Container.rect(settings.sheet_width, settings.sheet_height)]
+        self.boxes = [_Box(i, c, settings.margin, settings.spacing, settings.tolerance)
+                      for i, c in enumerate(conts)]
         self.variants: list[dict[float, _Variant]] = []
         self.areas: list[float] = []
         for sh in self.shapes:
@@ -264,6 +355,7 @@ class Nester:
                     vs[float(ang)] = _Variant(_rotate_int(grown, ang))
             self.variants.append(vs)
         self._nfp_cache: dict[tuple, list[IntPath]] = {}
+        self._feasible_cache: dict[tuple, tuple[list[IntPath], tuple] | None] = {}
 
     # -- geometry ----------------------------------------------------------------------
     def _nfp(self, a: int, aa: float, b: int, ba: float) -> list[IntPath]:
@@ -304,17 +396,65 @@ class Nester:
         self._nfp_cache[key] = res
         return res
 
-    def _ifp(self, v: _Variant) -> IntPath | None:
-        bx0, by0, bx1, by1 = v.bbox
-        x0, x1 = self.ux0 - bx0, self.ux1 - bx1
-        y0, y1 = self.uy0 - by0, self.uy1 - by1
-        if x1 < x0 or y1 < y0:
+    def _feasible(self, box: _Box, si: int, ang: float) -> tuple[list[IntPath], tuple] | None:
+        """Where the part's reference can be placed on an empty plate: ``(paths, bbox)`` or ``None``."""
+        key = (box.index, si, ang)
+        if key in self._feasible_cache:
+            return self._feasible_cache[key]
+        res = self._compute_feasible(box, self.variants[si][ang])
+        self._feasible_cache[key] = res
+        return res
+
+    def _compute_feasible(self, box: _Box, v: _Variant):
+        if not box.usable:
             return None
-        if x1 == x0:
-            x1 += 1
-        if y1 == y0:
-            y1 += 1
-        return [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+        bx0, by0, bx1, by1 = v.bbox
+        if box.rect is not None:
+            ux0, uy0, ux1, uy1 = box.rect
+            x0, x1, y0, y1 = ux0 - bx0, ux1 - bx1, uy0 - by0, uy1 - by1
+            if x1 < x0 or y1 < y0:
+                return None
+            if x1 == x0:
+                x1 += 1
+            if y1 == y0:
+                y1 += 1
+            ifp = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+            return [ifp], (x0, y0, x1, y1)
+        cx0, cy0, cx1, cy1 = box.bbox
+        if bx1 - bx0 > cx1 - cx0 or by1 - by0 > cy1 - cy0:
+            return None
+        # The part can be anywhere inside the plate's usable area R except where it touches R's
+        # boundary: the band of the boundary swept by the part, plus the reference point of every
+        # outline must lie in R (the part is then inside, not in a hole or outside).
+        band = pyclipper.Pyclipper()
+        for pa in v.paths:
+            for rb in box.paths:
+                for r in pyclipper.MinkowskiDiff(pa, rb):  # {rb - pa}
+                    if len(r) >= 3:
+                        band.AddPath(r, pyclipper.PT_SUBJECT, True)
+        banned = band.Execute(pyclipper.CT_UNION, pyclipper.PFT_NONZERO, pyclipper.PFT_NONZERO)
+        inside = None
+        for pa in v.paths:
+            px, py = pa[0]
+            moved = [[(x - px, y - py) for x, y in rb] for rb in box.paths]
+            if inside is None:
+                inside = moved
+            else:
+                pc = pyclipper.Pyclipper()
+                pc.AddPaths(inside, pyclipper.PT_SUBJECT, True)
+                pc.AddPaths(moved, pyclipper.PT_CLIP, True)
+                inside = pc.Execute(pyclipper.CT_INTERSECTION, pyclipper.PFT_NONZERO, pyclipper.PFT_NONZERO)
+        pc = pyclipper.Pyclipper()
+        pc.AddPaths(inside or [], pyclipper.PT_SUBJECT, True)
+        if banned:
+            pc.AddPaths(banned, pyclipper.PT_CLIP, True)
+        feas = pc.Execute(pyclipper.CT_DIFFERENCE, pyclipper.PFT_NONZERO, pyclipper.PFT_NONZERO)
+        feas = [p for p in feas if len(p) >= 3]
+        if not feas:
+            return None
+        xs = [q[0] for p in feas for q in p]
+        ys = [q[1] for p in feas for q in p]
+        return feas, (min(xs), min(ys), max(xs), max(ys))
 
     def _score(self, x: int, y: int, v: _Variant, used_bbox) -> tuple:
         g = self.st.gravity
@@ -330,16 +470,31 @@ class Nester:
             return (w * h + (w + h) * 1e3, x + y)
         return (x, y)
 
-    def _try_sheet(self, placed: list[tuple[int, float, int, int]], si: int, used_bbox):
+    # a part that sticks out of the plate by less than this (mm^2, in units) is inside it: rounding
+    _OUTSIDE_TOL = 0.05 * clip.SCALE ** 2
+
+    def _inside(self, box: _Box, v: _Variant, x: int, y: int) -> bool:
+        """Whether the part at ``(x, y)`` lies inside the usable area of a plate of any shape.
+
+        The feasible area has zero width slivers where a part only touches the plate's boundary with its
+        reference point (entirely outside, or in a hole): their corners must not be taken."""
+        pc = pyclipper.Pyclipper()
+        pc.AddPaths([[(px + x, py + y) for px, py in path] for path in v.paths], pyclipper.PT_SUBJECT, True)
+        pc.AddPaths(box.paths, pyclipper.PT_CLIP, True)
+        out = pc.Execute(pyclipper.CT_DIFFERENCE, pyclipper.PFT_NONZERO, pyclipper.PFT_NONZERO)
+        return sum(abs(pyclipper.Area(path)) for path in out) <= self._OUTSIDE_TOL
+
+    def _try_sheet(self, box: _Box, placed: list[tuple[int, float, int, int]], si: int, used_bbox):
         best = None
+        cands = []
         for ang, v in self.variants[si].items():
-            ifp = self._ifp(v)
-            if ifp is None:
+            base = self._feasible(box, si, ang)
+            if base is None:
                 continue
+            ifp, (ix0, iy0, ix1, iy1) = base
+            feas = ifp
             if placed:
                 pc = pyclipper.Pyclipper()
-                ix0, iy0 = ifp[0]
-                ix1, iy1 = ifp[2]
                 n_added = 0
                 for (pi, pa, px, py) in placed:
                     nfp = self._nfp(pi, pa, si, ang)
@@ -350,65 +505,95 @@ class Nester:
                             continue
                         pc.AddPath([(q[0] + px, q[1] + py) for q in path], pyclipper.PT_CLIP, True)
                         n_added += 1
-                pc.AddPath(ifp, pyclipper.PT_SUBJECT, True)
-                feas = pc.Execute(pyclipper.CT_DIFFERENCE, pyclipper.PFT_NONZERO, pyclipper.PFT_NONZERO) \
-                    if n_added else [ifp]
-            else:
-                feas = [ifp]
+                if n_added:
+                    pc.AddPaths(ifp, pyclipper.PT_SUBJECT, True)
+                    feas = pc.Execute(pyclipper.CT_DIFFERENCE, pyclipper.PFT_NONZERO, pyclipper.PFT_NONZERO)
             for poly in feas:
                 for (x, y) in poly:
                     sc = self._score(x, y, v, used_bbox)
-                    if best is None or sc < best[0]:
-                        best = (sc, ang, x, y)
+                    if box.rect is not None:
+                        if best is None or sc < best[0]:
+                            best = (sc, ang, x, y)
+                    else:
+                        cands.append((sc, ang, x, y))
+        if box.rect is None:  # best first, the first one that is really on the plate
+            cands.sort()
+            for c in cands:
+                if self._inside(box, self.variants[si][c[1]], c[2], c[3]):
+                    return c
         return best
 
     # -- main loop -----------------------------------------------------------------------
+    def _plates(self) -> list[_Box]:
+        """The containers in the order they are filled."""
+        boxes = [b for b in self.boxes if b.usable]
+        if self.st.stock_order == "listed":
+            return boxes
+        return sorted(boxes, key=lambda b: (0 if b.c.leftover else 1, b.free, b.index))
+
     def run_order(self, order: list[tuple[int, int]], progress: Callable | None = None,
                   cancel: Callable[[], bool] | None = None) -> NestResult:
         res = NestResult()
-        sheets: list[list[tuple[int, float, int, int]]] = []
-        bboxes: list[tuple | None] = []
+        remaining = [it for it in order if self.variants[it[0]]]
+        res.unplaced = [it for it in order if not self.variants[it[0]]]
         total = len(order)
-        for k, (si, ci) in enumerate(order):
-            if cancel and cancel():
-                break
-            if progress:
-                progress(k, total)
-            if not self.variants[si]:
-                res.unplaced.append((si, ci))
-                continue
-            done = False
-            for sheet_i, placed in enumerate(sheets):
-                b = self._try_sheet(placed, si, bboxes[sheet_i])
-                if b is not None:
-                    self._commit(res, sheets, bboxes, sheet_i, si, ci, b)
-                    done = True
+        stop = False
+        for box in self._plates():
+            unit = 0
+            while remaining and not stop and res.sheets < self.st.max_sheets \
+                    and (box.c.quantity <= 0 or unit < box.c.quantity):
+                n = self._fill(box, remaining, res, progress, cancel, total)
+                if n < 0:
+                    stop = True
                     break
-            if not done and len(sheets) < self.st.max_sheets:
-                b = self._try_sheet([], si, None)
-                if b is not None:
-                    sheets.append([])
-                    bboxes.append(None)
-                    self._commit(res, sheets, bboxes, len(sheets) - 1, si, ci, b)
-                    done = True
-            if not done:
-                res.unplaced.append((si, ci))
-        res.sheets = len(sheets)
-        sheet_area = self.st.sheet_width * self.st.sheet_height
-        for i in range(len(sheets)):
+                if n == 0:
+                    break  # nothing fits on a plate like this: the next ones would not do better
+                res.stock.append(box.index)
+                res.units.append(unit)
+                res.sheets += 1
+                unit += 1
+            if stop or not remaining:
+                break
+        res.unplaced += remaining
+        for i in range(res.sheets):
             a = sum(self.areas[p.shape] for p in res.placements if p.sheet == i)
-            res.utilization.append(a / sheet_area if sheet_area > 0 else 0.0)
+            free = self.boxes[res.stock[i]].free
+            res.utilization.append(a / free if free > 0 else 0.0)
         return res
 
-    def _commit(self, res, sheets, bboxes, sheet_i, si, ci, best) -> None:
-        _, ang, x, y = best
-        sheets[sheet_i].append((si, ang, x, y))
-        bx0, by0, bx1, by1 = self.variants[si][ang].bbox
-        nb = (x + bx0, y + by0, x + bx1, y + by1)
-        ob = bboxes[sheet_i]
-        bboxes[sheet_i] = nb if ob is None else (min(ob[0], nb[0]), min(ob[1], nb[1]),
-                                                  max(ob[2], nb[2]), max(ob[3], nb[3]))
-        res.placements.append(Placement(si, ci, sheet_i, ang, x / clip.SCALE, y / clip.SCALE))
+    def _fill(self, box: _Box, remaining: list[tuple[int, int]], res: NestResult, progress, cancel,
+              total: int) -> int:
+        """Place as many of ``remaining`` (largest first) on a new plate of ``box`` as fit; their count
+        (-1: cancelled)."""
+        placed: list[tuple[int, float, int, int]] = []
+        used_bbox = None
+        free = box.free
+        sheet = res.sheets
+        left = []
+        for k, item in enumerate(remaining):
+            if cancel and cancel():
+                remaining[:] = left + remaining[k:]
+                return -1
+            si, ci = item
+            if self.areas[si] > free + 1e-6:
+                left.append(item)
+                continue
+            if progress:
+                progress(total - len(remaining) + len(placed), total)
+            b = self._try_sheet(box, placed, si, used_bbox)
+            if b is None:
+                left.append(item)
+                continue
+            _, ang, x, y = b
+            placed.append((si, ang, x, y))
+            free -= self.areas[si]
+            bx0, by0, bx1, by1 = self.variants[si][ang].bbox
+            nb = (x + bx0, y + by0, x + bx1, y + by1)
+            used_bbox = nb if used_bbox is None else (min(used_bbox[0], nb[0]), min(used_bbox[1], nb[1]),
+                                                      max(used_bbox[2], nb[2]), max(used_bbox[3], nb[3]))
+            res.placements.append(Placement(si, ci, sheet, ang, x / clip.SCALE, y / clip.SCALE))
+        remaining[:] = left
+        return len(placed)
 
     def default_order(self) -> list[tuple[int, int]]:
         items = [(i, c) for i, sh in enumerate(self.shapes) for c in range(max(0, sh.quantity))]
@@ -421,7 +606,8 @@ class Nester:
             extent = max((p.y for p in last), default=0.0)
         else:
             extent = max((p.x for p in last), default=0.0)
-        return (len(r.unplaced), r.sheets, -sum(r.utilization[:-1]) if r.sheets > 1 else 0.0, extent)
+        cost = sum(self.boxes[i].material for i in r.stock if not self.boxes[i].c.leftover)
+        return (len(r.unplaced), cost, r.sheets, -sum(r.utilization[:-1]) if r.sheets > 1 else 0.0, extent)
 
 
 def nest(shapes: Sequence[NestShape], settings: NestSettings, progress: Callable | None = None,

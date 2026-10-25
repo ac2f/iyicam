@@ -140,6 +140,32 @@ class Toolpath:
                 return (m.x, m.y, m.r)
         return None
 
+    def cut_points(self, step: float = 2.0) -> list[tuple[float, float]]:
+        """Points every ``step`` mm along the moves that cut (feed moves, drilled holes), as ``(x, y)``."""
+        out: list[tuple[float, float]] = []
+        pos = None
+        for m in self.moves:
+            if isinstance(m, (Comment, Dwell)):
+                continue
+            if isinstance(m, DrillCycle):
+                out.append((m.x, m.y))
+                pos = (m.x, m.y, m.r)
+                continue
+            if pos is not None and not isinstance(m, Rapid):
+                if isinstance(m, ArcMove):
+                    sw = arc_sweep(pos[0], pos[1], m)
+                    r = math.hypot(pos[0] - m.cx, pos[1] - m.cy)
+                    a0 = math.atan2(pos[1] - m.cy, pos[0] - m.cx)
+                    n = max(1, int(abs(sw) * r / step) + 1)
+                    out += [(m.cx + r * math.cos(a0 + sw * k / n), m.cy + r * math.sin(a0 + sw * k / n))
+                            for k in range(1, n + 1)]
+                else:
+                    n = max(1, int(math.hypot(m.x - pos[0], m.y - pos[1]) / step) + 1)
+                    out += [(pos[0] + (m.x - pos[0]) * k / n, pos[1] + (m.y - pos[1]) * k / n)
+                            for k in range(1, n + 1)]
+            pos = (m.x, m.y, m.z)
+        return out
+
     def stats(self, rapid_rate: float = 8000.0, start: tuple[float, float, float] | None = None) -> PathStats:
         st = PathStats()
         pos = start

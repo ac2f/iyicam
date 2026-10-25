@@ -11,6 +11,7 @@ from typing import Callable, Sequence
 
 import numpy as np
 
+from ..core import clip
 from ..core.tooling import Tool
 from .moves import ArcMove, DrillCycle, Feed, Rapid, Toolpath, arc_sweep
 
@@ -156,9 +157,17 @@ def auto_resolution(width: float, height: float, cells: int = 1_500_000) -> floa
 
 
 def simulate(toolpaths: Sequence[Toolpath], width: float, height: float, thickness: float,
-             res: float = 0.0, progress=None, cancel=None) -> HeightMap:
+             res: float = 0.0, progress=None, cancel=None, outline=None) -> HeightMap:
+    """Material removal on a sheet; ``outline`` (outlines of the material) leaves no material beyond it."""
     res = res or auto_resolution(width, height)
-    return Simulator(width, height, thickness, res).run(toolpaths, progress, cancel)
+    sim = Simulator(width, height, thickness, res)
+    if outline:
+        hm = sim.hm
+        xs = hm.x0 + np.arange(hm.z.shape[1]) * res
+        for i in range(hm.z.shape[0]):
+            row = np.c_[xs, np.full(len(xs), hm.y0 + i * res)]
+            hm.z[i, ~clip.region_mask(row, outline)] = -thickness  # nothing there to cut
+    return sim.run(toolpaths, progress, cancel)
 
 
 def shade(hm: HeightMap, light=(-0.5, 0.6, 0.62)) -> np.ndarray:

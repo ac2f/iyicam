@@ -8,12 +8,15 @@ from pathlib import Path
 from PySide6.QtCore import QObject, QTimer, Signal
 
 from ..cam.job import ComputeResult, compute_all, sheet_toolpaths, sheets_for
-from ..core import paths
+from ..core import clip, paths, vectorops
 from ..core.commands import Command, CommandContext, CommandError, run_command
 from ..core.document import Project, Sheet, ToolpathDef, VectorObject
+from ..core.geom import Pt, Transform
 from ..core.registry import REGISTRY, Registry
+from ..core.stock import StockItem, normalized
 from ..core.tooling import ToolLibrary
 from ..core.undo import UndoStack
+from ..nesting.stock import leftover_of_sheet, stock_from_vectors
 from .settings import Settings, Units
 
 
@@ -201,6 +204,64 @@ class Controller(QObject):
             self.sheet.vectors.extend(objs)
         if select:
             self.select([o.id for o in objs])
+
+    # -- stock of plates (leftovers and sheet sizes that jobs are nested onto) --------------------------
+    def set_stock(self, items: list[StockItem], label: str = "Edit stock") -> None:
+        with self.edit(label, geometry=False):
+            self.project.stock = list(items)
+
+    def add_stock(self, items: list[StockItem], label: str = "Add to stock") -> None:
+        with self.edit(label, geometry=False):
+            self.project.stock.extend(items)
+
+    def stock_from_selection(self, quantity: int = 1, leftover: bool = True) -> list[StockItem]:
+        """Plates drawn as closed vectors: each outline is a plate, closed vectors inside it are its holes."""
+        items = stock_from_vectors(self.selected_objects(), quantity, leftover)
+        if items:
+            self.add_stock(items, "Add selected vectors to stock")
+        return items
+
+    def leftover_to_stock(self, sheet: Sheet | None = None, clearance: float = 3.0, min_width: float = 30.0,
+                          min_area: float = 2500.0) -> list[StockItem]:
+        """What is left of a sheet once its parts are cut out, added to the stock as plates."""
+        items = leftover_of_sheet(sheet or self.sheet, clearance, min_width, min_area)
+        if items:
+            self.add_stock(items, "Add leftover to stock")
+        return items
+
+    @staticmethod
+    def _apply_outline(s: Sheet, outline: list[list[Pt]] | None) -> None:
+        if not outline:
+            s.outline = None
+            return
+        outline = clip.normalize(outline)
+        w, h, norm = normalized(outline)
+        T = Transform.translate(-min(x for poly in outline for x, _ in poly),
+                                -min(y for poly in outline for _, y in poly))
+        for v in s.vectors:
+            v.transform(T)
+        s.width, s.height, s.outline = w, h, norm
+
+    def set_sheet_outline(self, outline: list[list[Pt]] | None, sheet: Sheet | None = None) -> None:
+        """Make the sheet a plate of any shape (``None``: a plain rectangle again).
+
+        The outline is given in sheet coordinates; the sheet is moved so the outline starts at the
+        origin, with everything on it, and the sheet size becomes the size of the outline."""
+        with self.edit("Sheet outline"):
+            self._apply_outline(sheet or self.sheet, outline)
+
+    def set_sheet_outline_from_selection(self) -> bool:
+        """The selected closed vectors become the outline of the sheet (and are used up doing so)."""
+        objs = [o for o in self.selected_objects() if any(c.closed for c in o.contours)]
+        polys = clip.normalize([p for o in objs for p in vectorops.region([c for c in o.contours if c.closed])])
+        if not polys:
+            return False
+        ids = {o.id for o in objs}
+        with self.edit("Sheet outline"):
+            self.sheet.vectors = [v for v in self.sheet.vectors if v.id not in ids]
+            self._apply_outline(self.sheet, polys)
+        self.select([])
+        return True
 
     def delete_selection(self) -> None:
         ids = [o.id for o in self.selected_objects() if self.editable(o)]

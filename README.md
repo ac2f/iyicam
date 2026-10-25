@@ -11,12 +11,13 @@ with Python plugins.
 > gravür, V-oyma ve kakma (inlay) takım yolları, döner eksen (A) sarma, döşeme (tiling), MDF kapak
 > sihirbazı, tek çizgi (orta hat) yazı ve izleme, her biri kendi kesim yönüyle kesim sırası
 > stratejileri ve akıllı başlangıç noktaları, köprüler (tab), rampa ve giriş/çıkış yayları, gerçek
-> şekil nesting, NcStudio / Mach3 / Mach4 / Fanuc / LinuxCNC / Syntec postprocessor'ları, takım
-> veritabanı ve kesme hızı hesaplayıcı, malzeme kaldırma simülasyonu, G-kod görüntüleme, bitmap'ten
-> vektöre izleme, vektör doktoru, kırpma aracı ve Python eklenti sistemi içerir. Arayüz
-> İngilizcedir. Kurulum ve kullanım aşağıdadır; eklenti yazımı için [docs/plugins.md](docs/plugins.md),
+> şekil nesting (fire/artan ve düzensiz şekilli plakalara da), NcStudio / Mach3 / Mach4 / Fanuc /
+> LinuxCNC / Syntec postprocessor'ları, takım veritabanı ve kesme hızı hesaplayıcı, malzeme kaldırma
+> simülasyonu, G-kod görüntüleme, bitmap'ten vektöre izleme, vektör doktoru, kırpma aracı ve Python
+> eklenti sistemi içerir. Arayüz İngilizcedir. Kurulum ve kullanım aşağıdadır; eklenti yazımı için [docs/plugins.md](docs/plugins.md),
 > postprocessor düzenleme için [docs/postprocessors.md](docs/postprocessors.md), kesim sırası ve
-> akıllı başlangıç noktaları için [docs/cut_order.md](docs/cut_order.md) dosyalarına bakın.
+> akıllı başlangıç noktaları için [docs/cut_order.md](docs/cut_order.md), fire plakalara ve düzensiz
+> şekilli plakalara nesting için [docs/nesting.md](docs/nesting.md) dosyalarına bakın.
 
 ## Features
 
@@ -91,7 +92,12 @@ with Python plugins.
 **Nesting** – true shape nesting with no-fit polygons: rotations (none / 180 / 90 / 45 /
 15 degree steps), part spacing, border gap, quantities, several sheets, holes and
 engravings travel with their part (a part drawn inside another part's hole is recognised as
-a separate part), randomised optimisation.
+a separate part), randomised optimisation. **Leftovers and plates of any shape**: a stock of
+plates (L shapes, plates with holes and bites, offcuts, sheet sizes, with quantities and own
+thickness) is nested onto leftovers first, around what is already on a sheet, and the plates
+used are counted down; the material left on a cut sheet becomes the next job's plates; sheets
+with an outline are understood by cut order, start points, warnings and simulation
+([docs/nesting.md](docs/nesting.md))
 
 **Post-processors** – template based, defined in TOML, with inheritance (`extends`).
 Included: NcStudio (Weihong, single spindle — one file per tool), NcStudio ATC, Mach3,
@@ -170,7 +176,7 @@ iyicam/
                cut order (sequence) and smart start points,
                ordering, job calculation, simulation
   post/        post-processor engine, TOML loader, built-in posts, G-code export
-  nesting/     no-fit polygon nesting and part grouping
+  nesting/     no-fit polygon nesting on plates of any shape, part grouping, stock of leftovers
   formats/     DXF and SVG import / export
   plugins/     plugin API and manager
   builtins/    built-in features, registered like a plugin
