@@ -100,7 +100,8 @@ with an outline are understood by cut order, start points, warnings and simulati
 ([docs/nesting.md](docs/nesting.md)). Rotation is free (an own step or any list of angles) and
 can be limited per part or layer (never rotate, 0 / 180°, tilt up to ±X°, ...); an optional
 **squeeze** suggestion finds parts that fit when tilted a few degrees or taken a few mm closer
-to the edge, and lets you decide
+to the edge, and lets you decide. Nesting runs in the background (the program stays alive, Cancel works at once);
+complex outlines are simplified to a point budget, so 25 organic parts take seconds, not minutes
 
 **Post-processors** – template based, defined in TOML, with inheritance (`extends`).
 Included: NcStudio (Weihong, single spindle — one file per tool), NcStudio ATC, Mach3,

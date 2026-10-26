@@ -623,3 +623,86 @@ def test_cli_free_angles_layer_rules_and_squeezing(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "placed 1, unplaced 0" in out and "squeezed in:" in out
     assert len(Project.load(tmp_path / "k2.icam").sheets[0].vectors) == 1
+
+
+# ---------------------------------------------------------------------------
+# speed: shapes that are the same share their work, symmetric ones are tried once, outlines have a point budget
+# ---------------------------------------------------------------------------
+
+def _wobbly(n=300, rx=300.0, ry=220.0, seed=1):
+    import random
+    rnd = random.Random(seed)
+    ph = [rnd.uniform(0, 6.28) for _ in range(3)]
+    return [(rx + rx * math.cos(2 * math.pi * k / n) * (1 + 0.12 * math.sin(5 * 6.28 * k / n + ph[0])
+                                                          + 0.06 * math.sin(9 * 6.28 * k / n + ph[1])),
+             ry + ry * math.sin(2 * math.pi * k / n) * (1 + 0.1 * math.cos(3 * 6.28 * k / n + ph[2])))
+            for k in range(n)]
+
+
+def test_identical_outlines_drawn_separately_share_their_work():
+    from iyicam.nesting.nest import Nester
+    base = _wobbly()
+    # 12 copies of one part drawn as separate vectors, anywhere (also far from the origin)
+    shapes_ = [NestShape([[(x + 1700 * (i % 4) - 300, y + 900 * (i // 4) - 400) for x, y in base]]) for i in range(12)]
+    st = NestSettings(2800, 2100, margin=10, spacing=8, rotations=[0, 90, 180, 270])
+    n = Nester(shapes_, st)
+    assert len(set(n.cls)) == 1  # one class: its outline, angles and no-fit polygons are made once
+    res = n.run_order(n.default_order())
+    assert not res.unplaced and n.stats["nfp"] <= 4  # one per angle between two copies
+    assert_valid(shapes_, res, st)
+
+
+def test_symmetric_outlines_are_tried_once_per_look():
+    from iyicam.nesting.nest import Nester
+    n = Nester([NestShape([rect_poly(300, 100)]), NestShape([rect_poly(200, 200)]),
+                NestShape([[(0, 0), (200, 0), (200, 50), (50, 50), (50, 150), (0, 150)]])],
+               NestSettings(rotations=[0, 90, 180, 270]))
+    assert n.angles[0] == [0.0, 90.0]  # 180 and 270 look the same, they only differ by a move
+    assert n.angles[1] == [0.0]  # a square looks the same at every quarter turn
+    assert n.angles[2] == [0.0, 90.0, 180.0, 270.0]  # an L does not
+
+
+def test_point_budget_keeps_outlines_small_and_nesting_valid():
+    from iyicam.nesting.nest import Nester
+    blob = [(x, y) for x, y in _wobbly(400)]
+    shapes_ = [NestShape([blob], 6)]
+    loose = Nester(shapes_, NestSettings(2800, 2100, 10, 8, [0, 90], max_points=0))
+    tight = Nester(shapes_, NestSettings(2800, 2100, 10, 8, [0, 90], max_points=40))
+    points = lambda n: sum(len(p) for p in n._grown[0])  # noqa: E731
+    assert points(loose) > 70 and points(tight) <= 50
+    for n in (loose, tight):
+        res = n.run_order(n.default_order())
+        assert not res.unplaced
+        assert_valid(shapes_, res, n.st)
+
+
+def test_parts_drawn_anywhere_are_placed_inside_the_sheet():
+    rects = [NestShape([[(x + ox, y + oy) for x, y in rect_poly(w, h)]], 2)
+             for (w, h, ox, oy) in ((300, 120, -900, 40), (200, 200, 3300, -700), (450, 80, 12, 3000))]
+    L = [(0, 0), (240, 0), (240, 60), (60, 60), (60, 200), (0, 200)]
+    rects.append(NestShape([[(x - 500, y + 1500) for x, y in L]], 3))
+    st = NestSettings(1200, 900, margin=10, spacing=8, rotations=[0, 45, 90, 135, 180, 225, 270, 315])
+    res = nest(rects, st)
+    assert not res.unplaced
+    assert_valid(rects, res, st)
+
+
+def test_cancelling_raises_at_once_and_changes_nothing():
+    from iyicam.nesting.nest import NestCancelled
+    calls = []
+
+    def cancel():
+        calls.append(1)
+        return len(calls) > 3
+
+    shapes_ = [NestShape([_wobbly(200, 300 + i, 200 + i, i)]) for i in range(8)]
+    with pytest.raises(NestCancelled):
+        nest(shapes_, NestSettings(2800, 2100, 10, 8, [0, 90]), cancel=cancel)
+    assert len(calls) < 40  # asked all the time, stopped within a few steps
+    # through nest_objects: nothing of the project was touched
+    p, s, objs = make_project([shapes.rectangle(0, 0, 100, 60), shapes.rectangle(0, 100, 80, 80)], size=(500, 400))
+    before = [(o.id, o.bbox().xmin, o.bbox().ymin) for o in s.vectors]
+    with pytest.raises(NestCancelled):
+        nest_objects(p, objs, NestSettings(margin=5, spacing=4, rotations=[0, 90]), {o.id: 3 for o in objs}, [],
+                     cancel=lambda: True)
+    assert [(o.id, o.bbox().xmin, o.bbox().ymin) for o in s.vectors] == before and len(p.sheets) == 1

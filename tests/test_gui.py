@@ -388,6 +388,75 @@ def test_nesting_dialog_squeezing_in_asks_applies_or_is_off(win):
     assert nd.form.widgets["squeeze_angle"].isEnabled()
 
 
+def _wobbly_parts(ctrl, n, points=200):
+    from iyicam.core.geom import Transform
+    objs = []
+    for i in range(n):
+        rx, ry = 300.0 + 12 * i, 200.0 + 9 * i
+        pts = [(rx + rx * math.cos(2 * math.pi * k / points) * (1 + 0.1 * math.sin(5 * 6.28 * k / points + i)),
+                ry + ry * math.sin(2 * math.pi * k / points) * (1 + 0.08 * math.cos(3 * 6.28 * k / points + 2 * i)))
+               for k in range(points)]
+        o = VectorObject([shapes.polyline(pts, True)], ctrl.layer_id)
+        o.transform(Transform.translate(700 * (i % 4), 500 * (i // 4)))
+        objs.append(o)
+    ctrl.add_vectors(objs)
+    return objs
+
+
+def _positions(ctrl):
+    """Ids and positions of the vectors of the first sheet, for comparing (positions only roughly: they
+    go through saving when an action is undone)."""
+    vs = ctrl.project.sheets[0].vectors
+    return [o.id for o in vs], [c for o in vs for c in (o.bbox().xmin, o.bbox().ymin)]
+
+
+def _same_positions(ctrl, before) -> bool:
+    ids, pos = _positions(ctrl)
+    return ids == before[0] and pos == pytest.approx(before[1])
+
+
+def test_nesting_does_not_freeze_the_program_and_cancel_changes_nothing(win, monkeypatch):
+    import time
+
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QProgressDialog
+    ctrl = win.ctrl
+    ctrl.project.sheets[0].vectors = []
+    _wobbly_parts(ctrl, 9)
+    ctrl.project.stock = []
+    before = _positions(ctrl)
+    undo_before = len(ctrl.undo_stack._undo)
+
+    def dialog():
+        nd = _nest_dialog(win, max_points=0)  # slow on purpose: the real outlines
+        w = nd.form.widgets
+        w["target"].setCurrentIndex(w["target"].findData("new"))
+        w["new_sheets"].setChecked(True)
+        w["width"].setValue(ctrl.units.to_display(2800.0))
+        w["height"].setValue(ctrl.units.to_display(2100.0))
+        return nd
+
+    # the program keeps running while it nests: a timer fires all the time
+    ticks = []
+    timer = QTimer()
+    timer.setInterval(10)
+    timer.timeout.connect(lambda: ticks.append(1))
+    timer.start()
+    out = dialog().run()
+    timer.stop()
+    assert out is not None and out.placed == 9
+    assert len(ticks) >= 5, "the interface did not get a chance to run during the nesting"
+    ctrl.undo()
+    assert _same_positions(ctrl, before) and len(ctrl.undo_stack._undo) == undo_before
+    # cancelling: nothing changes, no undo step is left, and it ends quickly
+    monkeypatch.setattr(QProgressDialog, "wasCanceled", lambda self: True)
+    t = time.time()
+    assert dialog().run() is None
+    assert time.time() - t < 3.0
+    assert _same_positions(ctrl, before) and len(ctrl.undo_stack._undo) == undo_before
+    assert len(ctrl.project.sheets) == 1
+
+
 def test_text_and_import(win, tmp_path):
     from iyicam.formats.dxf import export_dxf
     from iyicam.gui.qtgeom import text_contours

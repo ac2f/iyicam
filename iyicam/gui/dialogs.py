@@ -5,6 +5,7 @@ import copy
 import json
 import math
 import shutil
+import threading
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QUrl
@@ -21,7 +22,9 @@ from ..core.document import XY_ORIGINS, Selection, ToolpathDef
 from ..core.params import Param
 from ..core.stock import StockItem, load_stock, save_stock
 from ..core.tooling import TOOL_TYPES, Tool
-from ..nesting.parts import ROTATION_MODES, RULE_USES_VALUE, parse_angles, squeeze_lines
+from ..nesting.nest import NestCancelled, NestSettings
+from ..nesting.parts import (ROTATION_MODES, RULE_USES_VALUE, apply_nesting, parse_angles, prepare_nesting,
+                             run_nesting, squeeze_lines)
 from ..nesting.stock import leftover_of_sheet, stock_from_vectors, use_up
 from .forms import ParamForm
 
@@ -32,6 +35,39 @@ def buttons(dlg: QDialog, ok_text: str = "OK") -> QDialogButtonBox:
     bb.accepted.connect(dlg.accept)
     bb.rejected.connect(dlg.reject)
     return bb
+
+
+class _Worker(threading.Thread):
+    def __init__(self, fn):
+        super().__init__(daemon=True)
+        self.fn, self.result, self.error = fn, None, None
+
+    def run(self) -> None:
+        try:
+            self.result = self.fn()
+        except BaseException as e:  # noqa: BLE001  (handed to the caller)
+            self.error = e
+
+
+def run_in_thread(fn, prog: QProgressDialog, state: dict):
+    """Run ``fn()`` in a thread while the interface stays alive.
+
+    ``state`` has ``k`` / ``n`` (progress, written by the thread) and ``cancel`` (a threading.Event set
+    here when the progress dialog is cancelled, for the thread to look at)."""
+    worker = _Worker(fn)
+    worker.start()
+    while worker.is_alive():
+        QApplication.processEvents()
+        if prog.wasCanceled():
+            state["cancel"].set()
+        else:
+            prog.setMaximum(max(1, state["n"]))
+            prog.setValue(min(state["k"], max(1, state["n"])))
+        worker.join(0.02)
+    QApplication.processEvents()
+    if worker.error is not None:
+        raise worker.error
+    return worker.result
 
 
 def scroll(widget: QWidget) -> QScrollArea:
@@ -865,6 +901,10 @@ class NestingDialog(QDialog):
             Param("iterations", "Optimisation attempts", "int", 1, min=1, max=200, group="Strategy"),
             Param("tolerance", "Outline tolerance", "length", 0.5, min=0.01, group="Strategy",
                   help="Outlines are simplified this much; parts may end up this much further apart"),
+            Param("max_points", "Outline points per part", "int", 40, min=0, max=5000, group="Strategy",
+                  help="A part with more points is simplified further, which makes the nesting much faster "
+                       "(complex outlines: seconds instead of minutes) and leaves it a little further from its "
+                       "neighbours. 0 = no limit"),
             Param("squeeze", "Squeeze parts in", "choice", "off",
                   choices=[("off", "Off"), ("ask", "Suggest it, I decide"), ("auto", "Squeeze in automatically")],
                   group="Squeezing in",
@@ -1035,12 +1075,11 @@ class NestingDialog(QDialog):
         return box.clickedButton() is yes
 
     def run(self):
-        from ..nesting.nest import NestSettings
-        from ..nesting.parts import nest_objects
+        """Nest; the outcome, or ``None`` when cancelled (nothing is changed then)."""
         v = self.form.values()
         squeezing = v["squeeze"] != "off"
         st = NestSettings(v["width"], v["height"], v["margin"], v["spacing"], self.rotations(v), v["gravity"],
-                          iterations=v["iterations"], tolerance=v["tolerance"],
+                          iterations=v["iterations"], tolerance=v["tolerance"], max_points=v["max_points"],
                           squeeze_angle=v["squeeze_angle"] if squeezing else 0.0,
                           squeeze_margin=v["squeeze_margin"] if squeezing else 0.0,
                           squeeze_step=v["squeeze_step"])
@@ -1049,15 +1088,15 @@ class NestingDialog(QDialog):
                       if ed.rule()["mode"] != "inherit"}
         layer_rules = {lid: ed.rule() for lid, ed in zip(self.layer_ids, self.layer_rules)
                        if ed.rule()["mode"] != "default"}
-        total = sum(quantities.values())
-        prog = QProgressDialog("Nesting parts...", "Cancel", 0, max(1, total), self)
+        prog = QProgressDialog("Nesting parts...", "Cancel", 0, 100, self)
         prog.setWindowModality(Qt.WindowModal)
         prog.setMinimumDuration(300)
+        prog.setAutoClose(False)
+        prog.setAutoReset(False)
+        state = {"k": 0, "n": 1, "cancel": threading.Event()}
 
         def progress(k, n):
-            prog.setMaximum(max(1, n))
-            prog.setValue(k)
-            QApplication.processEvents()
+            state["k"], state["n"] = k, n
 
         def choose(strict, better) -> bool:
             return v["squeeze"] == "auto" or self._ask_squeeze(self._suggestion_text(strict, better))
@@ -1069,23 +1108,28 @@ class NestingDialog(QDialog):
         use_sheets = [ctrl.sheet] if target == "current" else list(ctrl.project.sheets) if target == "all" else []
         # the rules are kept with the project, and stay when the nesting is undone
         ctrl.project.metadata["nesting"] = {"part_rules": part_rules, "layer_rules": layer_rules}
+        moving = {o.id for p in self.parts for o in p.objects}
+        sheet = ctrl.sheet
+        blank = target == "current" and not sheet.outline and all(o.id in moving for o in sheet.vectors)
+        job = prepare_nesting(ctrl.project, self.objs, st, quantities, [], stock, use_sheets, v["new_sheets"],
+                              part_rules, layer_rules, v["tilt_step"])
+        try:  # the long part runs in a thread: the program stays alive and Cancel works at once
+            res = run_in_thread(lambda: run_nesting(job, progress, state["cancel"].is_set), prog, state)
+        except NestCancelled:
+            return None
+        finally:
+            prog.close()
         ctrl.checkpoint("Nesting")
         try:
-            moving = {o.id for p in self.parts for o in p.objects}
-            sheet = ctrl.sheet
-            if target == "current" and not sheet.outline and all(o.id in moving for o in sheet.vectors):
+            if blank:
                 sheet.width, sheet.height = v["width"], v["height"]  # a blank sheet takes the size asked for
-            out = nest_objects(ctrl.project, self.objs, st, quantities, [], progress, prog.wasCanceled,
-                               stock=stock, use_sheets=use_sheets, new_sheets=v["new_sheets"],
-                               rotation_rules=part_rules, layer_rules=layer_rules, tilt_step=v["tilt_step"],
-                               choose=choose if squeezing else None)
+                job.settings.sheet_width, job.settings.sheet_height = v["width"], v["height"]
+            out = apply_nesting(job, res, choose if squeezing else None)
             if v["use_up"]:
                 self._use_up(out)
         except Exception:
             ctrl.undo_stack.rollback(ctrl.project)
             raise
-        finally:
-            prog.close()
         ctrl.notify()
         if out.sheets:
             ctrl.set_sheet(out.sheets[0].id)

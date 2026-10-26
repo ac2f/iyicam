@@ -774,6 +774,8 @@ class MainWindow(QMainWindow):
         dlg = NestingDialog(c, self)
         if dlg.exec():
             out = dlg.run()
+            if out is None:  # cancelled: nothing changed
+                return
             r = out.result
             lines = [f"Placed {out.placed} part(s) on {r.sheets} plate(s):"]
             for sh, u in zip(out.sheets, r.utilization):

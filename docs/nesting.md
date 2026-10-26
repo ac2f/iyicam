@@ -60,6 +60,27 @@ after the plate (*Leftover 1*, *Offcut 2*, ...). The border gap is kept to the e
 the plate, to its holes and cut-outs; the gap between parts is kept between parts and
 to what is fixed on a plate.
 
+## Speed, progress and cancelling
+
+Nesting runs in the background: the program stays alive, a progress window counts the
+parts placed, and **Cancel** works at once (within a fraction of a second) and changes
+nothing. What keeps it fast:
+
+* **Outline points per part** (default 40, 0 = no limit): a part whose outline has more
+  points is simplified further before it is nested. Outlines from DXF files, text or traced
+  curves can have hundreds of points, and the work grows with the square of that (25 organic
+  parts: about 190 seconds without a limit, 2 seconds with 40 points, the same number of
+  sheets and the same usage). The price is that such parts end up up to a millimetre or two
+  further from their neighbours. Plain parts (rectangles, rounded corners, L shapes) are not
+  touched. *Outline tolerance* is the least that is simplified.
+* Parts with the same outline (copies drawn separately, anywhere on the sheet) share their
+  work; outlines that look the same when turned (a rectangle at 0° and 180°, a square at every
+  quarter turn) are tried once.
+* Only the neighbours that really get in the way of a part are looked at in detail.
+
+If nesting is still slow: fewer angles (90° steps instead of 15°), fewer *Optimisation
+attempts*, fewer outline points. On the command line: `--max-points N`.
+
 ## Rotation
 
 How parts may turn is set in three steps, the most specific wins:

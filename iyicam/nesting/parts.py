@@ -171,33 +171,25 @@ class NestOutcome:
     suggestion: NestResult | None = None  # a better layout with parts squeezed in that was not taken
 
 
-def nest_objects(project: Project, objects: list[VectorObject], settings: NestSettings,
-                 quantities: dict[str, int] | None = None, target_sheets: list[Sheet] | None = None,
-                 progress: Callable | None = None, cancel: Callable[[], bool] | None = None,
-                 stock: list[StockItem] | None = None, use_sheets: list[Sheet] | None = None,
-                 new_sheets: bool = True, rotation_rules: dict[str, dict] | None = None,
-                 layer_rules: dict[str, dict] | None = None, tilt_step: float = 5.0,
-                 choose: Callable[[NestResult, NestResult], bool] | None = None) -> NestOutcome:
-    """Nest ``objects`` onto plates and move them there.
+@dataclass
+class NestJob:
+    """Everything a nesting needs, made up front so that the heavy part (:func:`run_nesting`) can run in
+    another thread while the rest of the program stays alive."""
 
-    Without ``stock`` and ``use_sheets`` the parts go onto sheets of ``settings`` size
-    (``target_sheets`` are reused, in order, before new sheets are created).
+    project: Project
+    parts: list[Part]
+    shapes: list[NestShape]
+    settings: NestSettings
+    use_plates: bool
+    target_sheets: list[Sheet]
 
-    With them the plates are, in the order they are filled: the free areas of ``use_sheets`` (around
-    what stays on them), the ``stock`` plates (leftovers of any shape first) and, when ``new_sheets``
-    is set, as many new sheets of ``settings`` size as needed. Stock plates become sheets with their
-    own size, outline and thickness.
 
-    ``quantities`` maps a part's root object id to the number of copies.
-
-    ``rotation_rules`` (part root id) and ``layer_rules`` (layer id) say how far parts may turn, see
-    :func:`rotation_angles`; a part's own rule wins over its layer's (``{"mode": "inherit"}`` or none
-    means its layer's), then the angles of ``settings`` are used. ``tilt_step`` is the step of limited rotation.
-
-    With squeezing set in ``settings`` (squeeze_angle / squeeze_margin) the nesting may find a better
-    layout with parts tilted a little or closer to the edge: ``choose(layout, better)`` says whether to
-    take it (``None``: no).
-    """
+def prepare_nesting(project: Project, objects: list[VectorObject], settings: NestSettings,
+                    quantities: dict[str, int] | None = None, target_sheets: list[Sheet] | None = None,
+                    stock: list[StockItem] | None = None, use_sheets: list[Sheet] | None = None,
+                    new_sheets: bool = True, rotation_rules: dict[str, dict] | None = None,
+                    layer_rules: dict[str, dict] | None = None, tilt_step: float = 5.0) -> NestJob:
+    """The parts, their outlines and the plates of a nesting (see :func:`nest_objects`); changes nothing."""
     from .stock import sheet_container, to_container
     parts = group_parts(objects)
     shapes = []
@@ -215,12 +207,26 @@ def nest_objects(project: Project, objects: list[VectorObject], settings: NestSe
         if new_sheets:
             containers.append(Container.rect(settings.sheet_width, settings.sheet_height))
         settings = replace(settings, containers=containers)
-    res = nest(shapes, settings, progress, cancel)
+    return NestJob(project, parts, shapes, settings, use_plates, list(target_sheets or []))
+
+
+def run_nesting(job: NestJob, progress: Callable | None = None,
+                cancel: Callable[[], bool] | None = None) -> NestResult:
+    """The layout of a prepared nesting. Reads nothing of the project, so it can run in a thread;
+    ``NestCancelled`` is raised when ``cancel()`` says yes."""
+    return nest(job.shapes, job.settings, progress, cancel)
+
+
+def apply_nesting(job: NestJob, res: NestResult, choose: Callable[[NestResult, NestResult], bool] | None = None
+                  ) -> NestOutcome:
+    """Move the parts to where the layout ``res`` puts them; ``choose(layout, better)`` says whether to
+    take the layout with parts squeezed in instead (``None``: no)."""
+    project, parts, settings, use_plates = job.project, job.parts, job.settings, job.use_plates
     suggestion = res.suggestion
     if suggestion is not None and choose is not None and choose(res, suggestion):
         res, suggestion = suggestion, None  # the layout with parts squeezed in
     # the sheet of every plate that was used
-    spare = list(target_sheets or [])
+    spare = list(job.target_sheets)
     sheets: list[Sheet] = []
     for k in range(res.sheets):
         c = settings.containers[res.stock[k]] if use_plates else None
@@ -260,3 +266,39 @@ def nest_objects(project: Project, objects: list[VectorObject], settings: NestSe
     made_from = [settings.containers[i].payload for i in res.stock] if use_plates else [None] * res.sheets
     return NestOutcome(res, sheets, len(res.placements), len(res.unplaced), made_from, parts, list(res.squeezed),
                        suggestion)
+
+
+def nest_objects(project: Project, objects: list[VectorObject], settings: NestSettings,
+                 quantities: dict[str, int] | None = None, target_sheets: list[Sheet] | None = None,
+                 progress: Callable | None = None, cancel: Callable[[], bool] | None = None,
+                 stock: list[StockItem] | None = None, use_sheets: list[Sheet] | None = None,
+                 new_sheets: bool = True, rotation_rules: dict[str, dict] | None = None,
+                 layer_rules: dict[str, dict] | None = None, tilt_step: float = 5.0,
+                 choose: Callable[[NestResult, NestResult], bool] | None = None) -> NestOutcome:
+    """Nest ``objects`` onto plates and move them there.
+
+    Without ``stock`` and ``use_sheets`` the parts go onto sheets of ``settings`` size
+    (``target_sheets`` are reused, in order, before new sheets are created).
+
+    With them the plates are, in the order they are filled: the free areas of ``use_sheets`` (around
+    what stays on them), the ``stock`` plates (leftovers of any shape first) and, when ``new_sheets``
+    is set, as many new sheets of ``settings`` size as needed. Stock plates become sheets with their
+    own size, outline and thickness.
+
+    ``quantities`` maps a part's root object id to the number of copies.
+
+    ``rotation_rules`` (part root id) and ``layer_rules`` (layer id) say how far parts may turn, see
+    :func:`rotation_angles`; a part's own rule wins over its layer's (``{"mode": "inherit"}`` or none
+    means its layer's), then the angles of ``settings`` are used. ``tilt_step`` is the step of limited rotation.
+
+    With squeezing set in ``settings`` (squeeze_angle / squeeze_margin) the nesting may find a better
+    layout with parts tilted a little or closer to the edge: ``choose(layout, better)`` says whether to
+    take it (``None``: no).
+
+    ``cancel()`` is asked all the time; when it says yes ``NestCancelled`` is raised and nothing is changed.
+    The three steps are also available alone: :func:`prepare_nesting`, :func:`run_nesting` (the long one,
+    for a thread) and :func:`apply_nesting`.
+    """
+    job = prepare_nesting(project, objects, settings, quantities, target_sheets, stock, use_sheets, new_sheets,
+                          rotation_rules, layer_rules, tilt_step)
+    return apply_nesting(job, run_nesting(job, progress, cancel), choose)

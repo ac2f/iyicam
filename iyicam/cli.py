@@ -138,7 +138,8 @@ def cmd_nest(a) -> int:
             print(f"--rotate-layer: {e}", file=sys.stderr)
             return 2
     st = NestSettings(a.width, a.height, a.margin, a.spacing, rots, a.gravity, iterations=a.iterations,
-                      squeeze_angle=a.squeeze_angle, squeeze_margin=a.squeeze_margin, squeeze_step=a.squeeze_step)
+                      max_points=a.max_points, squeeze_angle=a.squeeze_angle, squeeze_margin=a.squeeze_margin,
+                      squeeze_step=a.squeeze_step)
     stock = [] if a.no_project_stock else list(p.stock)
     if a.stock:
         stock += load_stock(a.stock)
@@ -201,6 +202,8 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--no-project-stock", action="store_true", help="ignore the stock saved in the project")
     s.add_argument("--no-new-sheets", action="store_true", help="only use the leftovers and stock plates")
     s.add_argument("--keep-stock", action="store_true", help="do not take the plates used out of the project's stock")
+    s.add_argument("--max-points", type=int, default=40,
+                   help="points per part outline; more are simplified (much faster, a little looser), 0 = no limit")
     s.add_argument("--angles", metavar="LIST", help="any angles in degrees, e.g. 0,22.5,90 (instead of --rotation)")
     s.add_argument("--rotate-layer", action="append", metavar="LAYER=RULE",
                    help="how far the parts of a layer may turn: none, flip, limit:X, limit-flip:X, step:X, "
