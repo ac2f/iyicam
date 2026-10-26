@@ -674,6 +674,9 @@ class PlateDialog(QDialog):
             presets.addItem(name, (w, h))
         lay.addWidget(presets)
         self.form = ParamForm(params, None, ctrl.units)
+        self._grouped = False
+        self._memory: dict = {"qty": {}, "rules": {}, "layer_rules": {}}   # what was set for parts that left the table
+        self.form.changed.connect(self._form_changed)
         presets.activated.connect(lambda i: self._preset(presets.itemData(i)))
         lay.addWidget(self.form)
         lay.addWidget(buttons(self))
@@ -897,9 +900,19 @@ class NestingDialog(QDialog):
             Param("tilt_step", "Step of limited rotation", "angle", 5.0, min=0.1, max=90.0, group="Strategy",
                   help="The step of 'Tilt up to ±X°' set for parts or layers below"),
             Param("gravity", "Pack towards", "choice", "left",
-                  choices=[("left", "Left (X min)"), ("bottom", "Bottom (Y min)"), ("compact", "Smallest area")],
-                  group="Strategy"),
-            Param("iterations", "Optimisation attempts", "int", 1, min=1, max=200, group="Strategy"),
+                  choices=[("left", "Left (X min)"), ("bottom", "Bottom (Y min)"), ("compact", "Smallest area"),
+                           ("reach_x", "Shortest layout along X"), ("reach_y", "Shortest layout along Y")],
+                  group="Strategy", help="The first layout is made this way; with more attempts the other "
+                  "ways are tried too and the one that uses the least of the sheet is kept"),
+            Param("iterations", "Optimisation attempts", "int", 8, min=1, max=200, group="Strategy",
+                  help="1: one quick pass. More: other orders of the parts and other directions are tried, "
+                       "the best layout (fewest sheets, least area used on the last) is kept and polished"),
+            Param("group_inner", "Inner pieces (göbek) stay with their part", "bool", False, group="Parts",
+                  help="On: whatever lies inside a part (the pieces in its holes too) moves with it. "
+                       "Off: pieces in holes are parts of their own and are nested separately"),
+            Param("fill_holes", "Place smaller parts in the holes of parts", "bool", False, group="Parts",
+                  help="Holes that hold nothing that stays can take other parts. Not for holes that "
+                       "are only drawn (engraved), as their material is not cut away"),
             Param("tolerance", "Outline tolerance", "length", 0.5, min=0.01, group="Strategy",
                   help="Outlines are simplified this much; parts may end up this much further apart"),
             Param("max_points", "Outline points per part", "int", 40, min=0, max=5000, group="Strategy",
@@ -923,12 +936,16 @@ class NestingDialog(QDialog):
         lay.addWidget(tabs, 1)
         page1, page2, page3 = QWidget(), QWidget(), QWidget()
         l1, l2, l3 = QVBoxLayout(page1), QVBoxLayout(page2), QVBoxLayout(page3)
+        self.l3 = l3
         presets = QComboBox()
         presets.addItem("Preset sheet sizes...")
         for name, w, h in SHEET_PRESETS:
             presets.addItem(name, (w, h))
         l1.addWidget(presets)
         self.form = ParamForm(params, None, ctrl.units)
+        self._grouped = False
+        self._memory: dict = {"qty": {}, "rules": {}, "layer_rules": {}}   # what was set for parts that left the table
+        self.form.changed.connect(self._form_changed)
         presets.activated.connect(lambda i: self._preset(presets.itemData(i)))
         form_scroll = scroll(self.form)
         form_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -942,6 +959,18 @@ class NestingDialog(QDialog):
         manage.clicked.connect(self._manage_stock)
         l2.addWidget(manage)
         l2.addStretch(1)
+        self._build_parts_page(saved)
+        for page, title in ((page1, "Settings"), (page2, "Plates"), (page3, "Parts and rotation")):
+            tabs.addTab(page, title)
+        self.tabs = tabs
+        lay.addWidget(buttons(self, "Nest"))
+        self.resize(700, 760)
+
+    def _build_parts_page(self, saved: dict, prev: dict | None = None) -> None:
+        """The table of the parts (quantities, rotation rules); ``prev`` carries over what was set for the
+        parts that are still there when the grouping of the parts changes."""
+        l3 = self.l3
+        prev = prev or {}
         # how far parts may turn: by layer and by part
         layer_ids = []
         for p in self.parts:
@@ -956,9 +985,9 @@ class NestingDialog(QDialog):
         self.layer_ids = layer_ids
         self.layer_rules: list[RotationRuleEdit] = []
         for i, lid in enumerate(layer_ids):
-            layer = ctrl.project.layer(lid)
+            layer = self.ctrl.project.layer(lid)
             self.layer_table.setItem(i, 0, QTableWidgetItem(layer.name if layer else "?"))
-            ed = RotationRuleEdit(saved.get("layer_rules", {}).get(lid))
+            ed = RotationRuleEdit(prev.get("layer_rules", {}).get(lid) or saved.get("layer_rules", {}).get(lid))
             self.layer_table.setCellWidget(i, 1, ed)
             self.layer_rules.append(ed)
         l3.addWidget(self.layer_table)
@@ -970,7 +999,7 @@ class NestingDialog(QDialog):
         self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        u = ctrl.units
+        u = self.ctrl.units
         self.qty: list[QSpinBox] = []
         self.rules: list[RotationRuleEdit] = []
         for i, p in enumerate(self.parts):
@@ -984,10 +1013,11 @@ class NestingDialog(QDialog):
             self.table.setItem(i, 1, QTableWidgetItem(f"{u.fmt(bb.width)} x {u.fmt(bb.height)}"))
             sp = QSpinBox()
             sp.setRange(0, 10000)
-            sp.setValue(1)
+            sp.setValue(prev.get("qty", {}).get(p.root.id, 1))
             self.table.setCellWidget(i, 2, sp)
             self.qty.append(sp)
-            ed = RotationRuleEdit(saved.get("part_rules", {}).get(p.root.id), inherit=True)
+            ed = RotationRuleEdit(prev.get("rules", {}).get(p.root.id) or saved.get("part_rules", {}).get(p.root.id),
+                                  inherit=True)
             self.table.setCellWidget(i, 3, ed)
             self.rules.append(ed)
         l3.addWidget(self.table, 1)
@@ -1000,11 +1030,33 @@ class NestingDialog(QDialog):
         apply.clicked.connect(self._apply_bulk)
         bulk.addWidget(apply)
         l3.addLayout(bulk)
-        for page, title in ((page1, "Settings"), (page2, "Plates"), (page3, "Parts and rotation")):
-            tabs.addTab(page, title)
-        self.tabs = tabs
-        lay.addWidget(buttons(self, "Nest"))
-        self.resize(700, 760)
+
+    def _form_changed(self) -> None:
+        grouped = bool(self.form.values().get("group_inner"))
+        if grouped != self._grouped:
+            self._grouped = grouped
+            self._regroup()
+
+    def _regroup(self) -> None:
+        """The grouping of inner pieces changed: the parts are found again, what was set for them is kept."""
+        from ..nesting.parts import group_parts
+        mem = self._memory
+        mem["qty"].update({p.root.id: sp.value() for p, sp in zip(self.parts, self.qty)})
+        mem["rules"].update({p.root.id: ed.rule() for p, ed in zip(self.parts, self.rules)
+                             if ed.rule()["mode"] != "inherit"})
+        mem["layer_rules"].update({lid: ed.rule() for lid, ed in zip(self.layer_ids, self.layer_rules)})
+        prev = mem
+        self.parts = group_parts(self.objs, group_inner=bool(self.form.values().get("group_inner")))
+        while self.l3.count():
+            item = self.l3.takeAt(0)
+            if item.widget() is not None:
+                item.widget().deleteLater()
+            elif item.layout() is not None:
+                while item.layout().count():
+                    sub = item.layout().takeAt(0)
+                    if sub.widget() is not None:
+                        sub.widget().deleteLater()
+        self._build_parts_page(self.ctrl.project.metadata.get("nesting", {}), prev)
 
     # -- stock ---------------------------------------------------------------------------
     def _build_stock(self) -> None:
@@ -1113,7 +1165,7 @@ class NestingDialog(QDialog):
         sheet = ctrl.sheet
         blank = target == "current" and not sheet.outline and all(o.id in moving for o in sheet.vectors)
         job = prepare_nesting(ctrl.project, self.objs, st, quantities, [], stock, use_sheets, v["new_sheets"],
-                              part_rules, layer_rules, v["tilt_step"])
+                              part_rules, layer_rules, v["tilt_step"], v["group_inner"], v["fill_holes"])
         try:  # the long part runs in a thread: the program stays alive and Cancel works at once
             res = run_in_thread(lambda: run_nesting(job, progress, state["cancel"].is_set), prog, state)
         except NestCancelled:

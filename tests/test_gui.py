@@ -726,3 +726,35 @@ def test_inner_pieces_first_is_one_click_and_remembered(win):
     assert Settings.load().default_grouping == "part"    # and so does the next session
     win.inner_first_action.trigger()
     assert first.sequence["grouping"] == "depth" and Settings.load().default_grouping == "depth"
+
+
+def test_nesting_dialog_inner_pieces_and_filled_holes(win):
+    from iyicam.gui.dialogs import NestingDialog
+    ctrl = win.ctrl
+    lid = ctrl.project.layers[0].id
+    plate = VectorObject([shapes.rectangle(0, 0, 500, 400)], lid, "Plate")
+    hole = VectorObject([shapes.circle((250, 200), 170)], lid, "Hole")
+    hub = VectorObject([shapes.circle((250, 200), 60)], lid, "Hub")
+    smalls = [VectorObject([shapes.rectangle(700 + 120 * i, 0, 100, 60)], lid, f"Small {i}") for i in range(4)]
+    ctrl.add_vectors([plate, hole, hub] + smalls, select=False)
+    nd = NestingDialog(ctrl, win)
+    assert [len(p.members) for p in nd.parts][:2] == [1, 0]            # plate + hole | hub on its own
+    nd.qty[1].setValue(2)                                               # two hubs
+    nd.form.widgets["group_inner"].setChecked(True)                    # the hub stays with the plate
+    assert len(nd.parts) == 5 and nd.table.rowCount() == 5
+    assert [len(p.members) for p in nd.parts][0] == 2
+    nd.form.widgets["group_inner"].setChecked(False)                   # ... and back: quantities are kept
+    assert len(nd.parts) == 6 and nd.qty[1].value() == 2
+    w = nd.form.widgets
+    w["target"].setCurrentIndex(w["target"].findData("current"))
+    w["width"].setValue(ctrl.units.to_display(1200))
+    w["height"].setValue(ctrl.units.to_display(450))
+    w["margin"].setValue(ctrl.units.to_display(10))
+    w["spacing"].setValue(ctrl.units.to_display(8))
+    w["fill_holes"].setChecked(True)
+    w["iterations"].setValue(4)
+    nd.qty[1].setValue(1)
+    out = nd.run()
+    assert out is not None and out.unplaced == 0
+    placed_ids = {o.id for s in ctrl.project.sheets for o in s.vectors}
+    assert {plate.id, hole.id, hub.id} <= placed_ids and len(placed_ids) == 7   # nothing added, nothing lost

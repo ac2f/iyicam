@@ -33,7 +33,17 @@ def census(project: Project) -> Counter:
 
 
 def random_part(rnd, i):
-    k = rnd.choice("rcLtpHn")
+    """The vectors of one part, each a list of contours: usually one vector, a plate with a hub is three."""
+    k = rnd.choice("rcLtpHngg")
+    if k == "g":  # a plate, its hole and a hub piece in the hole: three vectors
+        w, h = rnd.randint(200, 320), rnd.randint(180, 260)
+        r = min(w, h) / 2 - 20
+        return [[shapes.rectangle(0, 0, w, h)], [shapes.circle((w / 2, h / 2), r)],
+                [shapes.circle((w / 2, h / 2), r / 2)]]
+    return [_single_part(rnd, k)]
+
+
+def _single_part(rnd, k):
     if k == "r":
         return [shapes.rectangle(0, 0, rnd.randint(40, 300), rnd.randint(30, 200), corner_radius=rnd.choice([0, 0, 6]))]
     if k == "c":
@@ -56,11 +66,11 @@ def fresh(seed, n=12, sheets=1):
     rnd = random.Random(seed)
     parts = []
     for i in range(n):
-        cs = random_part(rnd, i)
+        objs_ = random_part(rnd, i)
         dx, dy = rnd.uniform(-200, 2500), rnd.uniform(-200, 1800)
         from iyicam.core.geom import Transform
-        cs = [c.transformed(Transform.translate(dx, dy)) for c in cs]
-        parts.append(cs)
+        for cs in objs_:
+            parts.append([c.transformed(Transform.translate(dx, dy)) for c in cs])
     p, s, objs = make_project(parts, size=(1200, 800))
     for k in range(1, sheets):
         sh = p.add_sheet(None, 1200, 800)
@@ -93,7 +103,8 @@ def test_nesting_and_renesting_keeps_every_vector(seed):
         pool = [v for v in pool if rnd.random() < 0.9] or pool
         if not pool:
             continue
-        parts = group_parts(pool)
+        group_inner, fill_holes = rnd.random() < 0.5, rnd.random() < 0.5
+        parts = group_parts(pool, group_inner=group_inner)
         quantities = {pt.root.id: rnd.choice([1, 1, 1, 2, 3, 0]) for pt in parts}
         before = census(p)
         kw = {}
@@ -109,7 +120,8 @@ def test_nesting_and_renesting_keeps_every_vector(seed):
                           rnd.choice([[0], [0, 90], [0, 90, 180, 270], [0, 45, 90, 135, 180, 225, 270, 315]]),
                           rnd.choice(["left", "bottom", "compact"]), iterations=rnd.choice([1, 1, 2]),
                           squeeze_angle=rnd.choice([0, 0, 6]), squeeze_margin=rnd.choice([0, 0, 3]))
-        out = nest_objects(p, pool, st, quantities, [], choose=lambda a, b: rnd.random() < 0.5, **kw)
+        out = nest_objects(p, pool, st, quantities, [], choose=lambda a, b: rnd.random() < 0.5,
+                           group_inner=group_inner, fill_holes=fill_holes, **kw)
         after = census(p)
         want = expected_after(before, out)
         assert after == want, (f"seed {seed} round {round_} mode {mode}: "

@@ -7,7 +7,7 @@ from typing import Callable
 
 from ..core import clip, vectorops
 from ..core.document import Project, Sheet, VectorObject
-from ..core.geom import Transform
+from ..core.geom import Transform, polygon_area
 from ..core.stock import StockItem
 from .nest import Container, NestResult, NestSettings, NestShape, Squeeze, nest
 
@@ -89,6 +89,7 @@ class Part:
     root: VectorObject
     members: list[VectorObject] = field(default_factory=list)  # holes, engraving, ... (root excluded)
     quantity: int = 1
+    holes: list[list[tuple[float, float]]] = field(default_factory=list)  # outlines of its holes (nested into)
 
     @property
     def objects(self) -> list[VectorObject]:
@@ -105,12 +106,17 @@ def _rep_point(o: VectorObject):
     return c.segs[0].point_at(0.5)
 
 
-def group_parts(objects: list[VectorObject], tol: float = 0.05) -> list[Part]:
+def group_parts(objects: list[VectorObject], tol: float = 0.05, group_inner: bool = False) -> list[Part]:
     """Group objects so that holes and decorations travel with their outline.
 
     An object nested inside an odd number of closed objects belongs to the
-    smallest of them; even depths (0, 2, ...) start a new part (part in a hole).
-    """
+    smallest of them; even depths (0, 2, ...) start a new part (part in a hole),
+    unless ``group_inner`` is set: then everything inside an outline (the inner pieces,
+    the göbek, of its holes too) belongs to that outline and moves with it.
+
+    ``Part.holes`` are the outlines of the closed objects that are holes of the part: those directly
+    inside the outline, with nothing of the part inside them (nothing can be nested into a hole that holds
+    a piece that stays)."""
     objs = [o for o in objects if o.contours and o.contours[0].segs]
     info = []
     for o in objs:
@@ -134,7 +140,7 @@ def group_parts(objects: list[VectorObject], tol: float = 0.05) -> list[Part]:
 
     def root_of(o: VectorObject) -> VectorObject:
         seen = set()
-        while depth[o.id] % 2 == 1 and parent[o.id] is not None and o.id not in seen:
+        while parent[o.id] is not None and o.id not in seen and (group_inner or depth[o.id] % 2 == 1):
             seen.add(o.id)
             o = parent[o.id]
         return o
@@ -148,6 +154,17 @@ def group_parts(objects: list[VectorObject], tol: float = 0.05) -> list[Part]:
             order.append(r.id)
         if r is not o:
             parts[r.id].members.append(o)
+    for part in parts.values():
+        occupied = {parent[m.id].id for m in part.members if parent[m.id] is not None}  # holding something
+        for m in part.members:
+            if parent[m.id] is part.root and depth[m.id] % 2 == 1 and m.id not in occupied \
+                    and all(c.closed for c in m.contours):
+                part.holes += [[tuple(pt) for pt in poly] for poly in _region(m, tol)]
+        # holes drawn inside the outline's own object (a letter O is one object of two contours)
+        for poly in _region(part.root, tol):
+            if polygon_area(poly) < 0 and not any(
+                    clip.point_in_region(_rep_point(m), [poly]) for m in part.members):
+                part.holes.append([tuple(pt) for pt in poly])
     return [parts[i] for i in order if i in by_id]
 
 
@@ -191,17 +208,19 @@ def prepare_nesting(project: Project, objects: list[VectorObject], settings: Nes
                     quantities: dict[str, int] | None = None, target_sheets: list[Sheet] | None = None,
                     stock: list[StockItem] | None = None, use_sheets: list[Sheet] | None = None,
                     new_sheets: bool = True, rotation_rules: dict[str, dict] | None = None,
-                    layer_rules: dict[str, dict] | None = None, tilt_step: float = 5.0) -> NestJob:
+                    layer_rules: dict[str, dict] | None = None, tilt_step: float = 5.0,
+                    group_inner: bool = False, fill_holes: bool = False) -> NestJob:
     """The parts, their outlines and the plates of a nesting (see :func:`nest_objects`); changes nothing."""
     from .stock import sheet_container, to_container
-    parts = group_parts(objects)
+    parts = group_parts(objects, group_inner=group_inner)
     shapes = []
     for p in parts:
         q = (quantities or {}).get(p.root.id, p.quantity)
         rule = (rotation_rules or {}).get(p.root.id)
         if (rule or {}).get("mode", "inherit") == "inherit":
             rule = (layer_rules or {}).get(p.root.layer_id)
-        shapes.append(NestShape(part_outline(p), q, p, rotation_angles(rule, tilt_step), rule_allows_tilt(rule)))
+        shapes.append(NestShape(part_outline(p), q, p, rotation_angles(rule, tilt_step), rule_allows_tilt(rule),
+                                list(p.holes) if fill_holes else []))
     use_plates = stock is not None or use_sheets is not None
     if use_plates:
         moving_ids = {o.id for p in parts for o in p.objects}
@@ -277,7 +296,8 @@ def nest_objects(project: Project, objects: list[VectorObject], settings: NestSe
                  stock: list[StockItem] | None = None, use_sheets: list[Sheet] | None = None,
                  new_sheets: bool = True, rotation_rules: dict[str, dict] | None = None,
                  layer_rules: dict[str, dict] | None = None, tilt_step: float = 5.0,
-                 choose: Callable[[NestResult, NestResult], bool] | None = None) -> NestOutcome:
+                 choose: Callable[[NestResult, NestResult], bool] | None = None,
+                 group_inner: bool = False, fill_holes: bool = False) -> NestOutcome:
     """Nest ``objects`` onto plates and move them there.
 
     Without ``stock`` and ``use_sheets`` the parts go onto sheets of ``settings`` size
@@ -298,10 +318,14 @@ def nest_objects(project: Project, objects: list[VectorObject], settings: NestSe
     layout with parts tilted a little or closer to the edge: ``choose(layout, better)`` says whether to
     take it (``None``: no).
 
+    ``group_inner``: the inner pieces (göbek) of a part, the pieces in its holes, stay with it and move
+    with it; otherwise they are parts of their own. ``fill_holes``: other parts may be placed in the holes of
+    a part (a hole that holds a piece that stays is not used).
+
     ``cancel()`` is asked all the time; when it says yes ``NestCancelled`` is raised and nothing is changed.
     The three steps are also available alone: :func:`prepare_nesting`, :func:`run_nesting` (the long one,
     for a thread) and :func:`apply_nesting`.
     """
     job = prepare_nesting(project, objects, settings, quantities, target_sheets, stock, use_sheets, new_sheets,
-                          rotation_rules, layer_rules, tilt_step)
+                          rotation_rules, layer_rules, tilt_step, group_inner, fill_holes)
     return apply_nesting(job, run_nesting(job, progress, cancel), choose)

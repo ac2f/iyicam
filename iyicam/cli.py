@@ -155,7 +155,8 @@ def cmd_nest(a) -> int:
     out = nest_objects(p, objs, st, {o.id: a.quantity for o in objs}, [p.sheets[0]],
                        stock=stock if plates else None, use_sheets=[] if plates else None,
                        new_sheets=not a.no_new_sheets, layer_rules=layer_rules, tilt_step=a.tilt_step,
-                       choose=(lambda strict, better: True) if a.apply_squeeze else None)
+                       choose=(lambda strict, better: True) if a.apply_squeeze else None,
+                       group_inner=a.group_inner, fill_holes=a.fill_holes)
     if plates and not a.keep_stock:
         p.stock = use_up(p.stock, out.plates)
     p.save(a.output)
@@ -197,8 +198,12 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--margin", type=float, default=10.0)
     s.add_argument("--spacing", type=float, default=8.0)
     s.add_argument("--rotation", type=float, default=90.0, help="rotation step in degrees (0 = none)")
-    s.add_argument("--gravity", default="left", choices=["left", "bottom", "compact"])
-    s.add_argument("--iterations", type=int, default=1)
+    s.add_argument("--gravity", default="left", choices=["left", "bottom", "compact", "reach_x", "reach_y", "diag"])
+    s.add_argument("--iterations", type=int, default=8,
+                   help="layouts tried (1 = one quick pass); the one using the least material is kept")
+    s.add_argument("--group-inner", action="store_true",
+                   help="inner pieces (göbek) stay with their part instead of being nested on their own")
+    s.add_argument("--fill-holes", action="store_true", help="place smaller parts in the holes of parts")
     s.add_argument("--quantity", type=int, default=1)
     s.add_argument("--leftover", action="append", metavar="WxH[:N]",
                    help="a rectangular leftover plate to use first (N of them); can be repeated")

@@ -38,6 +38,7 @@ class NestShape:
     payload: Any = None
     rotations: list[float] | None = None  # degrees; None = NestSettings.rotations
     tilt: bool = True              # may be tilted a little off its angles to squeeze it in (NestSettings.squeeze_*)
+    holes: list[list[Pt]] = field(default_factory=list)  # holes that other parts may be placed in
 
 
 @dataclass
@@ -116,6 +117,8 @@ class NestResult:
     units: list[int] = field(default_factory=list)          # which of the container's plates (0, 1, ...)
     squeezed: list[Squeeze] = field(default_factory=list)   # parts that were squeezed in (squeeze runs only)
     suggestion: "NestResult | None" = None                  # a better layout with parts squeezed in, if there is one
+    used: list[tuple[float, float, float, float]] = field(default_factory=list)  # bounding box of the parts, per plate
+    layout: list[list[tuple]] = field(default_factory=list, repr=False)  # per plate: what was placed (for polishing)
 
 
 def is_convex(path: IntPath) -> bool:
@@ -258,16 +261,20 @@ def convex_parts(path: IntPath) -> list[IntPath] | None:
 
 
 class _Variant:
-    __slots__ = ("paths", "bbox", "area", "convex", "pieces", "sig")
+    __slots__ = ("paths", "bbox", "area", "convex", "pieces", "sig", "holes", "solid")
 
-    def __init__(self, paths: list[IntPath]):
+    def __init__(self, paths: list[IntPath], holes: list[IntPath] | None = None):
         self.paths = paths
+        self.holes = holes or []          # the room inside the part, counter-clockwise like the outline
+        # outline minus holes as one set of paths (non-zero fill): what is really solid
+        self.solid = paths + [list(reversed(h)) for h in self.holes]
         xs = [p[0] for path in paths for p in path]
         ys = [p[1] for path in paths for p in path]
         self.bbox = (min(xs), min(ys), max(xs), max(ys))
         # the shape wherever it lies: two angles with the same one only differ by a move (a rectangle at
         # 0 and 180 degrees)
-        self.sig = frozenset((x - self.bbox[0], y - self.bbox[1]) for path in paths for x, y in path)
+        self.sig = frozenset([(x - self.bbox[0], y - self.bbox[1]) for path in paths for x, y in path]
+                             + [(x - self.bbox[0], y - self.bbox[1], 1) for path in self.holes for x, y in path])
         self.area = sum(abs(pyclipper.Area(p)) for p in paths)
         # nearly convex outlines use their hull: a slightly larger, safe no-fit polygon
         self.convex = [convex_hull(p) if is_convex(p) else None for p in paths]
@@ -323,6 +330,24 @@ def _outline(outer: list[list[Pt]], half: float, tol: float, max_points: int) ->
         t = min(4.0, t * 1.5)
 
 
+def _rooms(holes: list[list[Pt]], half: float, tol: float, most: int = 6) -> list[list[Pt]]:
+    """The room in the holes of a part for other (grown) parts: the holes shrunk by half the gap and a
+    little more, simplified towards the inside. At most the ``most`` biggest holes are kept."""
+    if not holes:
+        return []
+    t = max(0.01, tol)
+    out = []
+    for h in sorted(holes, key=lambda q: -abs(polygon_area(q)))[:most]:
+        if polygon_area(h) < 0:
+            h = h[::-1]   # counter-clockwise, so that a negative offset shrinks it
+        shrunk = clip.offset([h], -(half + 1.5 * t), "round", arc_tol=t / 2)
+        for q in shrunk:
+            q = simplify_polyline(q + [q[0]], t)[:-1]
+            if len(q) >= 3 and abs(polygon_area(q)) > 1.0:
+                out.append(q)
+    return out
+
+
 def _turn(paths: list[IntPath], angle: float) -> list[IntPath]:
     """The paths turned by ``angle`` degrees about the origin (exact for quarter turns)."""
     angle = angle % 360.0
@@ -359,6 +384,8 @@ def _axis_rect(polys: list[list[Pt]]) -> tuple[float, float, float, float] | Non
 class _Box:
     """A container prepared for nesting: the area the inflated parts must stay inside."""
 
+    POINT_BUDGET = 400   # points of the usable area (see the simplification below)
+
     def __init__(self, index: int, c: Container, margin: float, spacing: float, tol: float, relief: float = 0.0):
         S = clip.SCALE
         half = spacing / 2.0
@@ -378,12 +405,21 @@ class _Box:
             self.free = max(0.0, (x1 - x0) * (y1 - y0))
             return
         # the margin keeps off the plate's edge, the spacing off the parts fixed on it; the outline
-        # is simplified towards the inside so the parts stay on the safe side of it
+        # is simplified towards the inside so the parts stay on the safe side of it. A plate with a lot
+        # of detail (many parts fixed on it, drawn with many points) is simplified more: every point costs
+        # time in the no-fit polygons of every part, and the parts end up a little further from the detail
         ct = min(max(0.02, tol / 2), 0.1)
-        usable = clip.offset(region, half - margin - 1.5 * ct, "round", arc_tol=ct / 2)
-        usable = [q for q in (simplify_polyline(p + [p[0]], ct)[:-1] for p in usable) if len(q) >= 3]
-        if c.obstacles:
-            usable = clip.boolean(usable, clip.offset(clip.normalize(c.obstacles, "nonzero"), half), "difference")
+        fixed = clip.normalize(c.obstacles, "nonzero") if c.obstacles else []
+        while True:
+            usable = clip.offset(region, half - margin - 1.5 * ct, "round", arc_tol=ct / 2)
+            usable = [q for q in (simplify_polyline(p + [p[0]], ct)[:-1] for p in usable) if len(q) >= 3]
+            if fixed:
+                grown = clip.offset(fixed, half + 1.5 * ct, "round", arc_tol=ct / 2)
+                grown = [q for q in (simplify_polyline(p + [p[0]], ct)[:-1] for p in grown) if len(q) >= 3]
+                usable = clip.boolean(usable, grown, "difference")
+            if sum(len(q) for q in usable) <= self.POINT_BUDGET or ct >= 1.0:
+                break
+            ct = min(1.0, ct * 1.6)
         usable = clip.normalize(usable)
         self.free = abs(clip.area(clip.boolean(region, c.obstacles, "difference"))) if c.obstacles else self.material
         self.rect = None
@@ -423,13 +459,18 @@ class Nester:
         self.angles: list[list[float]] = []            # the angles of every shape, each look once
         self.skey: list[tuple] = []                    # shapes that are the same for placing
         self._grown: list[list[list[Pt]]] = []         # per class: its outline
+        self._rooms: list[list[list[Pt]]] = []         # per class: the holes other parts may be placed in
         self._vcache: list[dict[float, _Variant]] = []  # per class: the outline at an angle, made when asked
         self._relieved_boxes: dict[tuple[int, float], _Box] = {}
-        self.areas: list[float] = []
-        classes: list[tuple[np.ndarray, float]] = []  # per class: its outline as drawn, its area
+        self.areas: list[float] = []                    # the material of a part: its outline minus its holes
+        self.gross: list[float] = []                    # the area inside its outline
+        classes: list[tuple[np.ndarray, float, np.ndarray]] = []  # per class: outline as drawn, area, holes as drawn
         for sh in self.shapes:
             outer = [p for p, _ in clip.polytree(sh.polys, "nonzero")] or sh.polys
-            self.areas.append(sum(abs(polygon_area(p)) for p in outer))
+            self.gross.append(sum(abs(polygon_area(p)) for p in outer))
+            holes = [h for h in sh.holes if len(h) >= 3]
+            hole_area = sum(abs(polygon_area(h)) for h in holes)
+            self.areas.append(max(0.0, self.gross[-1] - hole_area))
             grown = _outline(outer, half, settings.tolerance, settings.max_points)
             if not grown:
                 self.cls.append(-1)
@@ -441,13 +482,17 @@ class Nester:
             mx = min(x for p in outer for x, _ in p)
             my = min(y for p in outer for _, y in p)
             pts = np.array([(x - mx, y - my) for p in outer for x, y in p])
-            c = next((i for i, (q, area) in enumerate(classes)
+            hpts = np.array([(x - mx, y - my) for h in holes for x, y in h]).reshape(-1, 2)
+            c = next((i for i, (q, area, hq) in enumerate(classes)
                       if len(q) == len(pts) and abs(area - self.areas[-1]) <= 1e-4 * area + 1e-6
-                      and np.allclose(q.max(axis=0), pts.max(axis=0), atol=0.05) and _same_outline(pts, q)), None)
+                      and np.allclose(q.max(axis=0), pts.max(axis=0), atol=0.05) and _same_outline(pts, q)
+                      and len(hq) == len(hpts) and (not len(hq) or _same_outline(hpts, hq))), None)
             if c is None:
                 c = len(classes)
-                classes.append((pts, self.areas[-1]))
+                classes.append((pts, self.areas[-1], hpts))
                 self._grown.append([[(x - mx, y - my) for x, y in p] for p in grown])
+                self._rooms.append(_rooms([[(x - mx, y - my) for x, y in h] for h in holes], half,
+                                          settings.tolerance))
                 self._vcache.append({})
             self.cls.append(c)
             self.offset.append((mx, my))
@@ -464,6 +509,7 @@ class Nester:
         self._nfp0_cache: dict[tuple, list[IntPath]] = {}
         self.stats = {"nfp": 0, "overlap_tests": 0}  # work done: no-fit polygons made, overlaps tested
         self.cancel: Callable[[], bool] | None = None
+        self.gravity = settings.gravity
         self._feasible_cache: dict[tuple, tuple[list[IntPath], tuple] | None] = {}
 
     # -- geometry ----------------------------------------------------------------------
@@ -518,8 +564,26 @@ class Nester:
                     bx, by = pb[0]
                     pc.AddPath([(x - bx, y - by) for x, y in pa], pyclipper.PT_SUBJECT, True)
             res = pc.Execute(pyclipper.CT_UNION, pyclipper.PFT_NONZERO, pyclipper.PFT_NONZERO) if added else []
+        if VA.holes or VB.holes:
+            res = list(res) + self._room_terms(VA, VB)
         self._nfp0_cache[key] = res
         return res
+
+    def _room_terms(self, VA: _Variant, VB: _Variant) -> list[IntPath]:
+        """Where the no-fit polygon of two parts does not apply: when one lies inside a hole of the other.
+        They are clockwise paths, which cancel the (counter-clockwise) no-fit polygon where they lie."""
+        terms: list[IntPath] = []
+        wb, hb = VB.bbox[2] - VB.bbox[0], VB.bbox[3] - VB.bbox[1]
+        for h in VA.holes:  # B inside a hole of A
+            xs, ys = [q[0] for q in h], [q[1] for q in h]
+            if max(xs) - min(xs) >= wb and max(ys) - min(ys) >= hb:
+                terms += [list(reversed(p)) for p in self._ifp_paths([h], VB)]
+        wa, ha = VA.bbox[2] - VA.bbox[0], VA.bbox[3] - VA.bbox[1]
+        for h in VB.holes:  # A inside a hole of B: B's reference is where A's would be, mirrored
+            xs, ys = [q[0] for q in h], [q[1] for q in h]
+            if max(xs) - min(xs) >= wa and max(ys) - min(ys) >= ha:
+                terms += [list(reversed([(-x, -y) for x, y in p])) for p in self._ifp_paths([h], VA)]
+        return terms
 
     def _check(self) -> None:
         if self.cancel is not None and self.cancel():
@@ -530,7 +594,7 @@ class Nester:
         ang = round(ang % 360.0, 6)
         v = self._vcache[c].get(ang)
         if v is None:
-            v = self._vcache[c][ang] = _Variant(_rotate_int(self._grown[c], ang))
+            v = self._vcache[c][ang] = _Variant(_rotate_int(self._grown[c], ang), _rotate_int(self._rooms[c], ang))
         return v
 
     def _relieved(self, box: _Box, relief: float) -> _Box:
@@ -570,12 +634,23 @@ class Nester:
         cx0, cy0, cx1, cy1 = box.bbox
         if bx1 - bx0 > cx1 - cx0 or by1 - by0 > cy1 - cy0:
             return None
-        # The part can be anywhere inside the plate's usable area R except where it touches R's
-        # boundary: the band of the boundary swept by the part, plus the reference point of every
-        # outline must lie in R (the part is then inside, not in a hole or outside).
+        feas = self._ifp_paths(box.paths, v)
+        if not feas:
+            return None
+        xs = [q[0] for p in feas for q in p]
+        ys = [q[1] for p in feas for q in p]
+        return feas, (min(xs), min(ys), max(xs), max(ys))
+
+    @staticmethod
+    def _ifp_paths(region: list[IntPath], v: _Variant) -> list[IntPath]:
+        """Where the reference of a part can be put so that the part lies inside ``region`` (counter-clockwise
+        outlines, holes clockwise): the inner fit polygon, as paths."""
+        # The part can be anywhere inside the region R except where it touches R's boundary: the band of
+        # the boundary swept by the part, plus the reference point of every outline must lie in R (the part
+        # is then inside, not in a hole or outside).
         band = pyclipper.Pyclipper()
         for pa in v.paths:
-            for rb in box.paths:
+            for rb in region:
                 for r in pyclipper.MinkowskiDiff(pa, rb):  # {rb - pa}
                     if len(r) >= 3:
                         band.AddPath(r, pyclipper.PT_SUBJECT, True)
@@ -583,7 +658,7 @@ class Nester:
         inside = None
         for pa in v.paths:
             px, py = pa[0]
-            moved = [[(x - px, y - py) for x, y in rb] for rb in box.paths]
+            moved = [[(x - px, y - py) for x, y in rb] for rb in region]
             if inside is None:
                 inside = moved
             else:
@@ -596,19 +671,19 @@ class Nester:
         if banned:
             pc.AddPaths(banned, pyclipper.PT_CLIP, True)
         feas = pc.Execute(pyclipper.CT_DIFFERENCE, pyclipper.PFT_NONZERO, pyclipper.PFT_NONZERO)
-        feas = [p for p in feas if len(p) >= 3]
-        if not feas:
-            return None
-        xs = [q[0] for p in feas for q in p]
-        ys = [q[1] for p in feas for q in p]
-        return feas, (min(xs), min(ys), max(xs), max(ys))
+        return [p for p in feas if len(p) >= 3]
 
     def _keys(self, V: np.ndarray, v: _Variant, used_bbox) -> tuple[np.ndarray, np.ndarray]:
-        """Gravity score (primary, secondary: smaller is better) of each position (n x 2) of a part.
+        """Score (primary, secondary: smaller is better) of each position (n x 2) of a part, by the gravity.
 
         It is where the part ends up that counts (the lower left of its bounding box), not where its
-        reference is, so that angles can be compared; equal ones keep the first angle."""
-        g = self.st.gravity
+        reference is, so that angles can be compared; equal ones keep the first angle.
+
+        * ``left`` / ``bottom``: the leftmost / lowest place
+        * ``compact``: the place that makes the rectangle round all the parts smallest
+        * ``reach_x`` / ``reach_y``: the place that makes the layout least longer (wider), then the lowest / leftmost
+        * ``diag``: the place nearest the lower left corner (x + y)"""
+        g = self.gravity
         bx0, by0, bx1, by1 = v.bbox
         x, y = V[:, 0], V[:, 1]
         if g == "bottom":
@@ -621,6 +696,14 @@ class Nester:
                 w = np.maximum(used_bbox[2], x + bx1) - np.minimum(used_bbox[0], x + bx0)
                 h = np.maximum(used_bbox[3], y + by1) - np.minimum(used_bbox[1], y + by0)
             return w * h + (w + h) * 1e3, x + y
+        if g == "reach_x":
+            far = used_bbox[2] if used_bbox is not None else x + bx1
+            return np.maximum(far, x + bx1), (y + by0) + 1e-6 * (x + bx0)
+        if g == "reach_y":
+            far = used_bbox[3] if used_bbox is not None else y + by1
+            return np.maximum(far, y + by1), (x + bx0) + 1e-6 * (y + by0)
+        if g == "diag":
+            return (x + bx0) + (y + by0), x + bx0
         return x + bx0, y + by0
 
     # a part that sticks out of the plate by less than this (mm^2, in units) is inside it: rounding
@@ -651,8 +734,8 @@ class Nester:
             return False
         self.stats["overlap_tests"] += 1
         pc = pyclipper.Pyclipper()
-        pc.AddPaths([[(qx + px, qy + py) for qx, qy in path] for path in VA.paths], pyclipper.PT_SUBJECT, True)
-        pc.AddPaths([[(qx + x, qy + y) for qx, qy in path] for path in VB.paths], pyclipper.PT_CLIP, True)
+        pc.AddPaths([[(qx + px, qy + py) for qx, qy in path] for path in VA.solid], pyclipper.PT_SUBJECT, True)
+        pc.AddPaths([[(qx + x, qy + y) for qx, qy in path] for path in VB.solid], pyclipper.PT_CLIP, True)
         out = pc.Execute(pyclipper.CT_INTERSECTION, pyclipper.PFT_NONZERO, pyclipper.PFT_NONZERO)
         return sum(abs(pyclipper.Area(path)) for path in out) > self._OVERLAP_TOL
 
@@ -738,11 +821,13 @@ class Nester:
         return sorted(boxes, key=lambda b: (0 if b.c.leftover else 1, b.free, b.index))
 
     def run_order(self, order: list[tuple[int, int]], progress: Callable | None = None,
-                  cancel: Callable[[], bool] | None = None, squeeze: bool = False) -> NestResult:
+                  cancel: Callable[[], bool] | None = None, squeeze: bool = False,
+                  gravity: str | None = None) -> NestResult:
         """Place the items in this order; ``squeeze``: parts that do not fit are tilted a little or come
         closer to the plate's edge (the NestSettings.squeeze_* limits) before the next plate is started."""
         res = NestResult()
         self.cancel = cancel
+        self.gravity = gravity or self.st.gravity
         remaining = [it for it in order if self.angles[it[0]]]
         res.unplaced = [it for it in order if not self.angles[it[0]]]
         total = len(order)
@@ -800,6 +885,7 @@ class Nester:
               total: int, squeeze: bool = False) -> int:
         """Place as many of ``remaining`` (largest first) on a new plate of ``box`` as fit; their count."""
         placed: list[tuple[int, float, int, int]] = []
+        items: list[tuple] = []   # (shape, copy, class, angle, x, y) of what is placed
         used_bbox = None
         free = box.free
         sheet = res.sheets
@@ -833,65 +919,187 @@ class Nester:
                 res.squeezed.append(squeezed)
             c = self.cls[si]
             placed.append((c, ang, x, y))
+            items.append((si, ci, c, ang, x, y))
             free -= self.areas[si]
             bx0, by0, bx1, by1 = self._variant(c, ang).bbox
             nb = (x + bx0, y + by0, x + bx1, y + by1)
             used_bbox = nb if used_bbox is None else (min(used_bbox[0], nb[0]), min(used_bbox[1], nb[1]),
                                                       max(used_bbox[2], nb[2]), max(used_bbox[3], nb[3]))
-            # the outline was turned about the corner of its bounding box; the part about the origin
-            mx, my = self.offset[si]
-            ca, sa = math.cos(math.radians(ang)), math.sin(math.radians(ang))
-            res.placements.append(Placement(si, ci, sheet, ang, x / clip.SCALE - (mx * ca - my * sa),
-                                            y / clip.SCALE - (mx * sa + my * ca)))
+            res.placements.append(self._placement(si, ci, sheet, ang, x, y))
         remaining[:] = left
+        if placed:
+            res.used.append(tuple(v / clip.SCALE for v in used_bbox))
+            res.layout.append(items)
         return len(placed)
 
+    def _placement(self, si: int, ci: int, sheet: int, ang: float, x: int, y: int) -> Placement:
+        """The placement of part ``si`` at ``(x, y)`` (units) turned by ``ang``: the outline was turned about the
+        corner of its bounding box, the part about its origin."""
+        mx, my = self.offset[si]
+        ca, sa = math.cos(math.radians(ang)), math.sin(math.radians(ang))
+        return Placement(si, ci, sheet, ang, x / clip.SCALE - (mx * ca - my * sa),
+                         y / clip.SCALE - (mx * sa + my * ca))
+
     def default_order(self) -> list[tuple[int, int]]:
+        return self.order_by("area")
+
+    def order_by(self, how: str) -> list[tuple[int, int]]:
+        """Every copy of every shape, in the order they are placed: biggest first by ``how`` (area, longest
+        side, height, width, bounding box perimeter). Copies of a shape stay together."""
+        S = clip.SCALE
+
+        def size(i: int) -> tuple[float, float]:
+            if self.cls[i] < 0 or not self.angles[i]:
+                return 0.0, 0.0
+            x0, y0, x1, y1 = self._variant(self.cls[i], self.angles[i][0]).bbox
+            return (x1 - x0) / S, (y1 - y0) / S
+
+        def key(i: int) -> tuple:
+            w, h = size(i)
+            major = {"area": 0.0, "side": max(w, h), "height": h, "width": w, "perimeter": w + h}[how]
+            return (-round(major, 3), -self.gross[i], i)
+
         items = [(i, c) for i, sh in enumerate(self.shapes) for c in range(max(0, sh.quantity))]
-        items.sort(key=lambda t: -self.areas[t[0]])
+        items.sort(key=lambda t: (key(t[0]), t[1]))
         return items
 
+    def candidates(self, count: int) -> list[tuple[list[tuple[int, int]], str]]:
+        """Up to ``count`` layouts to try, ``(order, gravity)``, the plainest first: the biggest parts first
+        in the gravity chosen, then in the other gravities, then other ways to rank the parts."""
+        g0 = self.st.gravity
+        gravs = [g0] + [g for g in ("reach_x", "left", "reach_y", "bottom", "compact") if g != g0]
+        plan = [("area", g) for g in gravs] + [("side", g) for g in gravs] + [
+            ("height", gravs[0]), ("width", gravs[0]), ("perimeter", gravs[0]), ("height", gravs[1]),
+            ("width", gravs[1]), ("perimeter", gravs[1])]
+        out, seen = [], set()
+        for how, g in plan:
+            if len(out) >= max(1, count):
+                break
+            order = self.order_by(how)
+            sig = (tuple(order), g)
+            if sig not in seen:
+                seen.add(sig)
+                out.append((order, g))
+        return out
+
     def quality(self, r: NestResult) -> tuple:
-        last = [p for p in r.placements if p.sheet == r.sheets - 1]
-        if self.st.gravity == "bottom":
-            extent = max((p.y for p in last), default=0.0)
-        else:
-            extent = max((p.x for p in last), default=0.0)
+        """What is better: everything placed, then fewer (cheaper) plates, then the least area used on the
+        last plate (the rectangle round the parts on it), then the shorter reach."""
         cost = sum(self.boxes[i].material for i in r.stock if not self.boxes[i].c.leftover)
-        return (len(r.unplaced), cost, r.sheets, -sum(r.utilization[:-1]) if r.sheets > 1 else 0.0, extent)
+        if r.used:
+            x0, y0, x1, y1 = r.used[-1]
+            area, reach = (x1 - x0) * (y1 - y0), x1 + y1
+        else:
+            area = reach = 0.0
+        return (len(r.unplaced), cost, r.sheets, -sum(r.utilization[:-1]) if r.sheets > 1 else 0.0,
+                round(area, 1), round(reach, 1))
+
+    # -- polishing ----------------------------------------------------------------------
+    def _bbox_of(self, items: list[tuple]):
+        bb = None
+        for _, _, c, ang, x, y in items:
+            b0 = self._variant(c, ang).bbox
+            nb = (x + b0[0], y + b0[1], x + b0[2], y + b0[3])
+            bb = nb if bb is None else (min(bb[0], nb[0]), min(bb[1], nb[1]), max(bb[2], nb[2]), max(bb[3], nb[3]))
+        return bb
+
+    def polish(self, res: NestResult, trials: int, rng: random.Random) -> int:
+        """Shrink the area used on the last plate: parts that set its extent (and some others) are taken out and
+        put back where they fit best, the others staying where they are. A move is kept when the
+        rectangle round all the parts gets smaller. Returns the number of moves that were kept."""
+        if not res.layout or not res.used:
+            return 0
+        k = len(res.layout) - 1
+        box = self.boxes[res.stock[k]]
+        items = list(res.layout[k])
+        if len(items) < 2:
+            return 0
+
+        def cost(bb):
+            return ((bb[2] - bb[0]) * (bb[3] - bb[1]), bb[2] + bb[3])
+        cur = cost(self._bbox_of(items))
+        saved, kept = self.gravity, 0
+        self.gravity = "compact"  # put a part where the rectangle round everything grows least
+        try:
+            for t in range(trials):
+                self._check()
+                bb = self._bbox_of(items)
+                tol = 1e-6 * self.st.sheet_width * clip.SCALE
+                edge = [i for i, (_, _, c, ang, x, y) in enumerate(items)
+                        if (lambda b: x + b[2] >= bb[2] - tol or y + b[3] >= bb[3] - tol)(self._variant(c, ang).bbox)]
+                n_out = 1 if t % 4 else rng.choice([1, 2, 3])
+                pool = edge if (edge and rng.random() < 0.75) else list(range(len(items)))
+                out = set(rng.sample(pool, min(n_out, len(pool))))
+                rest = [it for i, it in enumerate(items) if i not in out]
+                taken = sorted((items[i] for i in out), key=lambda it: -self.areas[it[0]])
+                new_rest = list(rest)
+                ok = True
+                for si, ci, c, ang, x, y in taken:
+                    placed = [(c2, a2, x2, y2) for _, _, c2, a2, x2, y2 in new_rest]
+                    ub = self._bbox_of(new_rest)
+                    cand = self._try_sheet(box, placed, si, ub)
+                    if cand is None:
+                        ok = False
+                        break
+                    _, a, px, py = cand
+                    new_rest.append((si, ci, self.cls[si], a, px, py))
+                if not ok:
+                    continue
+                new = cost(self._bbox_of(new_rest))
+                if new[0] < cur[0] * (1 - 1e-9) - 1e-6 or (abs(new[0] - cur[0]) <= 1e-6 * cur[0] and new[1] < cur[1] - 1):
+                    items, cur, kept = new_rest, new, kept + 1
+        finally:
+            self.gravity = saved
+        if kept:
+            res.layout[k] = items
+            res.used[k] = tuple(v / clip.SCALE for v in self._bbox_of(items))
+            res.placements = [p for p in res.placements if p.sheet != k] + [
+                self._placement(si, ci, k, ang, x, y) for si, ci, _, ang, x, y in items]
+        return kept
 
 
 def nest(shapes: Sequence[NestShape], settings: NestSettings, progress: Callable | None = None,
          cancel: Callable[[], bool] | None = None) -> NestResult:
     """Nest the shapes; ``cancel()`` is asked all the time and ``NestCancelled`` raised when it says yes.
 
+    ``settings.iterations`` layouts are made and the one that uses the least material is kept: first the
+    biggest parts first in the three gravities and a few other orders of the parts, then random changes
+    of the best order; with more than one attempt the best layout is then polished (see
+    :meth:`Nester.polish`). One attempt is the plain layout (biggest first, the gravity chosen).
+
     ``progress(done, total)`` counts the parts placed over all attempts."""
     n = Nester(shapes, settings)
     n.cancel = cancel
-    order = n.default_order()
     squeezing = settings.squeeze_angle > 0 or settings.squeeze_margin > 0
-    attempts = max(1, settings.iterations) + (1 if squeezing else 0)
-    count = len(order)
+    tries = max(1, settings.iterations)
+    attempts = tries + (1 if squeezing else 0)
+    plan = n.candidates(tries)
+    count = sum(max(0, sh.quantity) for sh in shapes)
 
     def share(i: int):
         """Progress of attempt ``i`` as part of all of them."""
         return None if progress is None else (lambda k, t: progress(i * count + k, attempts * count))
 
-    best = n.run_order(order, share(0), cancel)
     rng = random.Random(settings.seed)
-    for i in range(1, max(1, settings.iterations)):
+    best = order = grav = None
+    for i in range(tries):
         n._check()
-        cand = list(order)
-        for _ in range(max(1, len(cand) // 4)):
-            a = rng.randrange(len(cand))
-            j = min(len(cand) - 1, a + rng.randint(1, 3))
-            cand[a], cand[j] = cand[j], cand[a]
-        r = n.run_order(cand, share(i), cancel)
-        if n.quality(r) < n.quality(best):
-            best, order = r, cand
+        if i < len(plan):
+            cand, g = plan[i]
+        else:  # a few swaps in the best order so far
+            cand, g = list(order), grav
+            for _ in range(max(1, len(cand) // 4)):
+                a = rng.randrange(len(cand))
+                j = min(len(cand) - 1, a + rng.randint(1, 3))
+                cand[a], cand[j] = cand[j], cand[a]
+        r = n.run_order(cand, share(i), cancel, gravity=g)
+        if best is None or n.quality(r) < n.quality(best):
+            best, order, grav = r, cand, g
+    if tries > 1:
+        n.polish(best, 12 * tries, rng)
     if squeezing and (best.unplaced or best.sheets > 1):
         # squeezing parts in may place what did not fit or save a plate: offered as a suggestion
-        r = n.run_order(order, share(attempts - 1), cancel, squeeze=True)
+        r = n.run_order(order, share(attempts - 1), cancel, squeeze=True, gravity=grav)
         if r.squeezed and n.quality(r)[:3] < n.quality(best)[:3]:
             best.suggestion = r
     return best

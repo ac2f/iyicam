@@ -81,6 +81,37 @@ nothing. What keeps it fast:
 If nesting is still slow: fewer angles (90° steps instead of 15°), fewer *Optimisation
 attempts*, fewer outline points. On the command line: `--max-points N`.
 
+## Using the least material
+
+Nesting places the parts one by one at the best place of the feasible area. What "best" is and in which
+order the parts come decides how much of the sheet is used, so several layouts are made and the best one
+is kept: **Optimisation attempts** (default 8; 1 is one quick pass).
+
+* The first attempt puts the biggest parts first towards the side chosen in *Pack towards*. The following ones
+  try the other directions (left, bottom, smallest area, shortest layout along X or Y) and other orders of
+  the parts (by area, longest side, height, width). After those the best order is shuffled a little.
+* A layout is better when it places more parts, then uses fewer (cheaper) sheets, then uses less of the last
+  sheet (the rectangle round the parts on it), then reaches less far.
+* The best layout is polished: the parts that set its extent are taken out and put back where they fit best,
+  while the others stay; a move is kept when the rectangle round everything gets smaller.
+* The work is shared between the attempts (the no-fit polygons are made once), so ten attempts cost a lot
+  less than ten times one. The result is the same every time for the same settings.
+
+On a 2440 x 1220 sheet with 22 mixed parts (rounded rectangles, L, T and U shapes, circles, arrows) one pass
+used 89 % of the sheet, the search 81-84 %; 24 rectangles of many sizes needed 2 sheets in one pass and 1 with
+the search.
+
+## Inner pieces (göbek) and holes
+
+* **Inner pieces stay with their part** (*Parts* in the dialog, `--group-inner`): whatever lies inside a part,
+  the pieces in its holes too, moves with it. Off (the default): a piece in a hole is a part of its own and is
+  nested separately, as before.
+* **Place smaller parts in the holes of parts** (`--fill-holes`): the holes of a part (closed vectors inside
+  it that hold nothing that stays, and holes inside the part's own vector, such as the counter of a letter) can
+  take other parts. A part nests in a hole, around a part, in a hole of a hole... the parts keep the gap to
+  the edge of the hole. Do not use it when the inner closed vectors are only drawn (engraved) and not cut
+  through: their material is not removed. The cut order cuts a part nested in a hole before the hole.
+
 ## Rotation
 
 How parts may turn is set in three steps, the most specific wins:
@@ -156,6 +187,7 @@ file, `--no-project-stock` ignores the stock saved in the project, `--no-new-she
 uses only those plates, `--keep-stock` keeps the used plates in the project's stock.
 
 ```
+python -m iyicam nest job.icam -o nested.icam --iterations 20 --gravity reach_x --fill-holes
 python -m iyicam nest job.icam -o nested.icam --angles 0,22.5,90 --rotate-layer Grain=none
 python -m iyicam nest job.icam -o nested.icam --squeeze-angle 5 --squeeze-margin 3 --apply-squeeze
 ```
