@@ -44,9 +44,18 @@ def _clean(paths: Iterable[Sequence[Pt]], closed: bool = True) -> list[list[tupl
                 dedup.append(q)
         if closed and len(dedup) > 1 and dedup[0] == dedup[-1]:
             dedup.pop()
-        if len(dedup) >= (3 if closed else 2):
+        if len(dedup) >= (3 if closed else 2) and not (closed and _on_a_line(dedup)):
             out.append(dedup)
     return out
+
+
+def _on_a_line(path: Sequence[tuple[int, int]]) -> bool:
+    """Whether all points of a path are on one straight line (a polygon with no area: Clipper refuses it)."""
+    (x0, y0), (x1, y1) = path[0], path[1]
+    for x, y in path[2:]:
+        if (x1 - x0) * (y - y0) - (y1 - y0) * (x - x0) != 0:
+            return False
+    return True
 
 
 def contours_to_polys(contours: Iterable[Contour], tol: float = 0.005) -> list[Poly]:

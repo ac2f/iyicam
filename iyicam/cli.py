@@ -80,6 +80,9 @@ def cmd_gcode(a) -> int:
     for r in res.values():
         if r.error:
             print(f"error: {r.error}", file=sys.stderr)
+    if a.sheet != "all" and not (a.sheet.isdigit() and 1 <= int(a.sheet) <= len(p.sheets)):
+        print(f"error: --sheet must be 'all' or a number from 1 to {len(p.sheets)}", file=sys.stderr)
+        return 2
     sheets = p.sheets if a.sheet == "all" else [p.sheets[int(a.sheet) - 1]]
     out = Path(a.output) if a.output else Path(a.project).with_suffix("." + post.extension)
     written = []
@@ -142,7 +145,8 @@ def cmd_nest(a) -> int:
             print(f"--rotate-layer: {e}", file=sys.stderr)
             return 2
     st = NestSettings(a.width, a.height, a.margin, a.spacing, rots, a.gravity, iterations=a.iterations,
-                      max_points=a.max_points, squeeze_angle=a.squeeze_angle, squeeze_margin=a.squeeze_margin,
+                      time_limit=a.time_limit, max_points=a.max_points, squeeze_angle=a.squeeze_angle,
+                      squeeze_margin=a.squeeze_margin,
                       squeeze_step=a.squeeze_step)
     stock = [] if a.no_project_stock else list(p.stock)
     if a.stock:
@@ -201,6 +205,8 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--gravity", default="left", choices=["left", "bottom", "compact", "reach_x", "reach_y", "diag"])
     s.add_argument("--iterations", type=int, default=8,
                    help="layouts tried (1 = one quick pass); the one using the least material is kept")
+    s.add_argument("--time-limit", type=float, default=0.0,
+                   help="seconds after which no further layout is tried (0 = no limit)")
     s.add_argument("--group-inner", action="store_true",
                    help="inner pieces (göbek) stay with their part instead of being nested on their own")
     s.add_argument("--fill-holes", action="store_true", help="place smaller parts in the holes of parts")
@@ -227,8 +233,16 @@ def main(argv: list[str] | None = None) -> int:
                    help="take the squeezed layout when it is better (else it is only suggested)")
     a = ap.parse_args(argv)
     _setup(not a.no_plugins)
-    return {"posts": cmd_posts, "plugins": cmd_plugins, "info": cmd_info, "gcode": cmd_gcode,
-            "import": cmd_import, "nest": cmd_nest}[a.cmd](a)
+    try:
+        return {"posts": cmd_posts, "plugins": cmd_plugins, "info": cmd_info, "gcode": cmd_gcode,
+                "import": cmd_import, "nest": cmd_nest}[a.cmd](a)
+    except FileNotFoundError as exc:
+        print(f"error: {exc.filename or exc} was not found", file=sys.stderr)
+    except (OSError, ValueError, KeyError, TypeError, IndexError) as exc:   # a bad file or a bad number
+        print(f"error: {type(exc).__name__}: {exc}", file=sys.stderr)
+    except Exception as exc:  # noqa: BLE001  (e.g. a damaged DXF: ezdxf's own errors)
+        print(f"error: {type(exc).__name__}: {exc}", file=sys.stderr)
+    return 1
 
 
 if __name__ == "__main__":

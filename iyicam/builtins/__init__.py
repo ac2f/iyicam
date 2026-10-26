@@ -31,13 +31,17 @@ def register(api: PluginAPI) -> None:
     api.add_exporter("svg", "Scalable Vector Graphics", svg.export_svg)
 
 
+USER_POST_ERRORS: dict[str, str] = {}   # the posts of the user that could not be loaded: {path: what is wrong}
+
+
 def load_user_posts(registry: Registry = REGISTRY) -> list:
     """Posts in ``~/.iyicam/posts`` (they may ``extends`` a built-in post)."""
     from ..post.loader import BUILTIN_DIR, load_posts, read_definition
     known = {p.stem: read_definition(p) for p in BUILTIN_DIR.glob("*.toml")}
     api = PluginAPI("user-posts", registry)
     out = []
-    for post in load_posts([paths.posts_dir()], known):
+    USER_POST_ERRORS.clear()
+    for post in load_posts([paths.posts_dir()], known, USER_POST_ERRORS):
         out.append(api.add_postprocessor(post))
     return out
 

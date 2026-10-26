@@ -22,6 +22,10 @@ class UndoStack:
         if self._undo:
             project.load_state(self._undo.pop()[1])
 
+    def unchanged(self, project: Project) -> bool:
+        """Whether the project is as it was at the last checkpoint."""
+        return not self._undo or self._undo[-1][1] == project.to_dict()
+
     def discard_last(self) -> None:
         """Forget the last checkpoint (e.g. when the action was cancelled)."""
         if self._undo:

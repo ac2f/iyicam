@@ -163,6 +163,26 @@ def test_extends_inheritance(tmp_path):
     assert "(MY profile)" in text and "G91.1" in text
 
 
+@pytest.mark.parametrize("options", [{"decimals": "many"}, {"decimals": 2.5}, {"decimals": True},
+                                     {"comments": "yes"}, {"arc_max_sweep": "wide"}, {"units": "furlong"},
+                                     {"arcs": 3}, {"line_ending": "cr"}])
+def test_a_post_with_options_of_the_wrong_kind_is_refused_with_the_name_of_the_option(options):
+    with pytest.raises(ValueError, match=next(iter(options))):
+        PostProcessor({"id": "wrong", "options": options})
+
+
+def test_wrong_options_leave_the_other_posts_alone(tmp_path):
+    from iyicam.post.loader import load_posts
+    (tmp_path / "wrong.toml").write_text('id = "wrong"\nextends = "mach3"\n[options]\ndecimals = "many"\n')
+    (tmp_path / "right.toml").write_text('id = "right"\nextends = "mach3"\n[options]\ndecimals = 2.0\n')
+    (tmp_path / "text.toml").write_text('id = "text"\n[blocks]\nheader = 5\n')
+    errors = {}
+    posts = load_posts([tmp_path], builtin_definitions(), errors)
+    assert [p.id for p in posts] == ["right"] and posts[0].options["decimals"] == 2
+    assert sorted(errors) == [str(tmp_path / "text.toml"), str(tmp_path / "wrong.toml")]
+    assert "decimals" in errors[str(tmp_path / "wrong.toml")]
+
+
 def test_unknown_template_variable_is_reported():
     p, s, tps = job_project()
     post = PostProcessor({"id": "bad", "blocks": {"header": "{nope}"}})

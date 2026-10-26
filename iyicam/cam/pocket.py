@@ -261,6 +261,7 @@ class PocketOp(Operation):
         out: list[PatternPath] = []
         pos = home
         max_link = max(2.5 * so, 2 * r)
+        pattern = [p for p in pattern if p.contour.segs]   # a path that shrank to nothing is nothing to cut
         for g in sorted({p.group for p in pattern}):
             remaining = [p for p in pattern if p.group == g]
             while remaining:

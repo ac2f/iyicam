@@ -10,6 +10,7 @@ from PySide6.QtWidgets import QMenu
 from ..core import shapes, vectorops
 from ..core.document import VectorObject
 from ..core.geom import Arc, BBox, Bezier, Contour, Line, Pt, Transform, add, dist, sub
+from . import menus
 from .qtgeom import contours_path
 
 
@@ -230,9 +231,8 @@ class SelectTool(CanvasTool):
         if T is not None:
             label = {"move": "Move"}.get(mode, "Rotate" if mode == "rotate" else "Scale")
             objs = [o for o in self.ctrl.selected_objects() if self.ctrl.editable(o)]
-            ids = [o.id for o in objs]
             with self.ctrl.edit(label):
-                for o in (self.ctrl.sheet.vector(i) for i in ids):
+                for o in objs:
                     o.transform(T)
         self.say(self.prompt)
 
@@ -503,7 +503,7 @@ class NodeTool(CanvasTool):
                                                                      "Open vector"))
         else:
             m.addAction("Close", lambda: self._apply(oid, ci, lambda c: vectorops.close(c), "Close vector"))
-        m.exec(self.canvas.mapToGlobal(pos.toPoint()))
+        menus.show_menu(m, self.canvas.mapToGlobal(pos.toPoint()))
         return True
 
     def paint(self, p: QPainter) -> None:

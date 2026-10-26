@@ -7,7 +7,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
-from ..cam.job import ComputeResult, compute_all, sheet_toolpaths, sheets_for
+from ..cam.job import ComputeCancelled, ComputeResult, compute_all, sheet_toolpaths, sheets_for
 from ..core import clip, paths, vectorops
 from ..core.commands import Command, CommandContext, CommandError, run_command
 from ..core.document import XY_ORIGINS, Project, Sheet, ToolpathDef, VectorObject
@@ -17,6 +17,7 @@ from ..core.stock import StockItem, normalized
 from ..core.tooling import ToolLibrary
 from ..core.undo import UndoStack
 from ..nesting.stock import leftover_of_sheet, stock_from_vectors
+from .busy import run_busy
 from .settings import Settings, Units
 
 
@@ -46,6 +47,9 @@ class Controller(QObject):
         self.stale = False
         self.dirty = False
         self.last_compute_s = 0.0
+        self.busy_parent = None       # the window the "please wait" window of a long calculation belongs to
+        self._computing = False
+        self._compute_again = False
         self._recalc = QTimer(self)
         self._recalc.setSingleShot(True)
         self._recalc.setInterval(250)
@@ -70,7 +74,7 @@ class Controller(QObject):
 
     def selected_objects(self) -> list[VectorObject]:
         s = self.sheet
-        return [v for v in (s.vector(i) for i in self.selection) if v is not None]
+        return s.pick(self.selection)
 
     def editable(self, obj: VectorObject) -> bool:
         layer = self.project.layer(obj.layer_id)
@@ -153,7 +157,8 @@ class Controller(QObject):
         self._after_change(geometry)
 
     def _after_change(self, geometry: bool = True) -> None:
-        self.selection = [i for i in self.selection if self.sheet.vector(i) is not None]
+        _ = self.layer   # a current layer that is gone (undone, deleted) is replaced by the first one
+        self.selection = [v.id for v in self.sheet.pick(self.selection)]
         self.changed.emit()
         self.selection_changed.emit()
         if geometry and self.project.toolpaths:
@@ -188,7 +193,7 @@ class Controller(QObject):
 
     # -- selection --------------------------------------------------------------------------------
     def select(self, ids, mode: str = "replace") -> None:
-        ids = [i for i in ids if self.sheet.vector(i) is not None]
+        ids = [v.id for v in self.sheet.pick(ids)]
         if mode == "replace":
             new = list(dict.fromkeys(ids))
         elif mode == "add":
@@ -222,6 +227,9 @@ class Controller(QObject):
 
     # -- vectors -----------------------------------------------------------------------------------
     def add_vectors(self, objs: list[VectorObject], label: str = "Add vectors", select: bool = True) -> None:
+        objs = [o for o in objs if o.prune()]   # a vector of nothing is not added
+        if not objs:
+            return
         with self.edit(label):
             self.sheet.vectors.extend(objs)
         if select:
@@ -300,7 +308,11 @@ class Controller(QObject):
         try:
             run_command(cmd, ctx, values)
         except CommandError as exc:
-            self.undo_stack.discard_last()
+            if self.undo_stack.unchanged(self.project):
+                self.undo_stack.discard_last()
+            else:   # it had already changed something when it found it cannot go on: back to how it was
+                self.undo_stack.rollback(self.project)
+                self._after_change(True)
             self.message.emit(str(exc))
             return False
         except Exception:
@@ -310,7 +322,7 @@ class Controller(QObject):
             self.message.emit(m)
         self.dirty = True
         if ctx.new_selection is not None:
-            self.selection = [i for i in ctx.new_selection if self.sheet.vector(i) is not None]
+            self.selection = [v.id for v in self.sheet.pick(ctx.new_selection)]
         self._after_change(True)
         return True
 
@@ -346,14 +358,33 @@ class Controller(QObject):
 
     def recalculate(self, only: set[str] | None = None, force_smart: set[str] | None = None,
                     apply_starts: bool = True) -> dict:
-        from PySide6.QtCore import Qt
-        from PySide6.QtWidgets import QApplication
+        """Calculate the toolpaths. A calculation that takes more than a moment runs in a thread: the program
+        stays alive and a window with a Cancel button appears (nothing is changed when it is cancelled)."""
+        if self._computing:   # asked from inside the event loop of a calculation that is running
+            self._compute_again = True
+            return {}
         t0 = time.perf_counter()
-        QApplication.setOverrideCursor(Qt.WaitCursor)
+        events: list = []
+        state: dict = {}
+
+        def progress(k, n, name):
+            state["k"], state["n"], state["label"] = k, n, f"Calculating {name} ({k + 1} of {n})..."
+
+        self._computing = True
         try:
-            res = compute_all(self.project, self.registry, only, self.results, force_smart)
+            res = run_busy(lambda: compute_all(self.project, self.registry, only, self.results, force_smart,
+                                               cancel=lambda: state["cancel"].is_set(), progress=progress,
+                                               events=events),
+                           self.busy_parent, "Calculating toolpaths...", ComputeCancelled, state=state)
+        except ComputeCancelled:
+            self.stale = True
+            self.message.emit("Calculation cancelled: Toolpaths > Recalculate All (F5) calculates again")
+            self.toolpaths_changed.emit()
+            return {}
         finally:
-            QApplication.restoreOverrideCursor()
+            self._computing = False
+        for hook, args in events:   # the hooks of plugins run here, not in the thread
+            self.registry.emit(hook, *args)
         if only is None:
             self.results = res
             self.stale = False
@@ -366,6 +397,9 @@ class Controller(QObject):
             # the vectors now carry the start points; toolpaths sharing them follow
             return self.recalculate(only, apply_starts=False)
         self.toolpaths_changed.emit()
+        if self._compute_again:   # something asked for a calculation while this one ran
+            self._compute_again = False
+            return self.recalculate()
         return res
 
     # -- cut order and start points -------------------------------------------------------------

@@ -8,50 +8,15 @@ import pytest
 
 pytest.importorskip("PySide6.QtWidgets")
 
-from gui_robot import Robot, process  # noqa: E402
+from gui_robot import populate, process, rwin_gen  # noqa: E402
 from PySide6.QtCore import QPoint, Qt  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 
-from iyicam.core import shapes  # noqa: E402
-from iyicam.core.document import VectorObject  # noqa: E402
 
 
 @pytest.fixture
 def rwin(tmp_path, monkeypatch):
-    monkeypatch.setenv("IYICAM_HOME", str(tmp_path / "home"))
-    robot = Robot().install(monkeypatch)
-    from iyicam.gui.app import create_window
-    app, w = create_window(["test"], load_plugins=False)
-    w.resize(1200, 800)
-    w.show()
-    process()
-    yield w, robot
-    w.ctrl.dirty = False
-    w.close()
-    process()
-
-
-def populate(win, select=True):
-    """Parts of every kind on two layers and two sheets."""
-    from iyicam.gui.qtgeom import text_contours
-    c = win.ctrl
-    lay2 = c.project.layer_by_name("Parts") or c.project.add_layer("Parts")
-    base = c.layer_id
-    objs = [
-        VectorObject([shapes.rectangle(20, 20, 120, 80, corner_radius=8)], base, "Panel"),
-        VectorObject([shapes.circle((200, 60), 30)], base, "Disc"),
-        VectorObject([shapes.rectangle(260, 20, 110, 90), shapes.circle((315, 65), 18)], lay2.id, "Ring part"),
-        VectorObject([shapes.polyline([(20, 150), (120, 160), (180, 150), (240, 190)])], base, "Open line"),
-        VectorObject([shapes.polyline([(300, 150), (380, 150), (380, 220), (340, 250), (300, 220)], True)],
-                     lay2.id, "Pentagon"),
-        VectorObject(text_contours("Ab", "DejaVu Sans", 30.0), base, "Text"),
-    ]
-    from iyicam.core.geom import Transform
-    objs[-1].transform(Transform.translate(40, 260))
-    c.add_vectors(objs, select=False)
-    if select:
-        c.select([o.id for o in objs])
-    return objs
+    yield from rwin_gen(tmp_path, monkeypatch)
 
 
 def check(robot, what):

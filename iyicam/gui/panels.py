@@ -1,7 +1,7 @@
 """Dockable panels: layers, sheets, toolpaths and selection properties."""
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QIcon, QPixmap
 from PySide6.QtWidgets import (QAbstractItemView, QColorDialog, QComboBox, QDoubleSpinBox, QFormLayout, QHBoxLayout,
                                QHeaderView, QInputDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMenu,
@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QColorDialog, QComboBox, QDoub
 
 from ..cam.moves import PathStats, format_time
 from ..core.geom import BBox, Transform
+from . import menus
 
 
 def swatch(color: str, size: int = 12) -> QIcon:
@@ -55,10 +56,14 @@ class LayersPanel(QWidget):
         row.addStretch(1)
         lay.addLayout(row)
         self._updating = False
+        self._changing = False
         ctrl.changed.connect(self.refresh)
         self.refresh()
 
     def refresh(self) -> None:
+        if self._changing:   # called from inside the change of one of the rows: rebuild when that is over
+            QTimer.singleShot(0, self.refresh)
+            return
         self._updating = True
         self.tree.clear()
         counts: dict[str, int] = {}
@@ -89,11 +94,16 @@ class LayersPanel(QWidget):
         layer = self.ctrl.project.layer(self._lid(it))
         if layer is None:
             return
-        with self.ctrl.edit("Layer state", geometry=False):
-            layer.visible = it.checkState(1) == Qt.Checked
-            layer.locked = it.checkState(2) == Qt.Checked
-        if not layer.visible or layer.locked:
-            self.ctrl.select([o.id for o in self.ctrl.selected_objects() if o.layer_id != layer.id])
+        self._changing = True   # rebuilding the tree now would delete the row that is being changed
+        try:
+            with self.ctrl.edit("Layer state", geometry=False):
+                layer.visible = it.checkState(1) == Qt.Checked
+                layer.locked = it.checkState(2) == Qt.Checked
+            if not layer.visible or layer.locked:
+                self.ctrl.select([o.id for o in self.ctrl.selected_objects() if o.layer_id != layer.id])
+        finally:
+            self._changing = False
+        QTimer.singleShot(0, self.refresh)
 
     def _current_changed(self, cur, prev) -> None:
         if not self._updating and cur is not None:
@@ -112,7 +122,7 @@ class LayersPanel(QWidget):
         m.addAction("Move selection here", self.move_selection)
         m.addSeparator()
         m.addAction("Delete", self.delete)
-        m.exec(self.tree.mapToGlobal(pos))
+        menus.show_menu(m, self.tree.mapToGlobal(pos))
 
     def add(self) -> None:
         name, ok = QInputDialog.getText(self, "New layer", "Name:", text=f"Layer {len(self.ctrl.project.layers) + 1}")
@@ -291,6 +301,7 @@ class ToolpathsPanel(QWidget):
         row2.addWidget(b)
         lay.addLayout(row2)
         self._updating = False
+        self._changing = False
         ctrl.toolpaths_changed.connect(self.refresh)
         ctrl.sheet_changed.connect(self.refresh)
         self.refresh()
@@ -299,6 +310,9 @@ class ToolpathsPanel(QWidget):
         return [it.data(0, Qt.UserRole) for it in self.tree.selectedItems()]
 
     def refresh(self) -> None:
+        if self._changing:   # called from inside the change of one of the rows: rebuild when that is over
+            QTimer.singleShot(0, self.refresh)
+            return
         self._updating = True
         sel = set(self.selected_ids())
         self.tree.clear()
@@ -342,15 +356,20 @@ class ToolpathsPanel(QWidget):
             return
         t = self.ctrl.project.toolpath(it.data(0, Qt.UserRole))
         if t is not None:
-            with self.ctrl.edit("Toggle toolpath", geometry=False):
-                t.enabled = it.checkState(0) == Qt.Checked
-            self.ctrl.toolpaths_changed.emit()
+            self._changing = True   # rebuilding the tree now would delete the row that is being changed
+            try:
+                with self.ctrl.edit("Toggle toolpath", geometry=False):
+                    t.enabled = it.checkState(0) == Qt.Checked
+                self.ctrl.toolpaths_changed.emit()
+            finally:
+                self._changing = False
+            QTimer.singleShot(0, self.refresh)
 
     def _new_menu(self) -> None:
         m = QMenu(self)
         for op in self.ctrl.registry.operations.values():
             m.addAction(op.label, lambda o=op: self.window.new_toolpath(o.id))
-        m.exec(self.new_btn.mapToGlobal(self.new_btn.rect().bottomLeft()))
+        menus.show_menu(m, self.new_btn.mapToGlobal(self.new_btn.rect().bottomLeft()))
 
     def _menu(self, pos) -> None:
         m = QMenu(self)
@@ -369,7 +388,7 @@ class ToolpathsPanel(QWidget):
             m.addAction("Start points...", lambda: self.window.start_points(t.id))
         m.addAction("Save as template...", self.window.save_toolpath_template)
         m.addAction("Load template...", self.window.load_toolpath_template)
-        m.exec(self.tree.mapToGlobal(pos))
+        menus.show_menu(m, self.tree.mapToGlobal(pos))
 
     def edit(self) -> None:
         ids = self.selected_ids()
@@ -498,6 +517,9 @@ class PropertiesPanel(QWidget):
         x, y = u.from_display(self.spins["x"].value()), u.from_display(self.spins["y"].value())
         w, h = u.from_display(self.spins["w"].value()), u.from_display(self.spins["h"].value())
         bb = self._bb
+        if (bb.width > 1e-9 and w < 1e-3) or (bb.height > 1e-9 and h < 1e-3):
+            self.refresh()   # a size of nothing (or less) would destroy the vectors: back to what they are
+            return
         sx = w / bb.width if bb.width > 1e-9 else 1.0
         sy = h / bb.height if bb.height > 1e-9 else 1.0
         if self.keep.isChecked():

@@ -6,6 +6,7 @@ Z-zero and unit conversions.
 """
 from __future__ import annotations
 
+import copy
 import math
 from dataclasses import dataclass, field
 
@@ -131,6 +132,7 @@ class Toolpath:
     color: str = ""
     warnings: list[str] = field(default_factory=list)
     cuts: list[dict] = field(default_factory=list)  # one entry per cut: key, index, start, entry, moves, ...
+    _stats_cache: dict = field(default_factory=dict, repr=False, compare=False)
 
     def start_point(self) -> tuple[float, float, float] | None:
         for m in self.moves:
@@ -167,6 +169,17 @@ class Toolpath:
         return out
 
     def stats(self, rapid_rate: float = 8000.0, start: tuple[float, float, float] | None = None) -> PathStats:
+        """Lengths, time and extent of the moves. The result is kept (the panels ask for it at every refresh, and
+        a big toolpath has millions of moves); it is made again when the moves or the rapid rate change."""
+        key = (rapid_rate, start, len(self.moves), id(self.moves[-1]) if self.moves else 0)
+        hit = self._stats_cache.get("stats")
+        if hit is not None and hit[0] == key:
+            return copy.copy(hit[1])
+        st = self._stats(rapid_rate, start)
+        self._stats_cache["stats"] = (key, st)
+        return copy.copy(st)
+
+    def _stats(self, rapid_rate: float, start) -> PathStats:
         st = PathStats()
         pos = start
         for m in self.moves:

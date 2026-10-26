@@ -97,6 +97,10 @@ is kept: **Optimisation attempts** (default 8; 1 is one quick pass).
 * The work is shared between the attempts (the no-fit polygons are made once), so ten attempts cost a lot
   less than ten times one. The result is the same every time for the same settings.
 
+**Time limit** (seconds, 0 = none; `--time-limit` on the command line): the search stops when the time is
+up and keeps the best layout found so far, which is never worse than the first pass. The first pass is
+always finished.
+
 On a 2440 x 1220 sheet with 22 mixed parts (rounded rectangles, L, T and U shapes, circles, arrows) one pass
 used 89 % of the sheet, the search 81-84 %; 24 rectangles of many sizes needed 2 sheets in one pass and 1 with
 the search.
@@ -191,6 +195,9 @@ python -m iyicam nest job.icam -o nested.icam --iterations 20 --gravity reach_x 
 python -m iyicam nest job.icam -o nested.icam --angles 0,22.5,90 --rotate-layer Grain=none
 python -m iyicam nest job.icam -o nested.icam --squeeze-angle 5 --squeeze-margin 3 --apply-squeeze
 ```
+
+`--time-limit SECONDS` stops the search for a better layout after that long, `--group-inner` keeps
+inner pieces with their outer part (see above), `--fill-holes` puts small parts into the holes of big ones.
 
 `--angles LIST` any angles instead of `--rotation` (the step), `--rotate-layer
 LAYER=RULE` (`none`, `flip`, `limit:X`, `limit-flip:X`, `step:X`, `default`; repeat

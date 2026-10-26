@@ -9,7 +9,9 @@ from __future__ import annotations
 import sys
 import traceback
 
-from PySide6.QtWidgets import QApplication, QDialog, QFileDialog, QInputDialog, QMenu, QMessageBox
+from PySide6.QtGui import QColor
+from PySide6.QtWidgets import (QApplication, QColorDialog, QDialog, QFileDialog, QInputDialog,
+                               QMessageBox)
 
 BAD_WORDS = ("Traceback", "has no attribute", "NoneType", "object is not", "Error", "error:", "Exception")
 
@@ -109,16 +111,56 @@ class Robot:
         mp.setattr(QInputDialog, "getInt", staticmethod(lambda p=None, t="", l="", value=0, *a, **k: (value, True)))
         mp.setattr(QInputDialog, "getDouble", staticmethod(lambda p=None, t="", l="", value=0.0, *a, **k: (value, True)))
         mp.setattr(QInputDialog, "getItem", staticmethod(lambda p, t, l, items, current=0, *a, **k: (items[current], True)))
-        mp.setattr(QMenu, "exec", lambda self, *a, **k: None)
+        from iyicam.gui import menus
+        mp.setattr(menus, "show_menu", lambda menu, pos: None)   # (PySide's QMenu.exec cannot be patched)
+        mp.setattr(QColorDialog, "getColor", staticmethod(lambda *a, **k: QColor("#2a7fff")))
 
         def hook(etype, value, tb):
             robot.errors.append("".join(traceback.format_exception(etype, value, tb)))
 
-        self._saved["excepthook"] = sys.excepthook
-        sys.excepthook = hook
-        mp.setattr(sys, "excepthook", hook)
+        mp.setattr(sys, "excepthook", hook)     # (monkeypatch puts the old hook back)
         return self
 
 
 def process() -> None:
     QApplication.processEvents()
+
+
+def rwin_gen(tmp_path, monkeypatch):
+    """A main window on a fresh settings folder with the robot installed: ``yield from`` it in a fixture."""
+    monkeypatch.setenv("IYICAM_HOME", str(tmp_path / "home"))
+    robot = Robot().install(monkeypatch)
+    from iyicam.gui.app import create_window
+    app, w = create_window(["test"], load_plugins=False)
+    w.resize(1200, 800)
+    w.show()
+    process()
+    yield w, robot
+    w.ctrl.dirty = False
+    w.close()
+    process()
+
+
+def populate(win, select=True):
+    """Parts of every kind on two layers: closed, open, with a hole, text."""
+    from iyicam.core import shapes
+    from iyicam.core.document import VectorObject
+    from iyicam.core.geom import Transform
+    from iyicam.gui.qtgeom import text_contours
+    c = win.ctrl
+    lay2 = c.project.layer_by_name("Parts") or c.project.add_layer("Parts")
+    base = c.layer_id
+    objs = [
+        VectorObject([shapes.rectangle(20, 20, 120, 80, corner_radius=8)], base, "Panel"),
+        VectorObject([shapes.circle((200, 60), 30)], base, "Disc"),
+        VectorObject([shapes.rectangle(260, 20, 110, 90), shapes.circle((315, 65), 18)], lay2.id, "Ring part"),
+        VectorObject([shapes.polyline([(20, 150), (120, 160), (180, 150), (240, 190)])], base, "Open line"),
+        VectorObject([shapes.polyline([(300, 150), (380, 150), (380, 220), (340, 250), (300, 220)], True)],
+                     lay2.id, "Pentagon"),
+        VectorObject(text_contours("Ab", "DejaVu Sans", 30.0), base, "Text"),
+    ]
+    objs[-1].transform(Transform.translate(40, 260))
+    c.add_vectors(objs, select=False)
+    if select:
+        c.select([o.id for o in objs])
+    return objs

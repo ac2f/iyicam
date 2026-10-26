@@ -168,3 +168,20 @@ def test_the_checker_itself_catches_overlaps_borders_and_missing_parts():
     bad = copy.deepcopy(res)
     bad.placements.pop()
     assert any("neither placed nor reported" in p for p in verify(shapes, bad, st))
+
+
+def test_the_time_limit_stops_the_search_but_never_before_one_layout():
+    import time
+    rnd = random.Random(5)
+    shapes = [NestShape([rect(rnd.randint(40, 200), rnd.randint(30, 150))]) for _ in range(80)]
+    st = settings(sheet_width=2440, sheet_height=1220, iterations=200, time_limit=0.001)
+    t = time.perf_counter()
+    res = nest(shapes, st)
+    assert time.perf_counter() - t < 20          # one layout, not two hundred
+    assert verify(shapes, res, st) == [] and not res.unplaced
+
+
+def test_nothing_to_place_is_fine():
+    st = settings(iterations=6)
+    assert nest([], st).placements == []
+    assert nest([NestShape([rect(50, 50)], 0)], st).placements == []

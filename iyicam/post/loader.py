@@ -50,10 +50,21 @@ def resolve(defs: dict[str, dict]) -> dict[str, dict]:
     return done
 
 
-def load_posts(dirs: Iterable[Path], known: dict[str, dict] | None = None) -> list[PostProcessor]:
-    """Load every ``*.toml`` post in ``dirs`` (later directories override earlier ones)."""
+def load_posts(dirs: Iterable[Path], known: dict[str, dict] | None = None,
+               errors: dict[str, str] | None = None) -> list[PostProcessor]:
+    """Load every ``*.toml`` post in ``dirs`` (later directories override earlier ones).
+
+    A post that cannot be read or built is left out, not the others: ``errors`` (when given) is filled with
+    ``{path: what is wrong}`` and the message is printed."""
     defs: dict[str, dict] = dict(known or {})
     paths: dict[str, Path] = {}
+
+    def fail(p: Path, exc: Exception) -> None:
+        msg = f"{type(exc).__name__}: {exc}"
+        print(f"iyiCAM: cannot read post {p}: {msg}", file=sys.stderr)
+        if errors is not None:
+            errors[str(p)] = msg
+
     for d in dirs:
         d = Path(d)
         if not d.is_dir():
@@ -61,13 +72,22 @@ def load_posts(dirs: Iterable[Path], known: dict[str, dict] | None = None) -> li
         for p in sorted(d.glob("*.toml")):
             try:
                 dd = read_definition(p)
-            except (OSError, tomllib.TOMLDecodeError) as exc:
-                print(f"iyiCAM: cannot read post {p}: {exc}", file=sys.stderr)
+                if not isinstance(dd.get("id"), str) or not dd["id"]:
+                    raise ValueError("the id must be a name")
+            except (OSError, ValueError, tomllib.TOMLDecodeError) as exc:
+                fail(p, exc)
                 continue
             defs[dd["id"]] = dd
             paths[dd["id"]] = p
     resolved = resolve(defs)
-    return [PostProcessor(resolved[i], paths.get(i)) for i in resolved if i in paths]
+    out = []
+    for i in resolved:
+        if i in paths:
+            try:
+                out.append(PostProcessor(resolved[i], paths[i]))
+            except Exception as exc:  # noqa: BLE001  (a post with options of the wrong kind, ...)
+                fail(paths[i], exc)
+    return out
 
 
 def load_post_file(path: Path, known: dict[str, dict] | None = None) -> PostProcessor:

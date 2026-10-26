@@ -8,7 +8,7 @@ import shutil
 import threading
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices, QFont, QFontDatabase
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog,
                                QDialogButtonBox, QDoubleSpinBox, QFontComboBox, QFormLayout,
@@ -432,8 +432,8 @@ class ToolDatabaseDialog(QDialog):
             from ..core.tooling import ToolLibrary
             try:
                 lib = ToolLibrary.load(Path(fn))
-            except (OSError, ValueError, TypeError) as exc:
-                QMessageBox.warning(self, "Import tools", str(exc))
+            except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
+                QMessageBox.warning(self, "Import tools", f"This is not a tool library: {exc}")
                 return
             self._commit_editor()
             self.lib_tools += [t.copy(new_id=True) for t in lib.tools]
@@ -896,7 +896,7 @@ class NestingDialog(QDialog):
         from ..nesting.parts import group_parts
         self.ctrl = ctrl
         self.setWindowTitle("Nesting")
-        objs = ctrl.selected_objects() or list(ctrl.sheet.vectors)
+        objs = [o for o in (ctrl.selected_objects() or list(ctrl.sheet.vectors)) if ctrl.editable(o)]
         self.objs = objs
         self.parts = group_parts(objs)
         s = ctrl.sheet
@@ -934,6 +934,8 @@ class NestingDialog(QDialog):
             Param("iterations", "Optimisation attempts", "int", 8, min=1, max=200, group="Strategy",
                   help="1: one quick pass. More: other orders of the parts and other directions are tried, "
                        "the best layout (fewest sheets, least area used on the last) is kept and polished"),
+            Param("time_limit", "Time limit of the search (seconds)", "int", 30, min=0, max=3600, group="Strategy",
+                  help="No further layout is tried after this; the best so far is kept. 0 = no limit"),
             Param("group_inner", "Inner pieces (göbek) stay with their part", "bool", False, group="Parts",
                   help="On: whatever lies inside a part (the pieces in its holes too) moves with it. "
                        "Off: pieces in holes are parts of their own and are nested separately"),
@@ -1162,7 +1164,8 @@ class NestingDialog(QDialog):
         v = self.form.values()
         squeezing = v["squeeze"] != "off"
         st = NestSettings(v["width"], v["height"], v["margin"], v["spacing"], self.rotations(v), v["gravity"],
-                          iterations=v["iterations"], tolerance=v["tolerance"], max_points=v["max_points"],
+                          iterations=v["iterations"], time_limit=float(v["time_limit"]), tolerance=v["tolerance"],
+                          max_points=v["max_points"],
                           squeeze_angle=v["squeeze_angle"] if squeezing else 0.0,
                           squeeze_margin=v["squeeze_margin"] if squeezing else 0.0,
                           squeeze_step=v["squeeze_step"])
@@ -1458,6 +1461,11 @@ class PluginsDialog(QDialog):
         info = self.infos[it.row()]
         self.pm.set_enabled(info.key, it.checkState() == Qt.Checked)
         self.ctrl.settings.disabled_plugins = sorted(self.pm.disabled)
+        self.ctrl.settings.save()
+        # the rows are rebuilt when this change is over: replacing the item that is being changed would delete it
+        QTimer.singleShot(0, self._rebuilt)
+
+    def _rebuilt(self) -> None:
         self.refresh()
         if hasattr(self.parent(), "rebuild_plugin_ui"):
             self.parent().rebuild_plugin_ui()
@@ -1466,7 +1474,12 @@ class PluginsDialog(QDialog):
         fn = open_file(self, self.ctrl.settings, "plugin", "Install plugin", "Python plugin (*.py)")
         if fn:
             dst = paths.ensure(paths.plugins_dir()) / Path(fn).name
-            shutil.copy(fn, dst)
+            try:
+                if not (dst.exists() and dst.samefile(fn)):   # a file picked in the plugins folder is there already
+                    shutil.copy(fn, dst)
+            except OSError as exc:
+                QMessageBox.warning(self, "Install plugin", f"The plugin could not be copied:\n{exc}")
+                return
             self.reload()
 
     def open_folder(self) -> None:
@@ -1544,9 +1557,11 @@ class PostEditorDialog(QDialog):
         self.resize(980, 680)
 
     def refresh(self, select: str | None = None) -> None:
+        from ..builtins import USER_POST_ERRORS
         self.list.blockSignals(True)
         self.list.clear()
         self.posts = sorted(self.ctrl.registry.posts.values(), key=lambda p: p.name.lower())
+        self.broken = sorted(USER_POST_ERRORS.items())   # files that could not be loaded, still to be mended here
         row = 0
         for i, p in enumerate(self.posts):
             user = p.path is not None and paths.posts_dir() in Path(p.path).parents
@@ -1554,12 +1569,33 @@ class PostEditorDialog(QDialog):
             self.list.addItem(it)
             if p.id == select:
                 row = i
+        for i, (path, _) in enumerate(self.broken):
+            self.list.addItem(QListWidgetItem(f"⚠ {Path(path).name} (cannot be loaded)"))
+            if select is not None and Path(path).stem == select:
+                row = len(self.posts) + i
         self.list.blockSignals(False)
         self.list.setCurrentRow(row)
 
+    def _load_broken(self, path: str, error: str) -> None:
+        """A post file that could not be loaded: its text can be edited, and the mistake is shown."""
+        self.current = None
+        self.broken_path = Path(path)
+        self.path_label.setText(f"{path}   [cannot be loaded]")
+        try:
+            self.edit.setPlainText(Path(path).read_text(encoding="utf-8"))
+        except OSError as exc:
+            self.edit.setPlainText(f"# {exc}")
+        self.edit.setReadOnly(False)
+        self.save_btn.setEnabled(True)
+        self.out.setPlainText(f"This post-processor cannot be loaded:\n{error}\n\nCorrect it and save.")
+
     def _load(self, row: int) -> None:
+        if len(self.posts) <= row < len(self.posts) + len(self.broken):
+            self._load_broken(*self.broken[row - len(self.posts)])
+            return
         if not 0 <= row < len(self.posts):
             return
+        self.broken_path = None
         p = self.posts[row]
         self.current = p
         user = p.path is not None and paths.posts_dir() in Path(p.path).parents
@@ -1597,7 +1633,14 @@ class PostEditorDialog(QDialog):
         self.reload(select=pid)
 
     def save(self) -> None:
+        broken = getattr(self, "broken_path", None)
+        if broken is not None:
+            broken.write_text(self.edit.toPlainText(), encoding="utf-8")
+            self.reload(select=broken.stem)
+            return
         p = self.current
+        if p is None:
+            return
         Path(p.path).write_text(self.edit.toPlainText(), encoding="utf-8")
         self.reload(select=p.id)
 
@@ -1607,9 +1650,9 @@ class PostEditorDialog(QDialog):
         reg.remove_source("user-posts")
         try:
             load_user_posts(reg)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             QMessageBox.warning(self, "Post-processors", f"{type(exc).__name__}: {exc}")
-        self.refresh(select)
+        self.refresh(select if isinstance(select, str) else None)
 
     def open_folder(self) -> None:
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(paths.ensure(paths.posts_dir()))))

@@ -24,6 +24,11 @@ class ComputeResult:
     start_updates: dict = field(default_factory=dict)       # key -> better start point of the vector
 
 
+class ComputeCancelled(BaseException):
+    """A calculation that was cancelled by the user. It is not an ``Exception``, so that the strategies'
+    own ``except Exception`` (a broken strategy must not crash the program) do not swallow it."""
+
+
 def sheets_for(project: Project, tdef: ToolpathDef) -> list[Sheet]:
     if tdef.sheet_ids is None:
         return list(project.sheets)
@@ -33,7 +38,10 @@ def sheets_for(project: Project, tdef: ToolpathDef) -> list[Sheet]:
 
 def compute_toolpath(project: Project, tdef: ToolpathDef, sheet: Sheet,
                      registry: Registry = REGISTRY, tolerance: float = 0.005,
-                     previous: list[Toolpath] | None = None, force_smart: bool = False) -> ComputeResult:
+                     previous: list[Toolpath] | None = None, force_smart: bool = False,
+                     events: list | None = None) -> ComputeResult:
+    """Calculate one toolpath on one sheet. ``events`` (a list): the ``toolpath_computed`` hooks are not run
+    but appended to it as ``(hook, args)``, for the caller to run where it is safe (a calculation in a thread)."""
     cls = registry.operations.get(tdef.op)
     res = ComputeResult()
     if cls is None:
@@ -56,7 +64,10 @@ def compute_toolpath(project: Project, tdef: ToolpathDef, sheet: Sheet,
                     + loose_cut_warnings(previous or [], res.toolpaths))
     for tp in res.toolpaths:
         tp.warnings = list(res.warnings)
-    registry.emit("toolpath_computed", project, tdef, sheet, res)
+    if events is None:
+        registry.emit("toolpath_computed", project, tdef, sheet, res)
+    else:
+        events.append(("toolpath_computed", (project, tdef, sheet, res)))
     return res
 
 
@@ -115,17 +126,29 @@ def loose_cut_warnings(previous: list[Toolpath], toolpaths: list[Toolpath]) -> l
 
 def compute_all(project: Project, registry: Registry = REGISTRY, only: set[str] | None = None,
                 existing: dict[tuple[str, str], ComputeResult] | None = None,
-                force_smart: set[str] | None = None) -> dict[tuple[str, str], ComputeResult]:
+                force_smart: set[str] | None = None, cancel=None, progress=None,
+                events: list | None = None) -> dict[tuple[str, str], ComputeResult]:
     """Calculate the toolpaths (``only`` some of them); every toolpath sees what the ones
-    before it on the sheet machine (from this run or ``existing`` results)."""
+    before it on the sheet machine (from this run or ``existing`` results).
+
+    ``cancel()`` is asked before every toolpath (``ComputeCancelled`` is raised when it says yes),
+    ``progress(done, total, name)`` is told which toolpath is being calculated, ``events``: see
+    :func:`compute_toolpath`."""
     out: dict[tuple[str, str], ComputeResult] = {}
     done: dict[str, list[Toolpath]] = {}
+    jobs = [(t, s) for t in project.toolpaths for s in sheets_for(project, t) if only is None or t.id in only]
+    n_done = 0
     for tdef in project.toolpaths:
         for sheet in sheets_for(project, tdef):
             k = (tdef.id, sheet.id)
             if only is None or tdef.id in only:
+                if cancel is not None and cancel():
+                    raise ComputeCancelled()
+                if progress is not None:
+                    progress(n_done, len(jobs), tdef.name)
+                n_done += 1
                 out[k] = compute_toolpath(project, tdef, sheet, registry, previous=done.get(sheet.id, []),
-                                          force_smart=bool(force_smart) and tdef.id in force_smart)
+                                          force_smart=bool(force_smart) and tdef.id in force_smart, events=events)
                 r = out[k]
             else:
                 r = (existing or {}).get(k)

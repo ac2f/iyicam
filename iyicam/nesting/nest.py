@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import math
 import random
+import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Sequence
 
@@ -71,7 +72,8 @@ class NestSettings:
     rotations: list[float] = field(default_factory=lambda: [0.0, 90.0, 180.0, 270.0])
     gravity: str = "left"          # left | bottom | compact
     max_sheets: int = 100
-    iterations: int = 1            # randomised attempts, best result is kept
+    iterations: int = 1            # layouts tried (see nest()), the best is kept
+    time_limit: float = 0.0        # seconds after which no further attempt is started (0 = no limit)
     seed: int = 1
     tolerance: float = 0.5         # outline simplification (parts get this much extra spacing at most)
     max_points: int = 40           # a part outlined with more points is simplified more: faster, a little looser
@@ -1003,7 +1005,7 @@ class Nester:
             bb = nb if bb is None else (min(bb[0], nb[0]), min(bb[1], nb[1]), max(bb[2], nb[2]), max(bb[3], nb[3]))
         return bb
 
-    def polish(self, res: NestResult, trials: int, rng: random.Random) -> int:
+    def polish(self, res: NestResult, trials: int, rng: random.Random, deadline: float | None = None) -> int:
         """Shrink the area used on the last plate: parts that set its extent (and some others) are taken out and
         put back where they fit best, the others staying where they are. A move is kept when the
         rectangle round all the parts gets smaller. Returns the number of moves that were kept."""
@@ -1023,6 +1025,8 @@ class Nester:
         try:
             for t in range(trials):
                 self._check()
+                if deadline is not None and time.perf_counter() > deadline:
+                    break
                 bb = self._bbox_of(items)
                 tol = 1e-6 * self.st.sheet_width * clip.SCALE
                 edge = [i for i, (_, _, c, ang, x, y) in enumerate(items)
@@ -1082,12 +1086,20 @@ def nest(shapes: Sequence[NestShape], settings: NestSettings, progress: Callable
 
     rng = random.Random(settings.seed)
     best = order = grav = None
+    t0 = time.perf_counter()
+
+    def out_of_time() -> bool:
+        return settings.time_limit > 0 and time.perf_counter() - t0 > settings.time_limit
     for i in range(tries):
         n._check()
+        if best is not None and out_of_time():
+            break   # the layouts so far are what the time allowed
         if i < len(plan):
             cand, g = plan[i]
         else:  # a few swaps in the best order so far
             cand, g = list(order), grav
+            if len(cand) < 2:
+                break   # one part (or none) cannot be ordered any other way
             for _ in range(max(1, len(cand) // 4)):
                 a = rng.randrange(len(cand))
                 j = min(len(cand) - 1, a + rng.randint(1, 3))
@@ -1095,8 +1107,8 @@ def nest(shapes: Sequence[NestShape], settings: NestSettings, progress: Callable
         r = n.run_order(cand, share(i), cancel, gravity=g)
         if best is None or n.quality(r) < n.quality(best):
             best, order, grav = r, cand, g
-    if tries > 1:
-        n.polish(best, 12 * tries, rng)
+    if tries > 1 and not out_of_time():
+        n.polish(best, 12 * tries, rng, None if settings.time_limit <= 0 else t0 + settings.time_limit)
     if squeezing and (best.unplaced or best.sheets > 1):
         # squeezing parts in may place what did not fit or save a plate: offered as a suggestion
         r = n.run_order(order, share(attempts - 1), cancel, squeeze=True, gravity=grav)

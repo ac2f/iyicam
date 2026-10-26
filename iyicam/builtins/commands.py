@@ -132,10 +132,19 @@ def _offset(ctx, v):
     ctx.select([o.id for o in new])
 
 
+MAX_PIXELS = 12_000_000   # the picture a centre line is found in: bigger takes minutes and gigabytes
+
+
 def _centerline(ctx, v):
     from ..core.trace import contour_centerlines
     new = []
     for o in ctx.selected:
+        bb = o.bbox()
+        px = max(v["pixel_size"], 1e-6)
+        if v["pixel_size"] > 0 and (bb.width / px + 4) * (bb.height / px + 4) > MAX_PIXELS:   # 0 = chosen by the program
+            raise CommandError(f"A pixel of {v['pixel_size']:g} is too small for a vector of "
+                               f"{bb.width:g} x {bb.height:g}: use at least "
+                               f"{math.sqrt(max(bb.width * bb.height, 1e-12) / MAX_PIXELS):.3g}")
         cs = contour_centerlines(o.contours, v["pixel_size"], v["smoothing"])
         if cs:
             new.append(ctx.add(cs, o.layer_id, (o.name or "Vector") + " centre line"))
@@ -188,10 +197,23 @@ def _join(ctx, v):
     ctx.message(f"{len(sel)} vectors joined into {len(ids)}")
 
 
+def _lost_size(old: Contour, new: Contour) -> bool:
+    """Whether ``new`` has lost a dimension that ``old`` had (a shape squeezed to a line or a point)."""
+    a, b = old.bbox(), new.bbox()
+    return (a.width > 1e-6 and b.width < 1e-9) or (a.height > 1e-6 and b.height < 1e-9)
+
+
 def _map_contours(fn):
+    """A command that replaces every contour by ``fn(contour, values)``; nothing is changed if a vector would be
+    destroyed by it (a tolerance bigger than the shape)."""
     def run(ctx, v):
-        for o in ctx.selected:
-            ctx.replace(o, [fn(c, v) for c in o.contours])
+        results = [(o, [fn(c, v) for c in o.contours]) for o in ctx.selected]
+        for o, new in results:
+            if any(_lost_size(c, n) for c, n in zip(o.contours, new)):
+                raise CommandError("That would destroy the vector (the tolerance is bigger than the shape): "
+                                   "use a smaller one")
+        for o, new in results:
+            ctx.replace(o, new)
     return run
 
 
@@ -369,7 +391,16 @@ def _distribute(ctx, v):
     ctx.changed = True
 
 
+MAX_COPIES = 20000   # vectors one command may make: more is a mistake that would only hang the program
+
+
+def _check_copies(n: int) -> None:
+    if n > MAX_COPIES:
+        raise CommandError(f"That would make {n} vectors; at most {MAX_COPIES} are made at once")
+
+
 def _array_rect(ctx, v):
+    _check_copies(v["rows"] * v["cols"] * len(ctx.selected))
     bb = _sel_bbox(ctx)
     px = v["dx"] + (bb.width if v["spacing"] == "gap" else 0.0)
     py = v["dy"] + (bb.height if v["spacing"] == "gap" else 0.0)
@@ -387,6 +418,7 @@ def _array_rect(ctx, v):
 
 
 def _array_circ(ctx, v):
+    _check_copies(v["count"] * len(ctx.selected))
     centre = (v["cx"], v["cy"]) if v["about"] == "point" else (0.0, 0.0)
     if v["about"] == "sheet":
         centre = (ctx.sheet.width / 2, ctx.sheet.height / 2)
@@ -415,6 +447,7 @@ def _along_path(ctx, v):
     items = [o for o in sel if o is not path_obj]
     if not items:
         raise CommandError("Select the vectors to copy and the path vector")
+    _check_copies(v["count"] * len(items))
     path = path_obj.contours[0]
     L = path.length()
     n = v["count"]
@@ -608,7 +641,7 @@ def commands() -> list[Command]:
             Param("sx", "Scale X %", "percent", 100.0, min=0.001), Param("sy", "Scale Y %", "percent", 100.0, min=0.001),
             Param("uniform", "Keep proportions", "bool", True)] + about + copy, min_selection=1),
         Command("xform.size", "Set Size...", _size, XFORM, [
-            Param("width", "Width", "length", 100.0, min=0.0), Param("height", "Height", "length", 100.0, min=0.0),
+            Param("width", "Width", "length", 100.0, min=0.001), Param("height", "Height", "length", 100.0, min=0.001),
             Param("uniform", "Keep proportions (use width)", "bool", True)], min_selection=1),
         Command("xform.mirror", "Mirror...", _mirror, XFORM, [
             Param("axis", "Mirror", "choice", "horizontal",

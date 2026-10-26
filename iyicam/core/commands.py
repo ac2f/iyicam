@@ -35,7 +35,7 @@ class CommandContext:
                  active_layer_id: str | None = None):
         self.project = project
         self.sheet = sheet
-        self.selection_ids = [i for i in selection if sheet.vector(i) is not None]
+        self.selection_ids = [v.id for v in sheet.pick(selection)]
         self.active_layer_id = active_layer_id or project.layers[0].id
         self.new_selection: list[str] | None = None
         self.messages: list[str] = []
@@ -43,7 +43,7 @@ class CommandContext:
 
     @property
     def selected(self) -> list[VectorObject]:
-        return [v for v in (self.sheet.vector(i) for i in self.selection_ids) if v is not None]
+        return self.sheet.pick(self.selection_ids)
 
     def add(self, contours: Contour | list[Contour], layer_id: str | None = None, name: str = "",
             select: bool = True) -> VectorObject:
@@ -57,6 +57,8 @@ class CommandContext:
         return obj
 
     def add_object(self, obj: VectorObject, select: bool = True) -> VectorObject:
+        if not obj.prune():   # a vector of nothing is not added
+            return obj
         self.sheet.vectors.append(obj)
         if select:
             self.new_selection = (self.new_selection or []) + [obj.id]
@@ -70,6 +72,8 @@ class CommandContext:
 
     def replace(self, obj: VectorObject, contours: list[Contour]) -> None:
         obj.contours = list(contours)
+        if not obj.prune():   # nothing is left of it
+            self.remove([obj.id])
         self.changed = True
 
     def select(self, ids: Iterable[str]) -> None:

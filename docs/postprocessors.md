@@ -28,6 +28,10 @@ G4 P5
 
 ## Options
 
+An option of the wrong kind (`decimals = "many"`, `units = "furlong"`, a number where a switch is
+expected) makes the post unusable: it is left out of the list, the other posts load as usual, and
+**Toolpaths ▸ Post-processors...** shows the file with the name of the option so it can be mended there.
+
 | Option | Default | Meaning |
 |--------|---------|---------|
 | `units` | `"mm"` | `mm` or `inch` (coordinates and feeds are converted) |

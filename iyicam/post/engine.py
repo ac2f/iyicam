@@ -87,6 +87,46 @@ DEFAULT_BLOCKS: dict[str, str] = {
     "inverse_time_off": "G94",
 }
 
+OPTION_CHOICES: dict[str, tuple[str, ...]] = {
+    "units": ("mm", "inch"), "line_ending": ("lf", "crlf"), "arcs": ("ijk", "r", "none"),
+    "ijk": ("incremental", "absolute"), "dwell_units": ("s", "ms"),
+    "rotary_feed": ("inverse_time", "degrees", "plain"),
+}
+
+
+def checked_options(given: dict) -> dict:
+    """The options of a post definition, each of the kind the engine expects (numbers as numbers, ...).
+
+    A post that says ``decimals = "many"`` is refused here, with a message naming the option, instead of
+    failing with a TypeError in the middle of writing the G-code."""
+    if not isinstance(given, dict):
+        raise ValueError("[options] must be a table")
+    out = dict(given)
+    for key, value in given.items():
+        default = DEFAULT_OPTIONS.get(key)
+        if default is None:
+            continue                                  # an option of a plugin or a later version
+        if isinstance(default, bool):
+            ok = isinstance(value, bool)
+        elif isinstance(default, int):
+            ok = isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) \
+                and float(value).is_integer()
+            if ok:
+                out[key] = int(value)
+        elif isinstance(default, float):
+            ok = isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+        else:
+            ok = isinstance(value, str) and (key not in OPTION_CHOICES or value in OPTION_CHOICES[key])
+        if not ok:
+            if isinstance(default, str) and key in OPTION_CHOICES:
+                want = "one of " + ", ".join(OPTION_CHOICES[key])
+            else:
+                want = ("true or false" if isinstance(default, bool) else "a whole number" if isinstance(default, int)
+                        else "a number" if isinstance(default, float) else "text")
+            raise ValueError(f"option {key} must be {want}, not {value!r}")
+    return out
+
+
 ORIGINS = {
     "bottom_left": (0.0, 0.0), "bottom_center": (0.5, 0.0), "bottom_right": (1.0, 0.0),
     "center_left": (0.0, 0.5), "center": (0.5, 0.5), "center_right": (1.0, 0.5),
@@ -121,8 +161,11 @@ class PostProcessor:
         self.name = d.get("name", self.id)
         self.description = d.get("description", "")
         self.extension = d.get("extension", "nc").lstrip(".")
-        self.options = {**DEFAULT_OPTIONS, **d.get("options", {})}
-        self.blocks = {**DEFAULT_BLOCKS, **d.get("blocks", {})}
+        self.options = {**DEFAULT_OPTIONS, **checked_options(d.get("options", {}))}
+        blocks = d.get("blocks", {})
+        if not isinstance(blocks, dict) or not all(isinstance(t, str) for t in blocks.values()):
+            raise ValueError("every entry of [blocks] must be text")
+        self.blocks = {**DEFAULT_BLOCKS, **blocks}
         self.definition = d
 
     # -- public API -----------------------------------------------------------------

@@ -46,9 +46,11 @@ with Python plugins.
   or into **centre lines**
 - **Centre line (single line)**: single strokes along the middle of closed shapes, e.g. any
   installed font turned into single line text for fast engraving
-- DXF import (lines, arcs, circles, polylines with bulges, splines, ellipses, blocks, OCS,
-  units, gap joining) and export; SVG import (transforms, units, Inkscape layers) and export;
-  HPGL (`.plt`) import from cutting plotters
+- DXF import (lines, arcs, circles, polylines with bulges, exact cubic and periodic splines,
+  ellipses, solids, blocks, planes tilted in space, units, gap joining) and export; SVG import
+  (transforms, units exact to the micron, Inkscape layers) and export; HPGL (`.plt`) import from
+  cutting plotters. **An import says what it could not bring in** (hatches, text, ...) instead of
+  dropping it silently; the shapes are checked against an independent reading of the files
 
 **Machining**
 - Material setup: thickness, Z zero top / bottom, XY origin (9 positions), safe Z,
@@ -86,13 +88,17 @@ with Python plugins.
   cut; a new node on the vector; hand-set starts are kept; moving one recalculates only that cut and
   the ones after it
 - **Tiling**: machine sheets longer than the machine in bands, one G-code file per tile
-- Time estimates, warnings, height-map **material removal simulation**, HTML job report
+- Time estimates, warnings, height-map **material removal simulation**, HTML job report;
+  long calculations run in the background with a Cancel button, the program stays alive
 - **G-code backplot**: open any G-code file, see it over the sheet and simulate it
 
 **Nesting** – true shape nesting with no-fit polygons: rotations (none / 180 / 90 / 45 /
 15 degree steps), part spacing, border gap, quantities, several sheets, holes and
 engravings travel with their part (a part drawn inside another part's hole is recognised as
-a separate part), randomised optimisation. **Leftovers and plates of any shape**: a stock of
+a separate part), **a search for the layout that uses the least material** (other directions
+and orders of the parts, then a polish of the best layout; one attempt stays a quick pass),
+**inner pieces (göbek) kept with their part or nested on their own, and other parts placed in the
+holes of parts**. **Leftovers and plates of any shape**: a stock of
 plates (L shapes, plates with holes and bites, offcuts, sheet sizes, with quantities and own
 thickness) is nested onto leftovers first, around what is already on a sheet, and the plates
 used are counted down; the material left on a cut sheet becomes the next job's plates; sheets
@@ -101,7 +107,9 @@ with an outline are understood by cut order, start points, warnings and simulati
 can be limited per part or layer (never rotate, 0 / 180°, tilt up to ±X°, ...); an optional
 **squeeze** suggestion finds parts that fit when tilted a few degrees or taken a few mm closer
 to the edge, and lets you decide. Nesting runs in the background (the program stays alive, Cancel works at once);
-complex outlines are simplified to a point budget, so 25 organic parts take seconds, not minutes
+complex outlines are simplified to a point budget, so 25 organic parts take seconds, not minutes.
+Re-nesting what is already nested never adds or loses a vector (checked by fuzzing), and vectors
+drawn twice on top of each other are reported first
 
 **Post-processors** – template based, defined in TOML, with inheritance (`extends`).
 Included: NcStudio (Weihong, single spindle — one file per tool), NcStudio ATC, Mach3,
@@ -238,3 +246,18 @@ the real post-processors and checks the G-code text itself against the drawing:
 pass depths and step (against a model of the material left), final depth, rapids,
 feed rates, tool clearance, cutting direction, cut-out, tool changes and the
 program frame. It also damages good G-code to prove each check notices.
+
+How the program is tested besides the usual unit tests (all in `tests/`):
+
+| File | What it does |
+|---|---|
+| `test_gui_sweep.py` | A robot answers every dialog and clicks every menu action (with everything selected, nothing selected, an empty project), every drawing tool with mouse and keys, and creates every toolpath type in six situations; an exception, a "critical" box or a warning that looks like a fault fails the test |
+| `test_panels.py`, `test_render.py`, `test_memory.py`, `test_busy.py`, `test_cli.py` | the layer / sheet / toolpath / properties panels with extreme numbers, painting with every display option, zoom and size, what is remembered between sessions (a window is closed and a new one opened), long calculations and Cancel, every command line command and mistake |
+| `test_cam_fuzz.py` | random drawings (open, tiny, self-crossing, huge, doubled) and random settings through every toolpath type and post: no toolpath may fail, no G-code may hold `nan` or absurd coordinates |
+| `test_command_fuzz.py` | every vector command with random settings and selections: no exception, no broken or destroyed vector, undo and redo restore exactly, a refused command changes nothing |
+| `test_chaos.py` | a long random session (vectors, commands, layers, sheets, toolpaths, nesting, saving) after which undoing everything gives the first project and redoing it the last |
+| `test_import_fidelity.py` | DXF compared with an independent reading, SVG and HPGL with exactly known shapes |
+| `test_nesting_*.py` | an independent check of every layout (overlap, spacing, border, counts) and fuzzing that nesting and re-nesting never adds or loses a vector |
+
+The fuzz tests run a small, reproducible set of cases. For a long run set
+`IYICAM_FUZZ_CASES=300 IYICAM_FUZZ_SEED=7` (commands) or `IYICAM_CHAOS_SEEDS=40 IYICAM_CHAOS_STEPS=60` (sessions).

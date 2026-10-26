@@ -53,6 +53,15 @@ class VectorObject:
     def transform(self, T: Transform) -> None:
         self.contours = [c.transformed(T) for c in self.contours]
 
+    def prune(self) -> bool:
+        """Drop the contours that have no segments (a line of no length, ...); whether anything is left. Such a
+        contour has no start, so nothing can be done with it."""
+        if any(not c.segs for c in self.contours):
+            keep = [i for i, c in enumerate(self.contours) if c.segs]
+            self.contours = [self.contours[i] for i in keep]
+            self.locked_starts = [keep.index(i) for i in self.locked_starts if i in keep]
+        return bool(self.contours)
+
     def copy(self, keep_id: bool = False) -> "VectorObject":
         return VectorObject([c.copy() for c in self.contours], self.layer_id, self.name,
                             self.id if keep_id else new_id(), list(self.locked_starts))
@@ -96,6 +105,15 @@ class Sheet:
             if v.id == vid:
                 return v
         return None
+
+    def pick(self, ids) -> list[VectorObject]:
+        """The vectors with these ids that are on the sheet, in the order of ``ids`` (one pass over the sheet:
+        asking for many one by one is quadratic)."""
+        ids = list(ids)
+        if len(ids) < 8:
+            return [v for v in (self.vector(i) for i in ids) if v is not None]
+        by_id = {v.id: v for v in self.vectors}
+        return [by_id[i] for i in ids if i in by_id]
 
     def bbox(self) -> BBox:
         bb = BBox()
@@ -196,6 +214,9 @@ class Project:
         self.sheets = [s for s in self.sheets if s.id != sid]
         if not self.sheets:
             self.sheets.append(Sheet("Sheet 1"))
+        for t in self.toolpaths:   # a toolpath of that sheet only is left with no sheet
+            if t.sheet_ids is not None:
+                t.sheet_ids = [x for x in t.sheet_ids if x != sid]
 
     def sheet_thickness(self, sheet: Sheet) -> float:
         return sheet.thickness if sheet.thickness is not None else self.material.thickness

@@ -17,6 +17,7 @@ from ..core.document import VectorObject, new_id, toolpath_from_dict, toolpath_t
 from ..core.geom import BBox, Transform
 from ..core.params import Param
 from ..formats.report import ImportReport, run_importer
+from . import menus
 from .canvas import Canvas
 from .console import Console
 from .controller import Controller
@@ -55,6 +56,7 @@ class MainWindow(QMainWindow):
         self._build_toolbar()
         self._build_status()
         self.build_menus()
+        ctrl.busy_parent = self
         ctrl.message.connect(lambda m: self.statusBar().showMessage(m, 6000))
         ctrl.changed.connect(self._update_title)
         ctrl.project_replaced.connect(self._update_title)
@@ -333,7 +335,7 @@ class MainWindow(QMainWindow):
         else:
             self._act(m, "Paste", self.paste)
             self._act(m, "Zoom Extents", self.canvas.zoom_extents)
-        m.exec(gpos)
+        menus.show_menu(m, gpos)
 
     # -- helpers ------------------------------------------------------------------------------------
     def _safe(self, fn, *args):
@@ -802,10 +804,11 @@ class MainWindow(QMainWindow):
 
     def nest(self) -> None:
         c = self.ctrl
-        if not (c.selected_objects() or c.sheet.vectors):
-            QMessageBox.information(self, "Nesting", "There are no vectors to nest.")
+        pool = [o for o in (c.selected_objects() or list(c.sheet.vectors)) if c.editable(o)]  # locked layers stay put
+        if not pool:
+            QMessageBox.information(self, "Nesting", "There are no vectors to nest (vectors on locked layers "
+                                                     "are not moved).")
             return
-        pool = c.selected_objects() or list(c.sheet.vectors)
         extra = [o.id for g in find_duplicates(pool) for o in g[1:]]
         if extra:  # the same shape twice in the same place would be nested as two parts: it looks like a copy
             r = QMessageBox.question(
