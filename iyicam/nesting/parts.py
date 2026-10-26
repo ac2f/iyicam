@@ -81,6 +81,9 @@ def squeeze_lines(parts, squeezed) -> list[str]:
     return lines
 
 
+find_duplicates = vectorops.find_duplicates  # vectors drawn twice in the same place (see nesting in the GUI)
+
+
 @dataclass
 class Part:
     root: VectorObject

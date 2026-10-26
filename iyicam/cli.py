@@ -21,6 +21,7 @@ from .cam.moves import PathStats, format_time
 from .core import paths
 from .core.document import Project
 from .core.registry import REGISTRY
+from .formats.report import ImportReport, run_importer
 from .plugins.manager import PluginManager
 
 COMMANDS = ("posts", "info", "gcode", "import", "nest", "plugins")
@@ -100,7 +101,10 @@ def cmd_import(a) -> int:
     if imp is None:
         print(f"no importer for {a.file}", file=sys.stderr)
         return 2
-    objs = imp.func(a.file, p, p.sheets[0])
+    report = ImportReport()
+    objs = run_importer(imp.func, a.file, p, p.sheets[0], report)
+    if report.summary():
+        print(report.summary(), file=sys.stderr)
     bb = p.sheets[0].bbox()
     if not bb.empty:
         p.sheets[0].width = max(p.sheets[0].width, bb.xmax + 10)

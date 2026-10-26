@@ -295,13 +295,13 @@ class FeedsDialog(QDialog):
         self.form.changed.connect(self.update_result)
         self.update_result()
 
-    def result(self):
+    def suggestion(self):
         from ..core.feeds import suggest
         v = self.form.values()
         return suggest(v["material"], v["diameter"], v["flutes"], v["rpm"]), v
 
     def update_result(self) -> None:
-        c, v = self.result()
+        c, v = self.suggestion()
         u = self.ctrl.units
         self.result_label.setText(
             f"Chip load <b>{c.chip_load:.3f} mm</b><br>Feed rate <b>{c.feed_rate:.0f} mm/min</b>, "
@@ -309,7 +309,7 @@ class FeedsDialog(QDialog):
             f"<br>Surface speed {c.surface_speed:.0f} m/min")
 
     def apply_to(self, t: Tool) -> Tool:
-        c, v = self.result()
+        c, v = self.suggestion()
         t = t.copy()
         t.feed_rate, t.plunge_rate = round(c.feed_rate), round(c.plunge_rate)
         t.stepdown, t.stepover = round(c.stepdown, 2), round(c.stepover, 2)
@@ -566,7 +566,8 @@ class ToolpathDialog(QDialog):
                 self.tool_editor.form.changed.connect(self._update_tool_label)
                 self._update_tool_label()
 
-    def result(self) -> ToolpathDef:
+    def toolpath(self) -> ToolpathDef:
+        """The toolpath as set in the dialog (a new definition each time it is called for a new toolpath)."""
         layers = [self.layer_list.item(i).data(Qt.UserRole) for i in range(self.layer_list.count())
                   if self.layer_list.item(i).checkState() == Qt.Checked]
         if self.rb_layers.isChecked():

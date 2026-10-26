@@ -457,3 +457,90 @@ def break_at(c: Contour, seg: int, t: float) -> list[Contour]:
 
 def reverse(c: Contour) -> Contour:
     return c.reversed()
+
+
+# ---------------------------------------------------------------------------------------------------------
+# the same vector twice
+# ---------------------------------------------------------------------------------------------------------
+
+def _near_polyline(points, poly, closed: bool, tol: float) -> bool:
+    """Whether every point lies within ``tol`` of the polyline."""
+    import numpy as np
+    A = np.asarray(poly[:-1] if closed and len(poly) > 1 and poly[0] == poly[-1] else poly, float)
+    B = np.roll(A, -1, axis=0) if closed else A[1:]
+    A = A if closed else A[:-1]
+    if len(A) == 0:
+        return True
+    AB = B - A
+    L2 = np.maximum((AB * AB).sum(axis=1), 1e-18)
+    P = np.asarray(points, float)
+    t = np.clip(((P[:, None, :] - A) * AB).sum(axis=2) / L2, 0.0, 1.0)
+    d = np.sqrt(((P[:, None, :] - (A + t[..., None] * AB)) ** 2).sum(axis=2)).min(axis=1)
+    return bool((d <= tol).all())
+
+
+def _sample(contour: Contour, n: int = 32) -> list[Pt]:
+    """Points spread over the contour (its nodes and ``n`` points along it)."""
+    pts = list(contour.nodes())
+    L = contour.length()
+    if L > 0:
+        pts += [contour.point_at_length(L * k / n) for k in range(n)]
+    return pts
+
+
+def same_contour(a: Contour, b: Contour, tol: float = 0.05) -> bool:
+    """Whether two contours are the same line in the same place (whatever their start and direction)."""
+    if a.closed != b.closed or abs(a.length() - b.length()) > tol * 4 + 1e-4 * a.length():
+        return False
+    ba, bb = a.bbox(), b.bbox()
+    if max(abs(ba.xmin - bb.xmin), abs(ba.ymin - bb.ymin), abs(ba.xmax - bb.xmax), abs(ba.ymax - bb.ymax)) > tol * 2:
+        return False
+    pa, pb = a.flatten(tol / 4), b.flatten(tol / 4)
+    return (_near_polyline(_sample(a), pb, b.closed, tol) and _near_polyline(_sample(b), pa, a.closed, tol))
+
+
+def same_vector(a, b, tol: float = 0.05) -> bool:
+    """Whether two vectors are made of the same contours in the same place."""
+    if len(a.contours) != len(b.contours):
+        return False
+    left = list(b.contours)
+    for c in a.contours:
+        k = next((i for i, d in enumerate(left) if same_contour(c, d, tol)), None)
+        if k is None:
+            return False
+        del left[k]
+    return True
+
+
+def find_duplicates(objects: Sequence, tol: float = 0.05) -> list[list]:
+    """Groups of vectors that are the same shape in the same place (a common fault of drawings): each group
+    has the first of them and the others."""
+    from collections import defaultdict
+    cell = 20.0
+    grid: dict[tuple[int, int], list[int]] = defaultdict(list)
+    boxes = []
+    for i, o in enumerate(objects):
+        bb = o.bbox()
+        boxes.append(bb)
+        grid[(int((bb.xmin + bb.xmax) / 2 // cell), int((bb.ymin + bb.ymax) / 2 // cell))].append(i)
+    parent = list(range(len(objects)))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    for i, o in enumerate(objects):
+        if not o.contours:
+            continue
+        cx, cy = int((boxes[i].xmin + boxes[i].xmax) / 2 // cell), int((boxes[i].ymin + boxes[i].ymax) / 2 // cell)
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for j in grid.get((cx + dx, cy + dy), ()):
+                    if j > i and find(i) != find(j) and same_vector(o, objects[j], tol):
+                        parent[find(j)] = find(i)
+    groups: dict[int, list] = defaultdict(list)
+    for i, o in enumerate(objects):
+        groups[find(i)].append(o)
+    return [g for g in groups.values() if len(g) > 1]

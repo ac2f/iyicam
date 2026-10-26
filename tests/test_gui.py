@@ -137,13 +137,13 @@ def test_commands_toolpaths_export_and_simulation(win, tmp_path):
     ctrl.select([v.id for v in ctrl.sheet.vectors])
     dlg = ToolpathDialog(ctrl, "profile", None, win)
     dlg.form.widgets["tabs"].setChecked(True)
-    t = dlg.result()
+    t = dlg.toolpath()
     assert t.params["tabs"] and t.selection.vector_ids
     ctrl.add_toolpath(t)
     assert ctrl.sheet_toolpaths()
     ctrl.select([ctrl.sheet.vectors[1].id])
     dlg = ToolpathDialog(ctrl, "pocket", None, win)
-    ctrl.add_toolpath(dlg.result())
+    ctrl.add_toolpath(dlg.toolpath())
     assert len(ctrl.sheet_toolpaths()) == 2
     win.toolpaths_panel.refresh()
     assert win.toolpaths_panel.tree.topLevelItemCount() == 2

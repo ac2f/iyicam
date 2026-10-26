@@ -5,7 +5,6 @@ import math
 
 from ..core import doors, shapes, vectorops
 from ..core.commands import Command, CommandContext, CommandError
-from ..core.document import VectorObject
 from ..core.geom import BBox, Contour, Transform
 from ..core.params import Param
 
@@ -230,16 +229,8 @@ def _group(ctx, v):
 
 
 def _dedupe(ctx, v):
-    tol = v["tolerance"]
-    seen: list[tuple[VectorObject, list]] = []
-    dupes = []
-    for o in ctx.sheet.vectors if v["scope"] == "sheet" else ctx.selected:
-        sig = sorted((round(c.length() / tol), round(c.bbox().xmin / tol), round(c.bbox().ymin / tol),
-                      round(c.bbox().xmax / tol), round(c.bbox().ymax / tol)) for c in o.contours)
-        if any(sig == s for _, s in seen):
-            dupes.append(o.id)
-        else:
-            seen.append((o, sig))
+    objs = list(ctx.sheet.vectors) if v["scope"] == "sheet" else list(ctx.selected)
+    dupes = [o.id for group in vectorops.find_duplicates(objs, max(0.001, v["tolerance"])) for o in group[1:]]
     ctx.remove(dupes)
     ctx.message(f"{len(dupes)} duplicate vector(s) deleted")
 
@@ -250,14 +241,11 @@ def _doctor(ctx, v):
     gap, small = v["gap"], v["min_size"]
     objs = ctx.selected or list(ctx.sheet.vectors)
     found = {"open": [], "gaps": [], "tiny": [], "crossing": [], "duplicate": []}
-    seen = set()
+    dupes = {o.id for group in vectorops.find_duplicates(objs) for o in group[1:]}
     for o in objs:
-        sig = tuple(sorted((round(c.length(), 3), round(c.bbox().xmin, 3), round(c.bbox().ymin, 3))
-                           for c in o.contours))
-        if sig in seen:
+        if o.id in dupes:
             found["duplicate"].append(o)
             continue
-        seen.add(sig)
         bb = o.bbox()
         if max(bb.width, bb.height) < small:
             found["tiny"].append(o)

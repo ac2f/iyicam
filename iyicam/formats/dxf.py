@@ -6,11 +6,13 @@ from pathlib import Path
 
 import ezdxf
 from ezdxf import colors as dxf_colors
+from ezdxf import path as ezpath
 from ezdxf.math import cubic_bezier_from_ellipse
 
 from ..core import vectorops
 from ..core.document import Project, Sheet, VectorObject
 from ..core.geom import Arc, Bezier, Contour, Line, Segment, make_arc, polar
+from .report import ImportReport
 
 # $INSUNITS -> millimetres
 UNIT_SCALE = {0: 1.0, 1: 25.4, 2: 304.8, 4: 1.0, 5: 10.0, 6: 1000.0, 8: 25.4e-6, 9: 0.0254,
@@ -56,28 +58,132 @@ def _poly_segments(pts: list[tuple[float, float, float]], closed: bool, k: float
     return segs
 
 
+def _flat_ocs(e) -> bool:
+    """The entity lies in a plane parallel to the drawing (extrusion along +Z or -Z)."""
+    try:
+        ext = e.dxf.extrusion
+    except Exception:
+        return True
+    return abs(ext.x) < 1e-9 and abs(ext.y) < 1e-9
+
+
 def _ocs_mapper(e, k: float):
-    """Map OCS (x, y) to WCS (x, y); arcs drawn in a mirrored OCS reverse direction."""
+    """Map OCS (x, y) to WCS (x, y) for an extrusion along Z; a mirrored OCS (-Z) reverses arcs."""
     try:
         ext = e.dxf.extrusion
     except Exception:
         ext = None
-    if ext is None or (abs(ext.x) < 1e-12 and abs(ext.y) < 1e-12 and ext.z > 0):
+    if ext is None or ext.z > 0:
         def w(x, y):
             return (x, y)
         w.flip = False
         return w
+
     ocs = e.ocs()
 
     def w(x, y):
         p = ocs.to_wcs((x, y, 0.0))  # OCS -> WCS is a rotation, so scaling commutes
         return (p.x, p.y)
-    w.flip = ext.z < 0
+    w.flip = True
     return w
+
+
+def _quad_to_cubic(a, q, b) -> Bezier:
+    return Bezier(a, (a[0] + 2 / 3 * (q[0] - a[0]), a[1] + 2 / 3 * (q[1] - a[1])),
+                  (b[0] + 2 / 3 * (q[0] - b[0]), b[1] + 2 / 3 * (q[1] - b[1])), b)
+
+
+def _via_path(e, k: float) -> list[Contour]:
+    """Any entity ezdxf can turn into a path, seen from above (also planes tilted in space)."""
+    contours: list[Contour] = []
+    for sub in ezpath.make_path(e).sub_paths():
+        segs: list[Segment] = []
+        cur = (sub.start.x * k, sub.start.y * k)
+        for cmd in sub.commands():
+            end = (cmd.end.x * k, cmd.end.y * k)
+            if cmd.type == ezpath.Command.LINE_TO:
+                if math.dist(cur, end) > 1e-9:
+                    segs.append(Line(cur, end))
+            elif cmd.type == ezpath.Command.CURVE3_TO:
+                segs.append(_quad_to_cubic(cur, (cmd.ctrl.x * k, cmd.ctrl.y * k), end))
+            elif cmd.type == ezpath.Command.CURVE4_TO:
+                segs.append(Bezier(cur, (cmd.ctrl1.x * k, cmd.ctrl1.y * k), (cmd.ctrl2.x * k, cmd.ctrl2.y * k), end))
+            cur = end
+        if not segs:
+            continue
+        closed = bool(sub.is_closed) or math.dist(segs[0].a, segs[-1].b) < 1e-6
+        if closed and math.dist(segs[0].a, segs[-1].b) > 1e-9:
+            segs.append(Line(segs[-1].b, segs[0].a))
+        contours.append(Contour(segs, closed))
+    return contours
+
+
+def _spline_segments(e, k: float) -> list[Segment]:
+    """A spline as curves: exact for cubic (and lower) splines, finely approximated otherwise.
+
+    A spline whose knots are not clamped (the usual closed "periodic" splines) is defined only between
+    the knots ``t[degree]`` and ``t[count]``; the rest of the parameter range is not part of the curve."""
+    bs = e.construction_tool()
+    segs: list[Segment] = []
+
+    def pt(v):
+        return (v.x * k, v.y * k)
+    exact = not bs.is_rational and bs.degree <= 3
+    if bs.is_clamped:
+        if exact:
+            for cp in bs.bezier_decomposition():
+                p = [pt(v) for v in cp]
+                if len(p) == 4:
+                    segs.append(Bezier(*p))
+                elif len(p) == 3:
+                    segs.append(_quad_to_cubic(*p))
+                elif len(p) == 2 and math.dist(p[0], p[1]) > 1e-9:
+                    segs.append(Line(*p))
+            return segs
+        for bz in bs.cubic_bezier_approximation(level=6):
+            segs.append(Bezier(*[pt(v) for v in bz.control_points]))
+        return segs
+    knots = list(bs.knots())
+    lo, hi = knots[bs.degree], knots[bs.count]
+    spans = sorted({t for t in knots if lo - 1e-12 <= t <= hi + 1e-12})
+    for u0, u1 in zip(spans, spans[1:]):
+        if u1 - u0 < 1e-12:
+            continue
+        if exact:  # one polynomial of degree <= 3 per span: a cubic Bezier through four samples is exact
+            c = [pt(bs.point(u0 + (u1 - u0) * i / 3)) for i in range(4)]
+            if u1 >= hi - 1e-12:
+                c[3] = pt(bs.point(hi - (hi - u0) * 1e-9))  # the end of the domain, from the inside
+            p1 = tuple((-5 * c[0][j] + 18 * c[1][j] - 9 * c[2][j] + 2 * c[3][j]) / 6 for j in (0, 1))
+            p2 = tuple((2 * c[0][j] - 9 * c[1][j] + 18 * c[2][j] - 5 * c[3][j]) / 6 for j in (0, 1))
+            segs.append(Bezier(c[0], p1, p2, c[3]))
+        else:
+            pts = [pt(bs.point(u0 + (u1 - u0) * i / 64)) for i in range(65)]
+            segs.extend(Line(a, b) for a, b in zip(pts, pts[1:]) if math.dist(a, b) > 1e-9)
+    for i in range(1, len(segs)):  # the pieces meet exactly
+        if segs[i - 1].b != segs[i].a:
+            segs[i] = segs[i].with_ends(segs[i - 1].b, segs[i].b)
+    return segs
+
+
+# kinds that are read, and kinds known to be left out (reported, never silently lost)
+READ_KINDS = ("LINE", "ARC", "CIRCLE", "LWPOLYLINE", "POLYLINE", "SPLINE", "ELLIPSE", "SOLID", "TRACE")
+CONTAINER_KINDS = ("INSERT", "VIEWPORT", "ATTDEF", "ATTRIB", "POINT")  # nothing to cut in these themselves
 
 
 def entity_contours(e, k: float, tol: float = 0.01) -> list[Contour]:
     t = e.dxftype()
+    if t in ("ARC", "CIRCLE", "LWPOLYLINE") or (t == "POLYLINE" and not (
+            e.is_3d_polyline or e.is_poly_face_mesh or e.is_polygon_mesh)):
+        if not _flat_ocs(e):
+            return _via_path(e, k)
+    if t in ("SOLID", "TRACE"):
+        pts = [(v.x * k, v.y * k) for v in e.wcs_vertices()]
+        dedup = [p for i, p in enumerate(pts) if i == 0 or math.dist(p, pts[i - 1]) > 1e-9]
+        if len(dedup) > 1 and math.dist(dedup[0], dedup[-1]) < 1e-9:
+            dedup.pop()
+        if len(dedup) < 3:
+            return [Contour.polyline(dedup, False)] if len(dedup) == 2 else []
+        return [Contour.polyline(dedup, True)]
     if t == "LINE":
         a, b = e.dxf.start, e.dxf.end
         return [Contour([Line((a.x * k, a.y * k), (b.x * k, b.y * k))], False)]
@@ -122,18 +228,16 @@ def entity_contours(e, k: float, tol: float = 0.01) -> list[Contour]:
         return [Contour(segs, bool(e.is_closed))] if segs else []
     if t == "SPLINE":
         try:
-            bs = e.construction_tool()
-            beziers = bs.cubic_bezier_approximation(level=4)
-            segs = []
-            for bz in beziers:
-                p = bz.control_points
-                segs.append(Bezier((p[0].x * k, p[0].y * k), (p[1].x * k, p[1].y * k),
-                                   (p[2].x * k, p[2].y * k), (p[3].x * k, p[3].y * k)))
+            segs = _spline_segments(e, k)
         except Exception:
             pts = [(v.x * k, v.y * k) for v in e.flattening(tol)]
             return [Contour.polyline(pts, bool(e.closed))] if len(pts) > 1 else []
-        closed = bool(e.closed) or (segs and math.dist(segs[0].a, segs[-1].b) < 1e-6)
-        return [Contour(segs, closed)] if segs else []
+        if not segs:
+            return []
+        closed = bool(e.closed) or math.dist(segs[0].a, segs[-1].b) < 1e-6
+        if closed and math.dist(segs[0].a, segs[-1].b) > 1e-9:
+            segs.append(Line(segs[-1].b, segs[0].a))
+        return [Contour(segs, closed)]
     if t == "ELLIPSE":
         segs = []
         for bz in cubic_bezier_from_ellipse(e.construction_tool()):
@@ -147,35 +251,62 @@ def entity_contours(e, k: float, tol: float = 0.01) -> list[Contour]:
     return []
 
 
-def _iter_entities(layout, depth: int = 0):
+def _iter_entities(layout, report: ImportReport | None = None, depth: int = 0, inherit: str | None = None):
+    """``(entity, layer name)`` of everything in ``layout``, blocks (INSERT) opened.
+
+    Things in a block that are on layer "0" belong to the layer of the INSERT, as in AutoCAD."""
     for e in layout:
-        if e.dxftype() == "INSERT" and depth < 8:
-            try:
-                for ve in e.virtual_entities():
-                    if ve.dxftype() == "INSERT":
-                        yield from _iter_entities([ve], depth + 1)
-                    else:
-                        yield ve
-            except Exception:
+        try:
+            kind = e.dxftype()
+            layer = e.dxf.layer
+        except Exception as exc:  # noqa: BLE001
+            if report is not None:
+                report.error(f"unreadable entity: {exc}")
+            continue
+        if inherit is not None and layer == "0":
+            layer = inherit
+        if kind == "INSERT":
+            if depth >= 8:
+                if report is not None:
+                    report.error(f"block {e.dxf.get('name', '?')} is nested more than 8 levels deep")
                 continue
+            try:
+                inner = list(e.virtual_entities())
+            except Exception as exc:  # noqa: BLE001
+                if report is not None:
+                    report.error(f"block {e.dxf.get('name', '?')} could not be opened: {exc}")
+                continue
+            yield from _iter_entities(inner, report, depth + 1, layer)
         else:
-            yield e
+            yield e, layer
 
 
 def import_dxf(path: str | Path, project: Project, sheet: Sheet, layer_id: str | None = None,
                join_tolerance: float = 0.01, keep_layers: bool = True,
-               unit_scale: float | None = None) -> list[VectorObject]:
-    """Read a DXF into ``sheet``; returns the created vectors."""
+               unit_scale: float | None = None, report: ImportReport | None = None) -> list[VectorObject]:
+    """Read a DXF into ``sheet``; returns the created vectors.
+
+    ``report`` (optional) is filled with the kinds of entities that were left out and what failed."""
     doc = ezdxf.readfile(str(path))
     k = _scale(doc, unit_scale)
     by_layer: dict[str, list[Contour]] = {}
-    for e in _iter_entities(doc.modelspace()):
+    for e, layer in _iter_entities(doc.modelspace(), report):
+        kind = e.dxftype()
         try:
             cs = entity_contours(e, k)
-        except Exception:
+        except Exception as exc:  # noqa: BLE001
+            if report is not None:
+                report.error(f"{kind} {e.dxf.get('handle', '')}: {type(exc).__name__}: {exc}")
             continue
         if cs:
-            by_layer.setdefault(e.dxf.layer if keep_layers else "", []).extend(cs)
+            by_layer.setdefault(layer if keep_layers else "", []).extend(cs)
+            if report is not None:
+                report.read[kind] += 1
+        elif report is not None and kind not in READ_KINDS:
+            if kind not in CONTAINER_KINDS:
+                report.skip(kind)
+        elif report is not None:
+            report.skip(f"empty {kind}")
     created = []
     for lname, cs in by_layer.items():
         if keep_layers and lname:

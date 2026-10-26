@@ -16,13 +16,14 @@ from ..cam.moves import PathStats, format_time
 from ..core.document import VectorObject, new_id, toolpath_from_dict, toolpath_to_dict
 from ..core.geom import BBox, Transform
 from ..core.params import Param
+from ..formats.report import ImportReport, run_importer
 from .canvas import Canvas
 from .console import Console
 from .controller import Controller
 from .dialogs import (CommandDialog, ExportDialog, ImportDialog, LeftoverDialog, MaterialDialog, NestingDialog,
                       PluginsDialog, PostEditorDialog, PreferencesDialog, StockDialog, ToolDatabaseDialog,
                       ToolpathDialog, buttons)
-from ..nesting.parts import squeeze_lines
+from ..nesting.parts import find_duplicates, squeeze_lines
 from .forms import ParamForm
 from .icons import icon
 from .panels import LayersPanel, PropertiesPanel, SheetsPanel, ToolpathsPanel
@@ -38,6 +39,8 @@ TOOL_LABELS = {"select": "Select / Transform", "nodes": "Edit Nodes", "polyline"
 
 
 class MainWindow(QMainWindow):
+    last_import_report: ImportReport | None = None
+
     def __init__(self, ctrl: Controller, plugin_manager=None):
         super().__init__()
         self.ctrl = ctrl
@@ -417,8 +420,9 @@ class MainWindow(QMainWindow):
         elif ext in ("plt", "hpgl", "hpg"):
             kw = {"join_tolerance": options.get("join", 0.05), "scale": options.get("scale", 100.0) / 100.0}
         c = self.ctrl
+        report = ImportReport()
         with c.edit(f"Import {Path(path).name}"):
-            objs = imp.func(path, c.project, c.sheet, layer_id=c.layer_id, **kw)
+            objs = run_importer(imp.func, path, c.project, c.sheet, report, layer_id=c.layer_id, **kw)
             if options.get("center") and objs:
                 bb = BBox()
                 for o in objs:
@@ -429,6 +433,10 @@ class MainWindow(QMainWindow):
         c.select([o.id for o in objs])
         self.canvas.zoom_extents()
         self.statusBar().showMessage(f"Imported {len(objs)} vector(s) from {Path(path).name}", 5000)
+        if report.summary():
+            QMessageBox.warning(self, "Import", f"{Path(path).name}: {len(objs)} vector(s) imported.\n\n"
+                                                f"{report.summary()}")
+        self.last_import_report = report
         return objs
 
     def trace_bitmap(self, path: str | None = None, options: dict | None = None) -> list[VectorObject]:
@@ -595,8 +603,9 @@ class MainWindow(QMainWindow):
     def new_toolpath(self, op_id: str) -> None:
         dlg = ToolpathDialog(self.ctrl, op_id, None, self)
         if dlg.exec():
-            self.ctrl.add_toolpath(dlg.result())
-            self._report(dlg.result().id)
+            t = dlg.toolpath()  # once: every call makes a new definition with a new id
+            self.ctrl.add_toolpath(t)
+            self._report(t.id)
 
     def edit_toolpath(self, tid: str) -> None:
         t = self.ctrl.project.toolpath(tid)
@@ -607,12 +616,14 @@ class MainWindow(QMainWindow):
             return
         dlg = ToolpathDialog(self.ctrl, t.op, t, self)
         if dlg.exec():
-            self.ctrl.replace_toolpath(dlg.result())
+            self.ctrl.replace_toolpath(dlg.toolpath())
             self._report(tid)
 
     def _report(self, tid: str) -> None:
         t = self.ctrl.project.toolpath(tid)
-        res = self.ctrl.results_for(t) if t else []
+        if t is None:
+            return
+        res = self.ctrl.results_for(t)
         errors = [r.error for r in res if r.error]
         warns = list(dict.fromkeys(w for r in res for w in r.warnings if "Traceback" not in w))
         n = sum(len(r.toolpaths) for r in res)
@@ -771,6 +782,18 @@ class MainWindow(QMainWindow):
         if not (c.selected_objects() or c.sheet.vectors):
             QMessageBox.information(self, "Nesting", "There are no vectors to nest.")
             return
+        pool = c.selected_objects() or list(c.sheet.vectors)
+        extra = [o.id for g in find_duplicates(pool) for o in g[1:]]
+        if extra:  # the same shape twice in the same place would be nested as two parts: it looks like a copy
+            r = QMessageBox.question(
+                self, "Nesting", f"{len(extra)} vector(s) lie exactly on top of another vector (the same shape in the "
+                "same place). Nesting would spread them out as separate parts.\n\nDelete the duplicates first?",
+                QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel)
+            if r == QMessageBox.Cancel:
+                return
+            if r == QMessageBox.Yes:
+                with c.edit("Delete duplicates"):
+                    c.project.remove_vectors(extra)
         dlg = NestingDialog(c, self)
         if dlg.exec():
             out = dlg.run()

@@ -2,36 +2,69 @@
 from __future__ import annotations
 
 import math
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from xml.sax.saxutils import escape
 
-from svgelements import SVG, Arc as SArc, Close, CubicBezier, Group, Line as SLine, Move, Path as SPath
+from svgelements import SVG, Arc as SArc, Close, CubicBezier, Group, Length, Line as SLine, Move, Path as SPath
 from svgelements import QuadraticBezier, Shape
 
 from ..core.document import Project, Sheet, VectorObject
 from ..core.geom import Arc, Bezier, Contour, Line, Segment, dist
+from .report import ImportReport
 
 PX = 25.4 / 96.0  # svgelements works in 96 dpi pixels
+INKSCAPE = "{http://www.inkscape.org/namespaces/inkscape}"
 
 
-def _layer_name(e) -> str | None:
-    """Inkscape layer label (or id) of the closest parent group."""
-    node = getattr(e, "parent", None)
-    while node is not None:
-        if isinstance(node, Group):
-            vals = getattr(node, "values", {}) or {}
-            label = vals.get("{http://www.inkscape.org/namespaces/inkscape}label") or vals.get("inkscape:label")
-            if label:
-                return str(label)
-        node = getattr(node, "parent", None)
+def _mm_per_px(svg) -> float:
+    """Millimetres in one of svgelements' pixels.
+
+    A pixel is 25.4 / 96 mm, except that svgelements takes 3.7795296 pixels (not 96 / 25.4 = 3.77952756)
+    for a millimetre: a drawing sized in mm or cm would come out 5e-7 too large."""
+    size = str(svg.values.get("width", "")).strip().lower()
+    if size.endswith(("mm", "cm")):
+        return 1.0 / Length("1mm").value(ppi=96)
+    return PX
+
+
+def _layers_by_id(path: str | Path) -> dict[str, str]:
+    """Inkscape layer label of every element that has an id (the label of the closest layer above it)."""
+    out: dict[str, str] = {}
+    try:
+        root = ET.parse(str(path)).getroot()
+    except (ET.ParseError, OSError):
+        return out
+
+    def walk(node, layer):
+        if node.get(INKSCAPE + "groupmode") == "layer":
+            layer = node.get(INKSCAPE + "label") or node.get("id") or layer
+        if layer and node.get("id"):
+            out[node.get("id")] = layer
+        for child in node:
+            walk(child, layer)
+    walk(root, None)
+    return out
+
+
+def _layer_name(e, by_id: dict[str, str]) -> str | None:
+    """Inkscape layer label of an element: found by its id in the file, else inherited through its group."""
+    vals = getattr(e, "values", None) or {}
+    name = by_id.get(str(vals.get("id") or ""))
+    if name:
+        return name
+    own = (vals.get("attributes") or {}) if isinstance(vals.get("attributes"), dict) else {}
+    if vals.get(INKSCAPE + "groupmode") == "layer" and INKSCAPE + "label" not in own:
+        return vals.get(INKSCAPE + "label") or None
     return None
 
 
 def import_svg(path: str | Path, project: Project, sheet: Sheet, layer_id: str | None = None,
-               keep_layers: bool = True, scale: float = 1.0) -> list[VectorObject]:
+               keep_layers: bool = True, scale: float = 1.0, report: ImportReport | None = None) -> list[VectorObject]:
     svg = SVG.parse(str(path), ppi=96)
-    k = PX * scale
+    k = _mm_per_px(svg) * scale
     H = (svg.height or 0) * k
+    by_id = _layers_by_id(path) if keep_layers else {}
 
     def m(p) -> tuple[float, float]:
         return (float(p.x) * k, H - float(p.y) * k)
@@ -39,11 +72,15 @@ def import_svg(path: str | Path, project: Project, sheet: Sheet, layer_id: str |
     created = []
     for e in svg.elements():
         if not isinstance(e, Shape) or isinstance(e, Group):
+            if report is not None and type(e).__name__ in ("Text", "Image"):
+                report.skip(type(e).__name__.upper())
             continue
         try:
             sp = SPath(e)
             sp.reify()
-        except Exception:
+        except Exception as exc:  # noqa: BLE001
+            if report is not None:
+                report.error(f"{type(e).__name__} {getattr(e, 'id', '') or ''}: {type(exc).__name__}: {exc}")
             continue
         contours: list[Contour] = []
         segs: list[Segment] = []
@@ -95,13 +132,15 @@ def import_svg(path: str | Path, project: Project, sheet: Sheet, layer_id: str |
             continue
         lid = layer_id or project.layers[0].id
         if keep_layers:
-            ln = _layer_name(e)
+            ln = _layer_name(e, by_id)
             if ln:
                 lid = project.ensure_layer(ln).id
         name = str(getattr(e, "id", "") or "")
         obj = VectorObject(contours, lid, name if name != "None" else "")
         sheet.vectors.append(obj)
         created.append(obj)
+        if report is not None:
+            report.read[type(e).__name__.upper()] += 1
     return created
 
 

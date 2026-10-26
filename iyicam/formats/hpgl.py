@@ -8,13 +8,24 @@ from pathlib import Path
 from ..core import vectorops
 from ..core.document import Project, Sheet, VectorObject
 from ..core.geom import Arc, Contour, Line, Segment, polar
+from .report import ImportReport
 
 PLU = 0.025  # millimetres per plotter unit
 _CMD = re.compile(r"([A-Z]{2})([^A-Z;]*)")
+_NUM = re.compile(r"[-+]?(?:\d+\.?\d*|\.\d+)")
+_LABEL = re.compile(r"LB[^\x03]*\x03", re.IGNORECASE)   # text to print: letters, not commands
+# drawing commands that are not read, and commands that change the meaning of the numbers
+UNSUPPORTED = {"PE": "polyline encoded (PE)", "EW": "edge wedge (EW)", "WG": "filled wedge (WG)",
+               "RA": "filled rectangle (RA)", "RR": "filled rectangle (RR)", "FT": "fill type (FT)",
+               "BZ": "Bezier (BZ)", "BR": "Bezier (BR)"}
+SCALING = ("SC", "IP", "IW")
 
 
-def parse_hpgl(text: str, scale: float = PLU) -> list[Contour]:
+def parse_hpgl(text: str, scale: float = PLU, report: ImportReport | None = None) -> list[Contour]:
     """Pen-down strokes of an HPGL program as open contours (millimetres)."""
+    if report is not None and _LABEL.search(text):
+        report.skip("text (LB)", len(_LABEL.findall(text)))
+    text = _LABEL.sub("", text)
     pos = (0.0, 0.0)
     pen_down = False
     absolute = True
@@ -28,10 +39,16 @@ def parse_hpgl(text: str, scale: float = PLU) -> list[Contour]:
         cur = []
 
     def nums(arg: str) -> list[float]:
-        return [float(x) for x in re.split(r"[,\s]+", arg.strip()) if x]
+        return [float(x) for x in _NUM.findall(arg)]
 
+    seen_scaling = False
     for cmd, arg in _CMD.findall(text.upper()):
         vals = nums(arg) if arg.strip() else []
+        if cmd in UNSUPPORTED and report is not None:
+            report.skip(UNSUPPORTED[cmd])
+        if cmd in SCALING and not seen_scaling and report is not None:
+            seen_scaling = True
+            report.notes.append(f"{cmd} (plotter scaling) is ignored: coordinates are read as 0.025 mm units.")
         if cmd in ("PU", "PD", "PA", "PR"):
             if cmd == "PA":
                 absolute = True
@@ -64,6 +81,25 @@ def parse_hpgl(text: str, scale: float = PLU) -> list[Contour]:
                     if pen_down:
                         cur.append(seg)
                     pos = seg.b
+        elif cmd in ("AT", "RT") and len(vals) >= 4:   # arc through the pen position, a second and an end point
+            p2 = (vals[0] * scale, vals[1] * scale)
+            p3 = (vals[2] * scale, vals[3] * scale)
+            if cmd == "RT":
+                p2, p3 = (pos[0] + p2[0], pos[1] + p2[1]), (pos[0] + p3[0], pos[1] + p3[1])
+            if math.dist(pos, p3) > 1e-9 and abs((p2[0] - pos[0]) * (p3[1] - pos[1])
+                                                 - (p2[1] - pos[1]) * (p3[0] - pos[0])) > 1e-12:
+                seg = Arc.through(pos, p2, p3)
+                if pen_down:
+                    cur.append(seg)
+            elif pen_down and math.dist(pos, p3) > 1e-9:
+                cur.append(Line(pos, p3))   # three points on a line: a straight stroke
+            pos = p3
+        elif cmd in ("EA", "ER") and len(vals) >= 2:   # a rectangle with the pen position as one corner
+            x, y = vals[0] * scale, vals[1] * scale
+            q = (x, y) if cmd == "EA" else (pos[0] + x, pos[1] + y)
+            if abs(q[0] - pos[0]) > 1e-9 and abs(q[1] - pos[1]) > 1e-9:
+                corners = [pos, (q[0], pos[1]), q, (pos[0], q[1]), pos]
+                strokes.append([Line(a, b) for a, b in zip(corners, corners[1:])])
         elif cmd == "CI" and vals:
             r = vals[0] * scale
             a, b = polar(pos, r, 0.0), polar(pos, r, math.pi)
@@ -76,11 +112,14 @@ def parse_hpgl(text: str, scale: float = PLU) -> list[Contour]:
 
 
 def import_hpgl(path: str | Path, project: Project, sheet: Sheet, layer_id: str | None = None,
-                join_tolerance: float = 0.05, scale: float = 1.0, **_) -> list[VectorObject]:
+                join_tolerance: float = 0.05, scale: float = 1.0, report: ImportReport | None = None,
+                **_) -> list[VectorObject]:
     text = Path(path).read_text(encoding="latin-1", errors="replace")
-    contours = parse_hpgl(text, PLU * scale)
+    contours = parse_hpgl(text, PLU * scale, report)
     contours = vectorops.join(contours, join_tolerance) if join_tolerance > 0 else contours
     lid = layer_id or project.layers[0].id
     objs = [VectorObject([c], lid) for c in contours]
     sheet.vectors.extend(objs)
+    if report is not None:
+        report.read["stroke"] += len(objs)
     return objs
