@@ -404,3 +404,27 @@ def test_the_window_geometry_is_saved_when_it_is_closed(sess):
     saved = Settings.load().window_geometry
     assert saved and win.restoreGeometry(QByteArray.fromBase64(saved.encode()))
     assert Settings.load().window_state
+
+
+def test_dialogs_open_at_the_size_they_were_closed_with(sess):
+    from PySide6.QtGui import QGuiApplication
+
+    from iyicam.gui.dialogs import ExportDialog, NestingDialog
+    avail = QGuiApplication.primaryScreen().availableGeometry()
+    w, h = min(500, avail.width()), min(430, avail.height())
+    dlg = NestingDialog(sess.win.ctrl, sess.win)
+    first = (dlg.width(), dlg.height())
+    dlg.resize(w, h)
+    dlg.reject()
+    win = sess.restart()                          # a new run of the program
+    again = NestingDialog(win.ctrl, win)
+    assert (again.width(), again.height()) == (w, h) != first
+    other = ExportDialog(win.ctrl, win)           # each dialog has its own size
+    assert (other.width(), other.height()) != (w, h)
+    again.accept()
+    # nonsense in the file is ignored: the dialog opens at its usual size
+    win.ctrl.settings.memory["size:nesting"] = {"width": "wide", "height": None}
+    assert NestingDialog(win.ctrl, win).width() == first[0]
+    win.ctrl.settings.memory["size:nesting"] = {"width": 10 ** 9, "height": 10 ** 9}
+    big = NestingDialog(win.ctrl, win)            # never bigger than the screen
+    assert big.width() <= avail.width() and big.height() <= avail.height()

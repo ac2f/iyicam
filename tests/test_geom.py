@@ -221,3 +221,28 @@ def test_bbox_ops():
     assert bb.width == 2 and bb.height == 3
     assert bb.contains((1, 1))
     assert not BBox().intersects(bb)
+
+
+def test_polygons_with_no_area_are_nothing_not_an_error():
+    """Paths that look like polygons but are slits (a spike A-B-C-B, points on a line, one point repeated)
+    used to make Clipper raise "All paths are invalid for clipping" and take a whole command down."""
+    import random
+
+    from iyicam.core import clip
+    from iyicam.core.geom import polygon_area
+    slits = [[(0, 0), (3, 1), (1, 2), (3, 1)], [(0, 0), (5, 0), (10, 0)], [(1, 1)] * 5,
+             [(0, 0), (10, 1), (0, 0), (10, 1)], [(0, 0.0003), (0.0002, 0), (0, 0), (0.0001, 0), (0.0002, 0)]]
+    square = [(0, 0), (10, 0), (10, 10), (0, 10)]
+    for slit in slits:
+        assert clip.normalize([slit]) == []
+        clip.offset([slit], 1.0)                        # (a slit offset by something is a thin shape or nothing)
+        assert clip.boolean([slit], [square], "union") != [] and clip.boolean([slit], [square], "intersection") == []
+        assert clip.boolean([square], [slit], "difference") != []
+        assert abs(sum(polygon_area(p) for p in clip.normalize([square, slit])) - 100) < 1e-6
+    rnd = random.Random(1)              # and polygons made of few coordinates, most of them degenerate
+    for _ in range(3000):
+        k = rnd.choice([1e-4, 1.0])
+        poly = [(rnd.randint(0, 3) * k, rnd.randint(0, 3) * k) for _ in range(rnd.randint(3, 6))]
+        clip.normalize([poly])
+        clip.offset([poly], 0.5)
+        clip.boolean([poly], [square], "difference")

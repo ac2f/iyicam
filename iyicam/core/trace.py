@@ -111,39 +111,66 @@ def trace(gray: np.ndarray, threshold: float = 128.0, invert: bool = False, pixe
 # centre lines
 # ---------------------------------------------------------------------------
 
+def _thinning_tables() -> np.ndarray:
+    """For each of the two Zhang-Suen steps, which of the 256 neighbourhoods (bit k = neighbour k, clockwise
+    from north) of a set pixel may be removed."""
+    table = np.zeros((2, 256), bool)
+    for code in range(256):
+        nb = [(code >> k) & 1 for k in range(8)]
+        B = sum(nb)
+        A = sum(nb[k] == 0 and nb[(k + 1) % 8] == 1 for k in range(8))
+        if not (2 <= B <= 6 and A == 1):
+            continue
+        p2, p4, p6, p8 = nb[0], nb[2], nb[4], nb[6]
+        table[0, code] = (p2 & p4 & p6) == 0 and (p4 & p6 & p8) == 0
+        table[1, code] = (p2 & p4 & p8) == 0 and (p2 & p6 & p8) == 0
+    return table
+
+
+_THIN = _thinning_tables()
+
+
 def thin(mask: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Zhang-Suen thinning to one pixel wide lines.
 
     Also returns the pass that removed each pixel: roughly its distance to the edge
     (the largest value is about the half width of the widest stroke).
+
+    Only the pixels that can change are looked at (those with an empty neighbour, then the neighbours of
+    every pixel removed), so the work follows the length of the outline and not the area of the picture.
     """
     img = np.pad(np.asarray(mask, dtype=bool), 1).astype(np.uint8)
     when = np.zeros(img.shape, np.int32)
-    inner = when[1:-1, 1:-1]
+    flat, wflat = img.reshape(-1), when.reshape(-1)       # (views: the image is contiguous)
+    wp = img.shape[1]
+    offsets = np.array([-wp, -wp + 1, 1, wp + 1, wp, wp - 1, -1, -wp - 1])   # N NE E SE S SW W NW
+    weights = (1 << np.arange(8)).astype(np.uint8)
+
+    def codes(idx: np.ndarray) -> np.ndarray:
+        return (flat[idx[:, None] + offsets] * weights).sum(axis=1, dtype=np.int32)
+
+    cand = np.flatnonzero(flat)
+    cand = cand[codes(cand) != 255]            # a pixel with all neighbours set cannot be removed yet
     passes = 0
     while True:
         changed = False
         for step in (0, 1):
-            c = img[1:-1, 1:-1]
-            # neighbours clockwise from north: P2 .. P9
-            nb = [img[:-2, 1:-1], img[:-2, 2:], img[1:-1, 2:], img[2:, 2:],
-                  img[2:, 1:-1], img[2:, :-2], img[1:-1, :-2], img[:-2, :-2]]
-            B = sum(n.astype(np.int8) for n in nb)
-            A = sum(((nb[k] == 0) & (nb[(k + 1) % 8] == 1)).astype(np.int8) for k in range(8))
-            p2, p4, p6, p8 = nb[0], nb[2], nb[4], nb[6]
-            if step == 0:
-                side = ((p2 & p4 & p6) == 0) & ((p4 & p6 & p8) == 0)
-            else:
-                side = ((p2 & p4 & p8) == 0) & ((p2 & p6 & p8) == 0)
-            kill = (c == 1) & (B >= 2) & (B <= 6) & (A == 1) & side
-            if kill.any():
-                c[kill] = 0
-                inner[kill] = passes + 1
-                changed = True
+            if not len(cand):
+                break
+            kill = _THIN[step][codes(cand)]
+            if not kill.any():
+                continue
+            gone = cand[kill]
+            flat[gone] = 0
+            wflat[gone] = passes + 1
+            changed = True
+            near = (gone[:, None] + offsets).reshape(-1)
+            near = near[flat[near] == 1]
+            cand = np.unique(np.concatenate([cand[~kill], near]))
         if not changed:
             break
         passes += 1
-    return img[1:-1, 1:-1].astype(bool), inner.copy()
+    return img[1:-1, 1:-1].astype(bool), when[1:-1, 1:-1].copy()
 
 
 def skeleton_paths(sk: np.ndarray, spur: float = 0.0, cap: float = 0.0,

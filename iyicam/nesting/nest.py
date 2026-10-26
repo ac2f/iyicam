@@ -545,14 +545,14 @@ class Nester:
             res = [convex_minkowski(VA.convex[0], [(-x, -y) for x, y in VB.convex[0]])]
         elif VA.pieces is not None and VB.pieces is not None:
             # Minkowski sums distribute over unions: combine the convex pieces
-            pc = pyclipper.Pyclipper()
+            pc = clip.Clipper()
             negs = [[(-x, -y) for x, y in pb] for pb in VB.pieces]
             for pa in VA.pieces:
                 for nb in negs:
                     pc.AddPath(convex_minkowski(pa, nb), pyclipper.PT_SUBJECT, True)
             res = pc.Execute(pyclipper.CT_UNION, pyclipper.PFT_NONZERO, pyclipper.PFT_NONZERO)
         else:
-            pc = pyclipper.Pyclipper()
+            pc = clip.Clipper()
             added = False
             for pa in A:
                 for pb in B:
@@ -650,7 +650,7 @@ class Nester:
         # The part can be anywhere inside the region R except where it touches R's boundary: the band of
         # the boundary swept by the part, plus the reference point of every outline must lie in R (the part
         # is then inside, not in a hole or outside).
-        band = pyclipper.Pyclipper()
+        band = clip.Clipper()
         for pa in v.paths:
             for rb in region:
                 for r in pyclipper.MinkowskiDiff(pa, rb):  # {rb - pa}
@@ -664,11 +664,11 @@ class Nester:
             if inside is None:
                 inside = moved
             else:
-                pc = pyclipper.Pyclipper()
+                pc = clip.Clipper()
                 pc.AddPaths(inside, pyclipper.PT_SUBJECT, True)
                 pc.AddPaths(moved, pyclipper.PT_CLIP, True)
                 inside = pc.Execute(pyclipper.CT_INTERSECTION, pyclipper.PFT_NONZERO, pyclipper.PFT_NONZERO)
-        pc = pyclipper.Pyclipper()
+        pc = clip.Clipper()
         pc.AddPaths(inside or [], pyclipper.PT_SUBJECT, True)
         if banned:
             pc.AddPaths(banned, pyclipper.PT_CLIP, True)
@@ -716,7 +716,7 @@ class Nester:
 
         The feasible area has zero width slivers where a part only touches the plate's boundary with its
         reference point (entirely outside, or in a hole): their corners must not be taken."""
-        pc = pyclipper.Pyclipper()
+        pc = clip.Clipper()
         pc.AddPaths([[(px + x, py + y) for px, py in path] for path in v.paths], pyclipper.PT_SUBJECT, True)
         pc.AddPaths(box.paths, pyclipper.PT_CLIP, True)
         out = pc.Execute(pyclipper.CT_DIFFERENCE, pyclipper.PFT_NONZERO, pyclipper.PFT_NONZERO)
@@ -735,7 +735,7 @@ class Nester:
         if px + ax1 <= x + bx0 or x + bx1 <= px + ax0 or py + ay1 <= y + by0 or y + by1 <= py + ay0:
             return False
         self.stats["overlap_tests"] += 1
-        pc = pyclipper.Pyclipper()
+        pc = clip.Clipper()
         pc.AddPaths([[(qx + px, qy + py) for qx, qy in path] for path in VA.solid], pyclipper.PT_SUBJECT, True)
         pc.AddPaths([[(qx + x, qy + y) for qx, qy in path] for path in VB.solid], pyclipper.PT_CLIP, True)
         out = pc.Execute(pyclipper.CT_INTERSECTION, pyclipper.PFT_NONZERO, pyclipper.PFT_NONZERO)
@@ -768,7 +768,7 @@ class Nester:
             self._check()
             feas = ifp
             if included:
-                pc = pyclipper.Pyclipper()
+                pc = clip.Clipper()
                 n_added = 0
                 for j in included:
                     pi, pa, px, py = placed[j]

@@ -25,6 +25,55 @@ _OPS = {"union": pyclipper.CT_UNION, "difference": pyclipper.CT_DIFFERENCE,
         "intersection": pyclipper.CT_INTERSECTION, "xor": pyclipper.CT_XOR}
 
 
+class Clipper(pyclipper.Pyclipper):
+    """``pyclipper.Pyclipper`` that takes a path it cannot use (no area, a spike) as nothing instead of raising
+    "All paths are invalid for clipping": a vector of such paths simply has no region."""
+
+    _used = False
+
+    def AddPath(self, path, poly_type, closed=True):
+        try:
+            ok = super().AddPath(path, poly_type, closed)
+        except pyclipper.ClipperException:
+            return False
+        self._used = self._used or bool(ok)
+        return ok
+
+    def AddPaths(self, paths, poly_type, closed=True):
+        try:
+            ok = super().AddPaths(paths, poly_type, closed)
+        except pyclipper.ClipperException:
+            return False
+        self._used = self._used or bool(ok)
+        return ok
+
+    def Execute(self, *args, **kwargs):
+        return super().Execute(*args, **kwargs) if self._used else []
+
+
+class Offsetter(pyclipper.PyclipperOffset):
+    """``pyclipper.PyclipperOffset`` with the same tolerance for unusable paths."""
+
+    _used = False
+
+    def AddPath(self, path, join_type, end_type):
+        try:
+            super().AddPath(path, join_type, end_type)
+        except pyclipper.ClipperException:
+            return
+        self._used = True
+
+    def AddPaths(self, paths, join_type, end_type):
+        try:
+            super().AddPaths(paths, join_type, end_type)
+        except pyclipper.ClipperException:
+            return
+        self._used = True
+
+    def Execute(self, *args, **kwargs):
+        return super().Execute(*args, **kwargs) if self._used else []
+
+
 def to_int(pts: Sequence[Pt]) -> list[tuple[int, int]]:
     return [(round(x * SCALE), round(y * SCALE)) for x, y in pts]
 
@@ -68,7 +117,7 @@ def normalize(polys: Iterable[Sequence[Pt]], fill: str = "evenodd") -> list[Poly
     paths = _clean(polys)
     if not paths:
         return []
-    pc = pyclipper.Pyclipper()
+    pc = Clipper()
     pc.AddPaths(paths, pyclipper.PT_SUBJECT, True)
     res = pc.Execute(pyclipper.CT_UNION, _FILL[fill], _FILL[fill])
     return [from_int(p) for p in res]
@@ -79,7 +128,7 @@ def boolean(subject: Iterable[Sequence[Pt]], clip: Iterable[Sequence[Pt]], op: s
     s, c = _clean(subject), _clean(clip)
     if not s and op in ("intersection", "difference"):
         return []
-    pc = pyclipper.Pyclipper()
+    pc = Clipper()
     if s:
         pc.AddPaths(s, pyclipper.PT_SUBJECT, True)
     if c:
@@ -100,7 +149,7 @@ def offset(polys: Iterable[Sequence[Pt]], delta: float, join: str = "round",
     paths = _clean(polys)
     if not paths:
         return []
-    po = pyclipper.PyclipperOffset(miter_limit, max(1.0, arc_tol * SCALE))
+    po = Offsetter(miter_limit, max(1.0, arc_tol * SCALE))
     po.AddPaths(paths, _JOIN[join], pyclipper.ET_CLOSEDPOLYGON)
     res = po.Execute(delta * SCALE)
     return [from_int(p) for p in res]
@@ -112,7 +161,7 @@ def offset_lines(paths: Iterable[Sequence[Pt]], delta: float, end: str = "round"
     ints = _clean(paths, closed=closed)
     if not ints or delta <= 0:
         return []
-    po = pyclipper.PyclipperOffset(4.0, max(1.0, arc_tol * SCALE))
+    po = Offsetter(4.0, max(1.0, arc_tol * SCALE))
     et = pyclipper.ET_CLOSEDLINE if closed else _END[end]
     po.AddPaths(ints, _JOIN[join], et)
     return [from_int(p) for p in po.Execute(delta * SCALE)]
@@ -127,7 +176,7 @@ def clip_lines(lines: Iterable[Sequence[Pt]], polys: Iterable[Sequence[Pt]],
         return []
     if not ps:
         return [] if inside else [from_int(p) for p in ls]
-    pc = pyclipper.Pyclipper()
+    pc = Clipper()
     pc.AddPaths(ls, pyclipper.PT_SUBJECT, False)
     pc.AddPaths(ps, pyclipper.PT_CLIP, True)
     op = pyclipper.CT_INTERSECTION if inside else pyclipper.CT_DIFFERENCE
@@ -140,7 +189,7 @@ def polytree(polys: Iterable[Sequence[Pt]], fill: str = "evenodd") -> list[tuple
     paths = _clean(polys)
     if not paths:
         return []
-    pc = pyclipper.Pyclipper()
+    pc = Clipper()
     pc.AddPaths(paths, pyclipper.PT_SUBJECT, True)
     tree = pc.Execute2(pyclipper.CT_UNION, _FILL[fill], _FILL[fill])
     out: list[tuple[Poly, list[Poly]]] = []

@@ -205,7 +205,8 @@ Nothing has to be entered twice. `settings.json` keeps, between sessions:
 * the cut order and start point choices (strategy, inner pieces first, smart start points) for new toolpaths;
 * the **last folder** of every kind of file: projects, imports, exports, G-code, stock, tools, images,
   templates, plugins (a kind never used starts where the last file dialog was);
-* the window size, position and docks, units, grid, snaps and display options.
+* the window size, position and docks, the size of the larger dialogs (nesting, toolpaths, export, tools, posts,
+  stock, plugins), units, grid, snaps and display options.
 
 A damaged or hand-edited settings file is read as far as it is valid; a folder that cannot be written to is not
 an error.

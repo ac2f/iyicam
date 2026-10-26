@@ -83,13 +83,21 @@ def sizes(c) -> dict:
 
 
 def collapsed(before: dict, after: dict) -> str | None:
-    """A vector that had a size and has none now was destroyed (a scale of nothing, a size of zero)."""
+    """A vector that had a size and has none now was destroyed (a scale of nothing, a size of zero).  (Being made
+    very small on purpose, say a thousandth of a percent, is not being destroyed: what counts is the part of the
+    size that is left.)"""
+    def gone(old: float, new: float) -> bool:
+        return old > 1e-6 and new < 1e-9 and new < old * 1e-7
+
     for vid, (w, h) in after.items():
-        if vid in before and (before[vid][0] > 1e-6 or before[vid][1] > 1e-6) and w < 1e-9 and h < 1e-9:
+        if vid not in before:
+            continue
+        ow, oh = before[vid]
+        if (ow > 1e-6 or oh > 1e-6) and w < 1e-9 and h < 1e-9 and (gone(ow, w) or gone(oh, h)):
             return f"{vid} has been squeezed to a point"
-        if vid in before and before[vid][0] > 1e-6 and w < 1e-9 and before[vid][1] > 1e-6:
+        if gone(ow, w) and oh > 1e-6:
             return f"{vid} has lost its width ({before[vid]} -> {(w, h)})"
-        if vid in before and before[vid][1] > 1e-6 and h < 1e-9 and before[vid][0] > 1e-6:
+        if gone(oh, h) and ow > 1e-6:
             return f"{vid} has lost its height ({before[vid]} -> {(w, h)})"
     return None
 

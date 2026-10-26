@@ -9,7 +9,7 @@ import threading
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, QUrl
-from PySide6.QtGui import QDesktopServices, QFont, QFontDatabase
+from PySide6.QtGui import QDesktopServices, QFont, QFontDatabase, QGuiApplication
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog,
                                QDialogButtonBox, QDoubleSpinBox, QFontComboBox, QFormLayout,
                                QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QListWidget,
@@ -28,6 +28,29 @@ from ..nesting.parts import (ROTATION_MODES, RULE_USES_VALUE, apply_nesting, par
 from ..nesting.stock import leftover_of_sheet, stock_from_vectors, use_up
 from .files import open_file, save_file
 from .forms import ParamForm
+
+
+class RemembersSize:
+    """A dialog that opens at the size it had when it was closed the last time."""
+
+    def keep_size(self, ctrl, key: str, width: int, height: int) -> None:
+        self._size_ctrl, self._size_key = ctrl, "size:" + key
+        saved = ctrl.settings.recall(self._size_key)
+        try:
+            width, height = int(saved["width"]), int(saved["height"])
+        except (KeyError, TypeError, ValueError, OverflowError):
+            pass
+        screen = QGuiApplication.primaryScreen()
+        if screen is not None:                      # (a dialog from a bigger screen must still fit this one)
+            area = screen.availableGeometry()
+            width, height = min(width, area.width()), min(height, area.height())
+        self.resize(max(width, 200), max(height, 150))
+
+    def done(self, result: int) -> None:
+        key = getattr(self, "_size_key", None)
+        if key:
+            self._size_ctrl.settings.remember(key, {"width": self.width(), "height": self.height()})
+        super().done(result)
 
 
 def buttons(dlg: QDialog, ok_text: str = "OK") -> QDialogButtonBox:
@@ -83,7 +106,7 @@ def scroll(widget: QWidget) -> QScrollArea:
 # generic command dialog
 # ---------------------------------------------------------------------------
 
-class CommandDialog(QDialog):
+class CommandDialog(RemembersSize, QDialog):
     def __init__(self, ctrl, cmd, parent=None):
         super().__init__(parent)
         self.ctrl = ctrl
@@ -98,7 +121,7 @@ class CommandDialog(QDialog):
                               ctrl.tools)
         lay.addWidget(scroll(self.form))
         lay.addWidget(buttons(self))
-        self.resize(380, min(640, 120 + 34 * len(cmd.params)))
+        self.keep_size(ctrl, f"command:{cmd.id}", 380, min(640, 120 + 34 * len(cmd.params)))
 
     def values(self) -> dict:
         v = self.form.values()
@@ -159,7 +182,7 @@ class SheetDialog(QDialog):
         super().accept()
 
 
-class MaterialDialog(QDialog):
+class MaterialDialog(RemembersSize, QDialog):
     def __init__(self, ctrl, parent=None):
         super().__init__(parent)
         self.ctrl = ctrl
@@ -195,7 +218,7 @@ class MaterialDialog(QDialog):
         self.form = ParamForm(params, None, ctrl.units)
         lay.addWidget(scroll(self.form))
         lay.addWidget(buttons(self))
-        self.resize(420, 560)
+        self.keep_size(ctrl, "material", 420, 560)
 
     def accept(self) -> None:
         v = self.form.values()
@@ -321,7 +344,7 @@ class FeedsDialog(QDialog):
         return t
 
 
-class ToolDatabaseDialog(QDialog):
+class ToolDatabaseDialog(RemembersSize, QDialog):
     """Edit the tool library; in pick mode the selected tool is returned."""
 
     def __init__(self, ctrl, parent=None, pick: bool = False):
@@ -355,7 +378,7 @@ class ToolDatabaseDialog(QDialog):
         lay.addWidget(buttons(self, "Select" if pick else "Save"))
         self.current: Tool | None = None
         self.refresh()
-        self.resize(720, 620)
+        self.keep_size(ctrl, "tools", 720, 620)
 
     def _commit_editor(self) -> None:
         if self.current is not None:
@@ -464,7 +487,7 @@ class ToolDatabaseDialog(QDialog):
 # toolpaths
 # ---------------------------------------------------------------------------
 
-class ToolpathDialog(QDialog):
+class ToolpathDialog(RemembersSize, QDialog):
     def __init__(self, ctrl, op_id: str, tdef: ToolpathDef | None = None, parent=None):
         super().__init__(parent)
         self.ctrl = ctrl
@@ -549,7 +572,7 @@ class ToolpathDialog(QDialog):
         lay.addWidget(buttons(self, "Calculate"))
         self._update_tool_label()
         self.tool_editor.form.changed.connect(self._update_tool_label)
-        self.resize(460, 680)
+        self.keep_size(ctrl, f"toolpath:{op_id}", 460, 680)
 
     def _remembered_tool(self, d) -> Tool | None:
         """The tool of the last toolpath of this kind (when it still fits the toolpath)."""
@@ -742,7 +765,7 @@ class LeftoverDialog(QDialog):
         return v["clearance"], v["min_width"], v["min_area"] * 100.0
 
 
-class StockDialog(QDialog):
+class StockDialog(RemembersSize, QDialog):
     """The stock of plates that jobs are nested onto."""
 
     def __init__(self, ctrl, parent=None):
@@ -780,7 +803,7 @@ class StockDialog(QDialog):
         row.addStretch(1)
         lay.addLayout(row)
         lay.addWidget(buttons(self))
-        self.resize(640, 420)
+        self.keep_size(ctrl, "stock", 640, 420)
 
     def _build(self) -> None:
         if self.table is not None:
@@ -890,7 +913,7 @@ class RotationRuleEdit(QWidget):
         return {"mode": self.mode.currentData(), "value": self.value.value()}
 
 
-class NestingDialog(QDialog):
+class NestingDialog(RemembersSize, QDialog):
     def __init__(self, ctrl, parent=None):
         super().__init__(parent)
         from ..nesting.parts import group_parts
@@ -995,7 +1018,7 @@ class NestingDialog(QDialog):
             tabs.addTab(page, title)
         self.tabs = tabs
         lay.addWidget(buttons(self, "Nest"))
-        self.resize(700, 760)
+        self.keep_size(ctrl, "nesting", 700, 760)
         self._form_changed()   # remembered: the inner pieces stay with their part
 
     def _build_parts_page(self, saved: dict, prev: dict | None = None) -> None:
@@ -1232,7 +1255,7 @@ class NestingDialog(QDialog):
 # G-code export
 # ---------------------------------------------------------------------------
 
-class ExportDialog(QDialog):
+class ExportDialog(RemembersSize, QDialog):
     def __init__(self, ctrl, parent=None):
         super().__init__(parent)
         self.ctrl = ctrl
@@ -1306,7 +1329,7 @@ class ExportDialog(QDialog):
         cp.clicked.connect(lambda: QApplication.clipboard().setText(self.text.toPlainText()))
         bb.addButton(QDialogButtonBox.Close).clicked.connect(self.reject)
         lay.addWidget(bb)
-        self.resize(640, 720)
+        self.keep_size(ctrl, "export", 640, 720)
         self.preview()
 
     def current_post(self):
@@ -1394,7 +1417,7 @@ class ExportDialog(QDialog):
 # plugins / posts
 # ---------------------------------------------------------------------------
 
-class PluginsDialog(QDialog):
+class PluginsDialog(RemembersSize, QDialog):
     def __init__(self, ctrl, manager, parent=None):
         super().__init__(parent)
         self.ctrl, self.pm = ctrl, manager
@@ -1430,7 +1453,7 @@ class PluginsDialog(QDialog):
         lay.addLayout(row)
         self._updating = False
         self.refresh()
-        self.resize(640, 460)
+        self.keep_size(ctrl, "plugins", 640, 460)
 
     def refresh(self) -> None:
         self._updating = True
@@ -1515,7 +1538,7 @@ description = "Based on {base_name}"
 """
 
 
-class PostEditorDialog(QDialog):
+class PostEditorDialog(RemembersSize, QDialog):
     """Create and edit user post-processors (TOML) with a live preview."""
 
     def __init__(self, ctrl, parent=None):
@@ -1554,7 +1577,7 @@ class PostEditorDialog(QDialog):
         right.addWidget(self.out, 1)
         lay.addLayout(right, 3)
         self.refresh()
-        self.resize(980, 680)
+        self.keep_size(ctrl, "posts", 980, 680)
 
     def refresh(self, select: str | None = None) -> None:
         from ..builtins import USER_POST_ERRORS
