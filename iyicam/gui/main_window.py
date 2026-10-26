@@ -223,6 +223,10 @@ class MainWindow(QMainWindow):
             self._act(new, op.label + "...", lambda o=op.id: self.new_toolpath(o))
         self._act(m, "&Recalculate All", self.recalculate, "F5")
         self._act(m, "Cut &Order...", self.cut_order, "Ctrl+Shift+O")
+        self.inner_first_action = self._act(m, "Cut Inner Pieces (&Göbek) First", self.toggle_inner_first, None, True,
+                                            s.default_grouping == "depth")
+        self.inner_first_action.setToolTip("Cut the holes and inner pieces of all parts first, then the outlines, "
+                                           "each in the order of the cut order strategy")
         m.addSeparator()
         self._act(m, "&Material Setup...", lambda: MaterialDialog(c, self).exec(), "Ctrl+Shift+M")
         self._act(m, "&Tool Database...", lambda: ToolDatabaseDialog(c, self).exec())
@@ -642,6 +646,12 @@ class MainWindow(QMainWindow):
         if not self.ctrl.settings.show_cut_order:
             self._toggle("show_cut_order", True)
         CutOrderDialog(self.ctrl, tid, self).exec()
+
+    def toggle_inner_first(self, on: bool) -> None:
+        n = self.ctrl.set_inner_first(on)
+        self.statusBar().showMessage(
+            ("Inner pieces (göbek) are cut first" if on else "Cut part by part")
+            + (f" on {n} toolpath(s)" if n else ""), 5000)
 
     def start_points(self, tid: str | None = None) -> None:
         from .sequence_dialogs import StartPointsDialog, sequenced_toolpaths

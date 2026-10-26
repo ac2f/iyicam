@@ -102,7 +102,10 @@ class CutOrderDialog(_ToolpathDialog):
         self.grouping = QComboBox()
         for k, label in seq.GROUPINGS:
             self.grouping.addItem(label, k)
-        form.addRow("Inner cuts", self.grouping)
+        self.grouping.setToolTip("Göbek: the inner pieces of a part (holes, the hub of a ring, parts nested in holes). "
+                                 "First option: all of them are cut first, in the order of the strategy, and "
+                                 "the outlines follow in the order of the strategy.")
+        form.addRow("Inner pieces (göbek)", self.grouping)
         self.band = _length_spin(ctrl, 0.0, "Automatic")
         self.band.setToolTip("Height of a row (width of a column) for the row and column strategies")
         form.addRow("Row / column size", self.band)
@@ -199,6 +202,7 @@ class CutOrderDialog(_ToolpathDialog):
     def _set(self, **changes) -> None:
         if not self._loading and self.tid:
             self.ctrl.set_sequence(self.tid, **changes)
+            self.ctrl.remember_cut_order(**changes)
             if "strategy" in changes:  # every strategy has its own direction
                 self.direction.blockSignals(True)
                 self.direction.setCurrentIndex(max(0, self.direction.findData(seq.direction_for(self.cfg()))))
@@ -358,6 +362,7 @@ class StartPointsDialog(_ToolpathDialog):
     def _set(self, **changes) -> None:
         if not self._loading and self.tid:
             self.ctrl.set_sequence(self.tid, **changes)
+            self.ctrl.remember_cut_order(**changes)
             self._info()
 
     def _now(self) -> None:

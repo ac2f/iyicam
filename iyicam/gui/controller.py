@@ -296,6 +296,8 @@ class Controller(QObject):
     def add_toolpath(self, tdef: ToolpathDef) -> None:
         if self.settings.strategy_directions and "directions" not in tdef.sequence:
             tdef.sequence["directions"] = dict(self.settings.strategy_directions)
+        for key, value in (("strategy", self.settings.default_strategy), ("grouping", self.settings.default_grouping)):
+            tdef.sequence.setdefault(key, value)   # new toolpaths are ordered the way the last one was
         with self.edit(f"Add toolpath {tdef.name}", geometry=False):
             self.project.toolpaths.append(tdef)
         self.recalculate({tdef.id})
@@ -402,6 +404,31 @@ class Controller(QObject):
         with self.edit("Cut order settings", geometry=False):
             t.sequence.update(changes)
         self.recalculate({tid})
+
+    def remember_cut_order(self, **changes) -> None:
+        """Strategy / grouping chosen by the user: new toolpaths start with them."""
+        if changes.get("strategy"):
+            self.settings.default_strategy = changes["strategy"]
+        if changes.get("grouping"):
+            self.settings.default_grouping = changes["grouping"]
+        self.settings.save()
+
+    def set_inner_first(self, on: bool) -> int:
+        """Cut the inner pieces (göbek) of all parts first (``on``) or part by part, on every toolpath that
+        cuts vector by vector and on the toolpaths made later. Returns how many toolpaths changed."""
+        from ..cam.profile import ProfileOp
+        grouping = "depth" if on else "part"
+        self.remember_cut_order(grouping=grouping)
+        ids = set()
+        with self.edit("Cut order: inner pieces first" if on else "Cut order: part by part", geometry=False):
+            for t in self.project.toolpaths:
+                op = self.registry.operations.get(t.op)
+                if op is not None and issubclass(op, ProfileOp) and t.sequence.get("grouping", "depth") != grouping:
+                    t.sequence["grouping"] = grouping
+                    ids.add(t.id)
+        if ids:
+            self.recalculate(ids)
+        return len(ids)
 
     def reorder_now(self, tid: str) -> None:
         """Order the cuts with the toolpath's strategy once (a frozen order stays frozen)."""

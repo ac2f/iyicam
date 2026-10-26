@@ -45,9 +45,20 @@ Whatever strategy or manual order is chosen:
 | Smallest parts first | small parts lose hold-down first: cut them while the sheet is intact |
 | From the centre outwards / from the edges inwards | |
 
-*Inner cuts* decides how inner cuts are grouped: **all inner cuts first, then the
-outlines** (the sheet stays whole the longest) or **part by part**. Rows and
-columns are found automatically (a new row starts where the next part is more
+*Inner pieces (göbek)* decides how the inner cuts (holes, the hub of a ring, parts
+nested in a hole) are grouped with the outlines:
+
+* **Inner pieces of all parts first, then the outlines** (the default): every inner
+  piece of every part is cut first, in the order of the strategy, and the outlines
+  follow, again in the order of the strategy. The sheet stays whole the longest.
+  Pieces inside pieces go from the inside out.
+* **Part by part**: a part's inner pieces, then its outline, then the next part.
+
+**Toolpaths ▸ Cut Inner Pieces (Göbek) First** switches between the two for every
+toolpath at once. What was chosen last (the strategy too) is remembered and is used
+by the toolpaths made later, also in the next session.
+
+Rows and columns are found automatically (a new row starts where the next part is more
 than half a part size further on) or use a fixed **row / column size**.
 
 ### Cutting direction per strategy

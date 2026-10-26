@@ -53,8 +53,8 @@ STRATEGIES: list[tuple[str, str]] = [
 ]
 
 GROUPINGS: list[tuple[str, str]] = [
-    ("depth", "All inner cuts first, then the outlines"),
-    ("part", "Part by part (its inner cuts, then its outline)"),
+    ("depth", "Inner pieces (göbek) of all parts first, then the outlines"),
+    ("part", "Part by part (its inner pieces, then its outline)"),
 ]
 
 DIRECTIONS: list[tuple[str, str]] = [

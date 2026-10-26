@@ -615,3 +615,45 @@ def test_simulation_has_no_material_outside_the_outline():
     from iyicam.cam.simulate import simulate
     hm = simulate([], 400, 300, 18.0, 5.0, outline=[L_PLATE])
     assert hm.at(100, 100) == 0.0 and hm.at(300, 250) == -18.0
+
+
+# ---------------------------------------------------------------------------------------------------------
+def ringed_parts(n=3, gap=100):
+    """A grid of plates with a hole each (the hole holds a small inner piece: a hub), far enough apart that
+    no scrap is enclosed, so only the grouping decides the order."""
+    parts = []
+    for i in range(n):
+        for j in range(n):
+            x, y = 20 + i * gap, 20 + j * gap
+            parts.append([shapes.rectangle(x, y, 70, 70), shapes.circle((x + 35, y + 35), 22)])  # plate + hole
+            parts.append([shapes.circle((x + 35, y + 35), 10)])                                # the hub in the hole
+    return parts
+
+
+def kinds_in_order(res, objs):
+    """'h' for the hub and the hole, 'o' for a plate outline, in cutting order."""
+    plates = {f"{o.id}:0" for o in objs if o.contours[0].bbox().width > 60}
+    return ["o" if c["key"] in plates else "h" for c in sorted(res.toolpaths[0].cuts, key=lambda c: c["index"])]
+
+
+@pytest.mark.parametrize("strategy", ALL)
+def test_inner_pieces_of_all_parts_are_cut_before_any_outline(strategy):
+    p, s, objs = make_project(ringed_parts(), size=(340, 340))
+    t = add_tp(p, "profile", end_mill(6), {"through": True}, objs)
+    t.sequence = {"strategy": strategy, "grouping": "depth"}
+    res = compute_toolpath(p, t, s)
+    assert res.error is None
+    k = kinds_in_order(res, objs)
+    assert k == ["h"] * k.count("h") + ["o"] * k.count("o"), (strategy, "".join(k))
+    assert k.count("o") == 9 and k.count("h") == 18   # nothing lost, nothing twice
+    assert replay(res.toolpaths[0], s) == []
+
+
+def test_part_by_part_keeps_each_hole_with_its_outline():
+    p, s, objs = make_project(ringed_parts(), size=(340, 340))
+    t = add_tp(p, "profile", end_mill(6), {"through": True}, objs)
+    t.sequence = {"strategy": "rows_bl", "grouping": "part"}
+    res = compute_toolpath(p, t, s)
+    k = "".join(kinds_in_order(res, objs))
+    assert "oh" in k          # an outline is cut before the inner pieces of a later part
+    assert k != "h" * 18 + "o" * 9

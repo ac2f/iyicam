@@ -18,6 +18,8 @@ class Settings:
     show_directions: bool = False
     show_cut_order: bool = False      # number the cuts of the toolpaths on the drawing
     strategy_directions: dict = field(default_factory=dict)  # cutting direction per cut order strategy
+    default_strategy: str = "nearest"  # cut order of new toolpaths: what was chosen last
+    default_grouping: str = "depth"    # "depth": inner pieces (göbek) of all parts first | "part": part by part
     auto_recalculate: bool = True     # recalculate toolpaths after edits (small projects)
     recent_files: list[str] = field(default_factory=list)
     disabled_plugins: list[str] = field(default_factory=list)

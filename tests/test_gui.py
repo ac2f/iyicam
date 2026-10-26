@@ -703,3 +703,26 @@ def test_cutting_direction_per_strategy(win):
     t2 = ToolpathDef("Second", "profile", t.tool, {"through": True}, Selection("vectors", [objs[0].id]))
     ctrl.add_toolpath(t2)
     assert t2.sequence["directions"]["diag_tr"] == "cw"
+
+
+def test_inner_pieces_first_is_one_click_and_remembered(win):
+    from conftest import end_mill
+
+    from iyicam.core.document import Selection, ToolpathDef
+    from iyicam.gui.settings import Settings
+    c = win.ctrl
+    o = VectorObject([shapes.rectangle(0, 0, 50, 50)], c.project.layers[0].id)
+    c.add_vectors([o], select=False)
+
+    def make(name):
+        t = ToolpathDef(name, "profile", end_mill(6), {"through": True}, Selection("vectors", [o.id]))
+        c.add_toolpath(t)
+        return t
+    first = make("a")
+    assert first.sequence["grouping"] == "depth"
+    win.inner_first_action.trigger()                     # the menu item: off -> part by part
+    assert first.sequence["grouping"] == "part" and not win.inner_first_action.isChecked()
+    assert make("b").sequence["grouping"] == "part"      # new toolpaths start the way the last choice was
+    assert Settings.load().default_grouping == "part"    # and so does the next session
+    win.inner_first_action.trigger()
+    assert first.sequence["grouping"] == "depth" and Settings.load().default_grouping == "depth"
