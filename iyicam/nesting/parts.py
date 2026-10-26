@@ -9,7 +9,76 @@ from ..core import clip, vectorops
 from ..core.document import Project, Sheet, VectorObject
 from ..core.geom import Transform
 from ..core.stock import StockItem
-from .nest import Container, NestResult, NestSettings, NestShape, nest
+from .nest import Container, NestResult, NestSettings, NestShape, Squeeze, nest
+
+
+ROTATION_MODES = [
+    ("default", "As set above"),
+    ("none", "Never rotate"),
+    ("flip", "0 / 180° only"),
+    ("limit", "Tilt up to ±"),
+    ("limit_flip", "Tilt up to ± or flipped 180°"),
+    ("step", "Steps of"),
+]
+RULE_USES_VALUE = {"limit", "limit_flip", "step"}
+
+
+def parse_angles(text: str) -> list[float]:
+    """Angles in degrees from text like ``0, 45, 90.5`` (commas, semicolons or spaces)."""
+    parts = [t for t in text.replace(";", " ").replace(",", " ").split() if t]
+    angles = [float(t) for t in parts]  # raises ValueError for anything else
+    return sorted(set(angles)) or [0.0]
+
+
+def parse_rule(text: str) -> dict:
+    """A rotation rule from text: ``none``, ``flip``, ``limit:10``, ``limit-flip:10``, ``step:15``, ``default``."""
+    mode, _, value = text.strip().lower().replace("-", "_").partition(":")
+    if mode not in dict(ROTATION_MODES) and mode != "inherit":
+        raise ValueError(f"unknown rotation rule {text!r}")
+    return {"mode": mode, "value": float(value) if value else 0.0}
+
+
+def rotation_angles(rule: dict | None, tilt_step: float = 5.0) -> list[float] | None:
+    """The angles a part may take under a rule (degrees); ``None``: the angles of the settings."""
+    mode = (rule or {}).get("mode", "default")
+    v = float((rule or {}).get("value", 0.0))
+    if mode == "none":
+        return [0.0]
+    if mode == "flip":
+        return [0.0, 180.0]
+    if mode in ("limit", "limit_flip"):
+        step = max(0.01, tilt_step)
+        n = int(v / step + 1e-9)
+        angles = [round(k * step, 6) for k in range(-n, n + 1)]
+        if mode == "limit_flip":
+            angles += [a + 180.0 for a in angles]
+        return angles
+    if mode == "step":
+        return [0.0] if v <= 0 else [round(k * v, 6) for k in range(max(1, int(round(360.0 / v))))]
+    return None
+
+
+def rule_allows_tilt(rule: dict | None) -> bool:
+    """Whether squeezing may tilt a part off its angles: not when it is told not to rotate (or only a little)."""
+    return (rule or {}).get("mode", "default") not in ("none", "flip", "limit", "limit_flip")
+
+
+def squeeze_lines(parts, squeezed) -> list[str]:
+    """Plain words for the parts that were (or would be) squeezed in."""
+    groups: dict[tuple, int] = {}
+    for q in squeezed:
+        key = (q.shape, round(abs(q.tilt), 3), round(q.relief, 3))
+        groups[key] = groups.get(key, 0) + 1
+    lines = []
+    for (shape, tilt, relief), n in groups.items():
+        how = []
+        if tilt > 1e-9:
+            how.append(f"tilted {tilt:g}°")
+        if relief > 1e-9:
+            how.append(f"{relief:g} mm closer to the edge")
+        name = parts[shape].root.name or f"Part {shape + 1}"
+        lines.append(f"  {name}{f' x{n}' if n > 1 else ''}: " + " and ".join(how))
+    return lines
 
 
 @dataclass
@@ -97,13 +166,18 @@ class NestOutcome:
     placed: int
     unplaced: int
     plates: list = field(default_factory=list)  # what each sheet was made from: StockItem, Sheet or None (new)
+    parts: list[Part] = field(default_factory=list)  # the parts, in the order the results refer to them
+    squeezed: list[Squeeze] = field(default_factory=list)  # parts squeezed in (tilted / closer to the edge)
+    suggestion: NestResult | None = None  # a better layout with parts squeezed in that was not taken
 
 
 def nest_objects(project: Project, objects: list[VectorObject], settings: NestSettings,
                  quantities: dict[str, int] | None = None, target_sheets: list[Sheet] | None = None,
                  progress: Callable | None = None, cancel: Callable[[], bool] | None = None,
                  stock: list[StockItem] | None = None, use_sheets: list[Sheet] | None = None,
-                 new_sheets: bool = True) -> NestOutcome:
+                 new_sheets: bool = True, rotation_rules: dict[str, dict] | None = None,
+                 layer_rules: dict[str, dict] | None = None, tilt_step: float = 5.0,
+                 choose: Callable[[NestResult, NestResult], bool] | None = None) -> NestOutcome:
     """Nest ``objects`` onto plates and move them there.
 
     Without ``stock`` and ``use_sheets`` the parts go onto sheets of ``settings`` size
@@ -115,13 +189,24 @@ def nest_objects(project: Project, objects: list[VectorObject], settings: NestSe
     own size, outline and thickness.
 
     ``quantities`` maps a part's root object id to the number of copies.
+
+    ``rotation_rules`` (part root id) and ``layer_rules`` (layer id) say how far parts may turn, see
+    :func:`rotation_angles`; a part's own rule wins over its layer's (``{"mode": "inherit"}`` or none
+    means its layer's), then the angles of ``settings`` are used. ``tilt_step`` is the step of limited rotation.
+
+    With squeezing set in ``settings`` (squeeze_angle / squeeze_margin) the nesting may find a better
+    layout with parts tilted a little or closer to the edge: ``choose(layout, better)`` says whether to
+    take it (``None``: no).
     """
     from .stock import sheet_container, to_container
     parts = group_parts(objects)
     shapes = []
     for p in parts:
         q = (quantities or {}).get(p.root.id, p.quantity)
-        shapes.append(NestShape(part_outline(p), q, p))
+        rule = (rotation_rules or {}).get(p.root.id)
+        if (rule or {}).get("mode", "inherit") == "inherit":
+            rule = (layer_rules or {}).get(p.root.layer_id)
+        shapes.append(NestShape(part_outline(p), q, p, rotation_angles(rule, tilt_step), rule_allows_tilt(rule)))
     use_plates = stock is not None or use_sheets is not None
     if use_plates:
         moving_ids = {o.id for p in parts for o in p.objects}
@@ -131,6 +216,9 @@ def nest_objects(project: Project, objects: list[VectorObject], settings: NestSe
             containers.append(Container.rect(settings.sheet_width, settings.sheet_height))
         settings = replace(settings, containers=containers)
     res = nest(shapes, settings, progress, cancel)
+    suggestion = res.suggestion
+    if suggestion is not None and choose is not None and choose(res, suggestion):
+        res, suggestion = suggestion, None  # the layout with parts squeezed in
     # the sheet of every plate that was used
     spare = list(target_sheets or [])
     sheets: list[Sheet] = []
@@ -170,4 +258,5 @@ def nest_objects(project: Project, objects: list[VectorObject], settings: NestSe
             o.transform(T)
             sheets[pl.sheet].vectors.append(o)
     made_from = [settings.containers[i].payload for i in res.stock] if use_plates else [None] * res.sheets
-    return NestOutcome(res, sheets, len(res.placements), len(res.unplaced), made_from)
+    return NestOutcome(res, sheets, len(res.placements), len(res.unplaced), made_from, parts, list(res.squeezed),
+                       suggestion)

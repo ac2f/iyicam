@@ -32,6 +32,7 @@ class NestShape:
     quantity: int = 1
     payload: Any = None
     rotations: list[float] | None = None  # degrees; None = NestSettings.rotations
+    tilt: bool = True              # may be tilted a little off its angles to squeeze it in (NestSettings.squeeze_*)
 
 
 @dataclass
@@ -69,6 +70,12 @@ class NestSettings:
     tolerance: float = 0.5         # outline simplification (parts get this much extra spacing at most)
     containers: list[Container] | None = None  # the stock; None = unlimited sheets of the size above
     stock_order: str = "leftovers"  # leftovers (leftovers first, small to large) | listed
+    # squeezing in: a part that does not fit may be tilted off its angles by up to ``squeeze_angle`` degrees
+    # (in steps of ``squeeze_step``) and / or come up to ``squeeze_margin`` mm closer to the edge of the plate
+    # than the border gap; 0 = not used. The result is a suggestion (NestResult.suggestion) if it is better.
+    squeeze_angle: float = 0.0
+    squeeze_margin: float = 0.0
+    squeeze_step: float = 2.0
 
 
 @dataclass
@@ -82,6 +89,18 @@ class Placement:
 
 
 @dataclass
+class Squeeze:
+    """A part that only fits squeezed in: tilted by ``tilt`` degrees off its nearest angle and / or
+    ``relief`` mm closer to the edge of the plate than the border gap."""
+
+    shape: int
+    copy: int
+    sheet: int
+    tilt: float
+    relief: float
+
+
+@dataclass
 class NestResult:
     placements: list[Placement] = field(default_factory=list)
     sheets: int = 0
@@ -89,6 +108,8 @@ class NestResult:
     utilization: list[float] = field(default_factory=list)  # part area / free area, per plate used
     stock: list[int] = field(default_factory=list)          # container index of every plate used
     units: list[int] = field(default_factory=list)          # which of the container's plates (0, 1, ...)
+    squeezed: list[Squeeze] = field(default_factory=list)   # parts that were squeezed in (squeeze runs only)
+    suggestion: "NestResult | None" = None                  # a better layout with parts squeezed in, if there is one
 
 
 def is_convex(path: IntPath) -> bool:
@@ -285,10 +306,13 @@ def _axis_rect(polys: list[list[Pt]]) -> tuple[float, float, float, float] | Non
 class _Box:
     """A container prepared for nesting: the area the inflated parts must stay inside."""
 
-    def __init__(self, index: int, c: Container, margin: float, spacing: float, tol: float):
+    def __init__(self, index: int, c: Container, margin: float, spacing: float, tol: float, relief: float = 0.0):
         S = clip.SCALE
         half = spacing / 2.0
         self.index, self.c = index, c
+        # parts may come ``relief`` closer to the edge of the plate (never past the edge itself)
+        self.relief = min(relief, max(0.0, margin))
+        margin = margin - self.relief
         region = clip.normalize(c.region)
         self.material = abs(clip.area(region))
         rect = None if c.obstacles else _axis_rect(region)
@@ -339,6 +363,9 @@ class Nester:
         self.boxes = [_Box(i, c, settings.margin, settings.spacing, settings.tolerance)
                       for i, c in enumerate(conts)]
         self.variants: list[dict[float, _Variant]] = []
+        self.extra: list[dict[float, _Variant]] = []  # angles tried only when squeezing parts in
+        self._grown: list[list] = []
+        self._relieved_boxes: dict[tuple[int, float], _Box] = {}
         self.areas: list[float] = []
         for sh in self.shapes:
             outer = [p for p, _ in clip.polytree(sh.polys, "nonzero")] or sh.polys
@@ -354,6 +381,8 @@ class Nester:
                 if grown:
                     vs[float(ang)] = _Variant(_rotate_int(grown, ang))
             self.variants.append(vs)
+            self.extra.append({})
+            self._grown.append(grown)
         self._nfp_cache: dict[tuple, list[IntPath]] = {}
         self._feasible_cache: dict[tuple, tuple[list[IntPath], tuple] | None] = {}
 
@@ -363,7 +392,7 @@ class Nester:
         hit = self._nfp_cache.get(key)
         if hit is not None:
             return hit
-        VA, VB = self.variants[a][aa], self.variants[b][ba]
+        VA, VB = self._variant(a, aa), self._variant(b, ba)
         A, B = VA.paths, VB.paths
         if len(A) == 1 and len(B) == 1 and VA.convex[0] and VB.convex[0]:
             res = [convex_minkowski(VA.convex[0], [(-x, -y) for x, y in VB.convex[0]])]
@@ -396,12 +425,28 @@ class Nester:
         self._nfp_cache[key] = res
         return res
 
+    def _variant(self, si: int, ang: float) -> _Variant:
+        """The shape turned by ``ang``: one of its angles, or (when squeezing) any other, made when asked."""
+        v = self.variants[si].get(ang) or self.extra[si].get(ang)
+        if v is None:
+            v = self.extra[si][ang] = _Variant(_rotate_int(self._grown[si], ang))
+        return v
+
+    def _relieved(self, box: _Box, relief: float) -> _Box:
+        """The plate with parts allowed ``relief`` mm closer to its edge."""
+        key = (box.index, relief)
+        b = self._relieved_boxes.get(key)
+        if b is None:
+            b = self._relieved_boxes[key] = _Box(box.index, box.c, self.st.margin, self.st.spacing,
+                                                 self.st.tolerance, relief)
+        return b
+
     def _feasible(self, box: _Box, si: int, ang: float) -> tuple[list[IntPath], tuple] | None:
         """Where the part's reference can be placed on an empty plate: ``(paths, bbox)`` or ``None``."""
-        key = (box.index, si, ang)
+        key = (box.index, box.relief, si, ang)
         if key in self._feasible_cache:
             return self._feasible_cache[key]
-        res = self._compute_feasible(box, self.variants[si][ang])
+        res = self._compute_feasible(box, self._variant(si, ang))
         self._feasible_cache[key] = res
         return res
 
@@ -484,10 +529,12 @@ class Nester:
         out = pc.Execute(pyclipper.CT_DIFFERENCE, pyclipper.PFT_NONZERO, pyclipper.PFT_NONZERO)
         return sum(abs(pyclipper.Area(path)) for path in out) <= self._OUTSIDE_TOL
 
-    def _try_sheet(self, box: _Box, placed: list[tuple[int, float, int, int]], si: int, used_bbox):
+    def _try_sheet(self, box: _Box, placed: list[tuple[int, float, int, int]], si: int, used_bbox,
+                   angles=None):
         best = None
         cands = []
-        for ang, v in self.variants[si].items():
+        for ang in (self.variants[si] if angles is None else angles):
+            v = self._variant(si, ang)
             base = self._feasible(box, si, ang)
             if base is None:
                 continue
@@ -519,7 +566,7 @@ class Nester:
         if box.rect is None:  # best first, the first one that is really on the plate
             cands.sort()
             for c in cands:
-                if self._inside(box, self.variants[si][c[1]], c[2], c[3]):
+                if self._inside(box, self._variant(si, c[1]), c[2], c[3]):
                     return c
         return best
 
@@ -532,7 +579,9 @@ class Nester:
         return sorted(boxes, key=lambda b: (0 if b.c.leftover else 1, b.free, b.index))
 
     def run_order(self, order: list[tuple[int, int]], progress: Callable | None = None,
-                  cancel: Callable[[], bool] | None = None) -> NestResult:
+                  cancel: Callable[[], bool] | None = None, squeeze: bool = False) -> NestResult:
+        """Place the items in this order; ``squeeze``: parts that do not fit are tilted a little or come
+        closer to the plate's edge (the NestSettings.squeeze_* limits) before the next plate is started."""
         res = NestResult()
         remaining = [it for it in order if self.variants[it[0]]]
         res.unplaced = [it for it in order if not self.variants[it[0]]]
@@ -542,7 +591,7 @@ class Nester:
             unit = 0
             while remaining and not stop and res.sheets < self.st.max_sheets \
                     and (box.c.quantity <= 0 or unit < box.c.quantity):
-                n = self._fill(box, remaining, res, progress, cancel, total)
+                n = self._fill(box, remaining, res, progress, cancel, total, squeeze)
                 if n < 0:
                     stop = True
                     break
@@ -561,8 +610,38 @@ class Nester:
             res.utilization.append(a / free if free > 0 else 0.0)
         return res
 
+    def _squeeze_levels(self, si: int) -> list[tuple[float, float]]:
+        """``(tilt, relief)`` to try for a part that does not fit, from the least to the most: tilting by
+        one step, two steps, ..., then coming closer to the edge in four steps, then both."""
+        st = self.st
+        tilts = []
+        if st.squeeze_angle > 0 and self.shapes[si].tilt and st.squeeze_step > 0:
+            k = 1
+            while k * st.squeeze_step <= st.squeeze_angle + 1e-9:
+                tilts.append(k * st.squeeze_step)
+                k += 1
+        reliefs = [st.squeeze_margin * f for f in (0.25, 0.5, 0.75, 1.0)] if st.squeeze_margin > 0 else []
+        levels = [(t, 0.0) for t in tilts] + [(0.0, r) for r in reliefs]
+        if tilts and reliefs:
+            levels += [(t, reliefs[-1]) for t in tilts]
+        return levels
+
+    def _squeeze(self, box: _Box, placed, si: int, used_bbox):
+        """The gentlest way to squeeze a part onto the plate: ``(candidate, tilt, relief)`` or ``None``."""
+        base = list(self.variants[si])
+        for tilt, relief in self._squeeze_levels(si):
+            b = self._relieved(box, relief) if relief > 0 else box
+            if b.relief == 0 and relief > 0:
+                continue  # no border gap to take from
+            angles = base if tilt == 0 else sorted({round(a + sg * tilt, 6) for a in base for sg in (1, -1)})
+            c = self._try_sheet(b, placed, si, used_bbox, angles)
+            if c is not None:
+                dev = min((((c[1] - a + 180.0) % 360.0) - 180.0 for a in base), key=abs)
+                return c, round(dev, 6), b.relief
+        return None
+
     def _fill(self, box: _Box, remaining: list[tuple[int, int]], res: NestResult, progress, cancel,
-              total: int) -> int:
+              total: int, squeeze: bool = False) -> int:
         """Place as many of ``remaining`` (largest first) on a new plate of ``box`` as fit; their count
         (-1: cancelled)."""
         placed: list[tuple[int, float, int, int]] = []
@@ -570,24 +649,37 @@ class Nester:
         free = box.free
         sheet = res.sheets
         left = []
+        dead: set[int] = set()  # shapes that do not fit any more: placing more parts only takes room away
+        tight: set[int] = set()  # ... not without squeezing
         for k, item in enumerate(remaining):
             if cancel and cancel():
                 remaining[:] = left + remaining[k:]
                 return -1
             si, ci = item
-            if self.areas[si] > free + 1e-6:
+            if self.areas[si] > free + 1e-6 or si in dead:
                 left.append(item)
                 continue
             if progress:
                 progress(total - len(remaining) + len(placed), total)
-            b = self._try_sheet(box, placed, si, used_bbox)
+            squeezed = None
+            b = None if si in tight else self._try_sheet(box, placed, si, used_bbox)
             if b is None:
-                left.append(item)
-                continue
+                tight.add(si)
+                if squeeze:
+                    sq = self._squeeze(box, placed, si, used_bbox)
+                    if sq is not None:
+                        b, tilt, relief = sq
+                        squeezed = Squeeze(si, ci, sheet, tilt, relief)
+                if b is None:
+                    dead.add(si)
+                    left.append(item)
+                    continue
             _, ang, x, y = b
+            if squeezed is not None:
+                res.squeezed.append(squeezed)
             placed.append((si, ang, x, y))
             free -= self.areas[si]
-            bx0, by0, bx1, by1 = self.variants[si][ang].bbox
+            bx0, by0, bx1, by1 = self._variant(si, ang).bbox
             nb = (x + bx0, y + by0, x + bx1, y + by1)
             used_bbox = nb if used_bbox is None else (min(used_bbox[0], nb[0]), min(used_bbox[1], nb[1]),
                                                       max(used_bbox[2], nb[2]), max(used_bbox[3], nb[3]))
@@ -627,4 +719,10 @@ def nest(shapes: Sequence[NestShape], settings: NestSettings, progress: Callable
         r = n.run_order(cand)
         if n.quality(r) < n.quality(best):
             best, order = r, cand
+    if (settings.squeeze_angle > 0 or settings.squeeze_margin > 0) and (best.unplaced or best.sheets > 1) \
+            and not (cancel and cancel()):
+        # squeezing parts in may place what did not fit or save a plate: offered as a suggestion
+        r = n.run_order(order, None, cancel, squeeze=True)
+        if r.squeezed and n.quality(r)[:3] < n.quality(best)[:3]:
+            best.suggestion = r
     return best

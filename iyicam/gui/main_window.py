@@ -22,6 +22,7 @@ from .controller import Controller
 from .dialogs import (CommandDialog, ExportDialog, ImportDialog, LeftoverDialog, MaterialDialog, NestingDialog,
                       PluginsDialog, PostEditorDialog, PreferencesDialog, StockDialog, ToolDatabaseDialog,
                       ToolpathDialog, buttons)
+from ..nesting.parts import squeeze_lines
 from .forms import ParamForm
 from .icons import icon
 from .panels import LayersPanel, PropertiesPanel, SheetsPanel, ToolpathsPanel
@@ -777,6 +778,8 @@ class MainWindow(QMainWindow):
             lines = [f"Placed {out.placed} part(s) on {r.sheets} plate(s):"]
             for sh, u in zip(out.sheets, r.utilization):
                 lines.append(f"  {sh.name}: {u * 100:.1f}% used")
+            if out.squeezed:
+                lines += ["", "Squeezed in:"] + squeeze_lines(out.parts, out.squeezed)
             if out.unplaced:
                 lines.append(f"\n{out.unplaced} part(s) did not fit.")
             QMessageBox.information(self, "Nesting", "\n".join(lines))

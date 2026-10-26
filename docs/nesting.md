@@ -60,6 +60,50 @@ after the plate (*Leftover 1*, *Offcut 2*, ...). The border gap is kept to the e
 the plate, to its holes and cut-outs; the gap between parts is kept between parts and
 to what is fixed on a plate.
 
+## Rotation
+
+How parts may turn is set in three steps, the most specific wins:
+
+1. **Rotation** in the nesting dialog, for every part: *No rotation*, *0 / 180°*,
+   90, 45 or 15° steps, **Steps of my own...** (any step in degrees, e.g. 22.5) or
+   **List of angles...** (any angles, e.g. `0, 22.5, 90`).
+2. **Rotation by layer**: every layer of the parts being nested has its own rule.
+3. **Rotation of a part**: *Like its layer* (the default) or its own rule. Select
+   several rows of the parts table and use **Apply** to set them together (the
+   selected vectors, or everything on a layer).
+
+The rules:
+
+| Rule | Angles the part may take |
+|---|---|
+| As set above | the angles of the Rotation setting |
+| Never rotate | 0° only (for materials with a grain, patterns, ...) |
+| 0 / 180° only | 0° and 180° |
+| Tilt up to ±X° | -X° ... +X° in steps of *Step of limited rotation* |
+| Tilt up to ±X° or flipped 180° | the same and turned by 180° |
+| Steps of X° | every X° round the circle |
+
+The rules are saved with the project and stay when a nesting is undone. A part that
+may not rotate (or only a little) is never tilted by squeezing either.
+
+## Squeezing parts in
+
+Sometimes a part does not fit although it would with a little give: tilted a few
+degrees off its angle, or a few millimetres closer to the plate's edge than the
+border gap. **Squeeze parts in** (off by default) looks for exactly that:
+
+* **Tilt by up to** X° (in steps of *Tilt step*; 0 = never tilt) and
+  **Closer to the edge by up to** Y mm (what a part may take from the border gap;
+  0 = never).
+* **Suggest it, I decide**: the layout is made as usual; when squeezing parts in
+  would place parts that do not fit or save a plate, a window lists what would be
+  done ("Part 3 x2: tilted 6°", "Part 5: 1 mm closer to the edge") and you choose
+  **Squeeze them in** or **Keep it as it is**. **Squeeze in automatically** takes the
+  better layout without asking. Nothing is offered when it would not help.
+* The gentlest squeeze is used for every part: the smallest tilt first, then
+  coming closer to the edge in four steps, then both. Parts that fit as they are
+  stay as they are. The result lists every squeezed part and by how much.
+
 ## Sheets of any shape
 
 A sheet made from a leftover has an **outline** (material only inside it), shown on
@@ -89,6 +133,17 @@ python -m iyicam nest job.icam -o nested.icam --stock leftovers.json --no-new-sh
 `--leftover WxH[:N]` adds rectangular leftovers (N of them), `--stock FILE` a stock
 file, `--no-project-stock` ignores the stock saved in the project, `--no-new-sheets`
 uses only those plates, `--keep-stock` keeps the used plates in the project's stock.
+
+```
+python -m iyicam nest job.icam -o nested.icam --angles 0,22.5,90 --rotate-layer Grain=none
+python -m iyicam nest job.icam -o nested.icam --squeeze-angle 5 --squeeze-margin 3 --apply-squeeze
+```
+
+`--angles LIST` any angles instead of `--rotation` (the step), `--rotate-layer
+LAYER=RULE` (`none`, `flip`, `limit:X`, `limit-flip:X`, `step:X`, `default`; repeat
+for more layers), `--tilt-step` the step of `limit:X`. `--squeeze-angle`,
+`--squeeze-margin` and `--squeeze-step` set the limits of squeezing; a better layout is
+printed as a suggestion, `--apply-squeeze` takes it.
 
 ## Stock file
 

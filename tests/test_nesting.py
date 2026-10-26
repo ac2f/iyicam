@@ -407,3 +407,219 @@ def test_nothing_sticks_out_of_an_irregular_plate_or_lies_in_its_hole():
     assert_on_plates(shapes_, res, st)
     # the smallest leftover is filled first
     assert res.stock[0] == 1
+
+
+# ---------------------------------------------------------------------------
+# squeezing parts in: tilt a little, come closer to the edge
+# ---------------------------------------------------------------------------
+
+def _on_plate(shapes_, res, plate_w, plate_h, clearance, tol=0.05):
+    """Every placed part is at least ``clearance`` mm from the edge of a plain plate."""
+    for pl in res.placements:
+        c, s = math.cos(math.radians(pl.angle)), math.sin(math.radians(pl.angle))
+        for poly in shapes_[pl.shape].polys:
+            pts = [(x * c - y * s + pl.x, x * s + y * c + pl.y) for x, y in poly]
+            assert min(p[0] for p in pts) >= clearance - tol and max(p[0] for p in pts) <= plate_w - clearance + tol
+            assert min(p[1] for p in pts) >= clearance - tol and max(p[1] for p in pts) <= plate_h - clearance + tol
+
+
+def test_squeezing_closer_to_the_edge_takes_the_least_that_fits():
+    # 280 x 100 does not fit between the border gaps of a 300 wide plate; 1 mm closer to each edge does
+    base = dict(margin=10, spacing=8, rotations=[0, 90], containers=[Container.rect(300, 200, quantity=1)])
+    shapes_ = [NestShape([rect_poly(280, 100)])]
+    res = nest(shapes_, NestSettings(**base))
+    assert res.unplaced == [(0, 0)] and res.suggestion is None  # off: nothing is suggested
+    res = nest(shapes_, NestSettings(**base, squeeze_margin=4.0))
+    assert res.unplaced == [(0, 0)]  # the layout itself stays as it was
+    sug = res.suggestion
+    assert sug is not None and not sug.unplaced and len(sug.placements) == 1
+    assert [(q.shape, q.copy, q.tilt) for q in sug.squeezed] == [(0, 0, 0.0)]
+    assert sug.squeezed[0].relief == pytest.approx(1.0)  # 1 of the 4 mm allowed
+    _on_plate(shapes_, sug, 300, 200, 10 - 1.0)
+
+
+def test_squeezing_by_tilting_takes_the_smallest_tilt_that_fits():
+    # a 360 mm bar does not fit a 300 mm plate along an edge, only (nearly) along the diagonal
+    base = dict(margin=10, spacing=8, rotations=[0, 90], containers=[Container.rect(300, 300, quantity=1)])
+    bar = rect_poly(360, 20)
+    res = nest([NestShape([bar])], NestSettings(**base, squeeze_angle=45, squeeze_step=5))
+    assert res.unplaced == [(0, 0)]
+    sug = res.suggestion
+    assert sug is not None and not sug.unplaced
+    q = sug.squeezed[0]
+    assert abs(q.tilt) == pytest.approx(45) and q.relief == 0.0
+    assert abs(math.sin(math.radians(sug.placements[0].angle))) == pytest.approx(math.sin(math.radians(45)), abs=1e-6)
+    short = nest([NestShape([bar])], NestSettings(**base, squeeze_angle=30, squeeze_step=5))
+    assert short.suggestion is None  # 30 degrees is not enough
+    # a part that must not be tilted is not
+    res = nest([NestShape([bar], tilt=False)], NestSettings(**base, squeeze_angle=45, squeeze_step=5))
+    assert res.suggestion is None
+    # tilt first, the edge second: with both allowed the tilt alone is tried first
+    res = nest([NestShape([bar])], NestSettings(**base, squeeze_angle=45, squeeze_step=5, squeeze_margin=4))
+    q = res.suggestion.squeezed[0]
+    assert abs(q.tilt) == pytest.approx(45) and q.relief == 0.0
+    # a 340 mm bar needs 39 degrees alone; with 36 degrees at most it needs the 4 mm too
+    bar = rect_poly(340, 20)
+    res = nest([NestShape([bar])], NestSettings(**base, squeeze_angle=45, squeeze_step=1, squeeze_margin=4))
+    q = res.suggestion.squeezed[0]
+    assert abs(q.tilt) == pytest.approx(39) and q.relief == 0.0  # the tilt alone is tried first
+    res = nest([NestShape([bar])], NestSettings(**base, squeeze_angle=36, squeeze_step=1, squeeze_margin=4))
+    q = res.suggestion.squeezed[0]
+    assert abs(q.tilt) == pytest.approx(36) and q.relief == pytest.approx(4.0)
+    _on_plate([NestShape([bar])], res.suggestion, 300, 300, 10 - 4.0 - 0.05)
+    assert nest([NestShape([bar])], NestSettings(**base, squeeze_angle=36, squeeze_step=1)).suggestion is None
+
+
+def test_squeezing_in_can_save_a_sheet_and_is_only_offered_when_it_helps():
+    # two 135 x 170 parts need 289 mm: 2 sheets between 10 mm border gaps, one when 1 mm is given back
+    st = NestSettings(margin=10, spacing=8, rotations=[0, 90], containers=[Container.rect(300, 200)],
+                      squeeze_margin=3.0)
+    shapes_ = [NestShape([rect_poly(135, 170)], 2)]
+    res = nest(shapes_, st)
+    assert res.sheets == 2 and not res.unplaced
+    assert res.suggestion is not None and res.suggestion.sheets == 1 and not res.suggestion.unplaced
+    assert len(res.suggestion.squeezed) >= 1 and all(q.relief <= 3.0 for q in res.suggestion.squeezed)
+    _on_plate(shapes_, res.suggestion, 300, 200, 10 - 3.0)
+    # everything fits as it is: nothing to suggest
+    res = nest([NestShape([rect_poly(100, 80)], 2)], st)
+    assert res.sheets == 1 and res.suggestion is None
+    # not helping (the part is bigger than the plate even with 3 mm more): nothing to suggest
+    res = nest([NestShape([rect_poly(400, 300)])], st)
+    assert res.unplaced and res.suggestion is None
+
+
+# ---------------------------------------------------------------------------
+# free angles, rotation rules per part and layer, the squeezing suggestion through nest_objects
+# ---------------------------------------------------------------------------
+
+def test_angles_and_rules():
+    from iyicam.nesting.parts import parse_angles, parse_rule, rotation_angles, rule_allows_tilt
+    assert parse_angles("0, 22.5; 90  45") == [0.0, 22.5, 45.0, 90.0]
+    assert parse_angles("") == [0.0]
+    with pytest.raises(ValueError):
+        parse_angles("0, ninety")
+    assert rotation_angles({"mode": "none"}) == [0.0]
+    assert rotation_angles({"mode": "flip"}) == [0.0, 180.0]
+    assert rotation_angles({"mode": "limit", "value": 10}, 5.0) == [-10.0, -5.0, 0.0, 5.0, 10.0]
+    assert rotation_angles({"mode": "limit", "value": 12}, 5.0) == [-10.0, -5.0, 0.0, 5.0, 10.0]  # whole steps only
+    assert sorted(rotation_angles({"mode": "limit_flip", "value": 5}, 5.0)) == [-5, 0, 5, 175, 180, 185]
+    assert rotation_angles({"mode": "step", "value": 45}) == [0, 45, 90, 135, 180, 225, 270, 315]
+    assert rotation_angles({"mode": "step", "value": 0}) == [0.0]
+    assert rotation_angles({"mode": "default"}) is None and rotation_angles(None) is None
+    assert parse_rule("limit-flip:7.5") == {"mode": "limit_flip", "value": 7.5}
+    assert parse_rule("none") == {"mode": "none", "value": 0.0}
+    with pytest.raises(ValueError):
+        parse_rule("sideways")
+    assert [rule_allows_tilt(r) for r in (None, {"mode": "step"}, {"mode": "none"}, {"mode": "limit"})] == \
+        [True, True, False, False]
+
+
+def test_rotation_rules_by_part_and_by_layer():
+    """Two 300 mm bars on a 100 x 400 strip fit only turned by 90 degrees: whether a bar is placed shows how
+    far the rules let it turn."""
+    from iyicam.nesting.stock import StockItem
+
+    def run(part_rules=None, layer_rules=None):
+        p, s, objs = make_project([shapes.rectangle(0, 0, 300, 20), shapes.rectangle(0, 100, 300, 20)],
+                                  size=(500, 500))
+        lay_b = p.add_layer("Fixed grain")
+        objs[1].layer_id = lay_b.id
+        rules = {objs[i].id: r for i, r in (part_rules or {}).items()}
+        lrules = {lay_b.id: r for r in [(layer_rules or {}).get("b")] if r}
+        out = nest_objects(p, objs, NestSettings(margin=5, spacing=4, rotations=[0, 90, 180, 270]),
+                           {o.id: 1 for o in objs}, [], stock=[StockItem("strip", 100, 400)], use_sheets=[],
+                           new_sheets=False, rotation_rules=rules, layer_rules=lrules, tilt_step=5.0)
+        return {pl.shape: round(pl.angle % 360, 6) for pl in out.result.placements}
+
+    both = run()
+    assert set(both) == {0, 1} and set(both.values()) <= {90.0, 270.0}  # nothing set: turned as needed
+    # rules by layer: "Fixed grain" never rotates, so its bar does not fit
+    assert set(run(layer_rules={"b": {"mode": "none"}})) == {0}
+    # by part: own rule wins over the layer's, "inherit" falls back to the layer's
+    assert set(run(part_rules={1: {"mode": "default"}}, layer_rules={"b": {"mode": "none"}})) == {0, 1}
+    assert set(run(part_rules={1: {"mode": "inherit"}}, layer_rules={"b": {"mode": "none"}})) == {0}
+    # flipped only, a little, a little or flipped: not enough to turn a bar by 90 degrees
+    assert set(run(part_rules={0: {"mode": "flip"}})) == {1}
+    assert set(run(part_rules={0: {"mode": "limit", "value": 10}})) == {1}
+    assert set(run(part_rules={0: {"mode": "limit_flip", "value": 10}})) == {1}
+    # up to 95 degrees, steps of 30 or 45 degrees: a bar fits, at one of the angles the rule allows
+    from iyicam.nesting.parts import rotation_angles
+    for rule in ({"mode": "limit", "value": 95}, {"mode": "step", "value": 30}, {"mode": "step", "value": 45}):
+        placed = run(part_rules={0: rule})
+        allowed = {round(a % 360, 6) for a in rotation_angles(rule, 5.0)}
+        assert set(placed) == {0, 1} and placed[0] in allowed and placed[0] not in (0.0, 180.0), (rule, placed)
+
+
+def test_nest_objects_offers_and_applies_a_squeeze():
+    p, s, objs = make_project([shapes.rectangle(0, 0, 280, 100)], size=(300, 200))
+    st = NestSettings(margin=10, spacing=8, rotations=[0, 90], squeeze_margin=4.0,
+                      containers=[Container.rect(300, 200, quantity=1)])
+    seen = []
+
+    def decline(strict, better):
+        seen.append((len(strict.unplaced), len(better.unplaced)))
+        return False
+
+    out = nest_objects(p, objs, st, {objs[0].id: 1}, [], choose=decline)
+    assert seen == [(1, 0)] and out.unplaced == 1 and out.placed == 0 and not out.squeezed
+    assert out.suggestion is not None and out.suggestion.squeezed  # offered, not taken
+    out = nest_objects(p, objs, st, {objs[0].id: 1}, [], choose=lambda a, b: True)
+    assert out.unplaced == 0 and out.placed == 1 and out.suggestion is None
+    assert [(q.shape, q.relief) for q in out.squeezed] == [(0, pytest.approx(1.0))]
+    sheet = out.sheets[0]
+    bb = sheet.vectors[0].bbox()
+    assert bb.xmin >= 10 - 1.0 - 0.05 and bb.xmax <= 300 - 10 + 1.0 + 0.05  # taken from the border gap, no more
+    # no choice given: the layout stays strict
+    p, s, objs = make_project([shapes.rectangle(0, 0, 280, 100)], size=(300, 200))
+    out = nest_objects(p, objs, st, {objs[0].id: 1}, [])
+    assert out.unplaced == 1 and not out.squeezed
+
+
+def test_a_part_told_not_to_rotate_is_not_tilted_by_squeezing():
+    p, s, objs = make_project([shapes.rectangle(0, 0, 360, 20)], size=(300, 300))
+    st = NestSettings(margin=10, spacing=8, rotations=[0, 90], squeeze_angle=45, squeeze_step=5,
+                      containers=[Container.rect(300, 300, quantity=1)])
+    out = nest_objects(p, objs, st, {objs[0].id: 1}, [], choose=lambda a, b: True)
+    assert out.placed == 1 and abs(out.squeezed[0].tilt) == pytest.approx(45)  # free to tilt
+    p, s, objs = make_project([shapes.rectangle(0, 0, 360, 20)], size=(300, 300))
+    out = nest_objects(p, objs, st, {objs[0].id: 1}, [], rotation_rules={objs[0].id: {"mode": "none"}},
+                       choose=lambda a, b: True)
+    assert out.placed == 0 and not out.squeezed and out.suggestion is None  # told not to
+
+
+def test_cli_free_angles_layer_rules_and_squeezing(tmp_path, capsys):
+    from iyicam.cli import main
+    from iyicam.core.document import Project
+    p, s, objs = make_project([shapes.rectangle(0, 0, 300, 20)], size=(500, 500))
+    grain = p.add_layer("Grain")
+    objs[0].layer_id = grain.id
+    p.save(tmp_path / "j.icam")
+    args = ["--no-plugins", "nest", str(tmp_path / "j.icam"), "-o", str(tmp_path / "n.icam"),
+            "--leftover", "100x400", "--no-new-sheets", "--margin", "5", "--spacing", "4"]
+    # any angles: the bar is placed at 90 degrees only because that angle was asked for
+    assert main(args + ["--angles", "0,90"]) == 0
+    assert "placed 1, unplaced 0" in capsys.readouterr().out
+    assert main(args + ["--angles", "0,45"]) == 0
+    assert "placed 0, unplaced 1" in capsys.readouterr().out
+    # a layer that must not rotate
+    assert main(args + ["--rotate-layer", "Grain=none"]) == 0
+    assert "placed 0, unplaced 1" in capsys.readouterr().out
+    assert main(args + ["--rotate-layer", "Grain=step:30"]) == 0
+    assert "placed 1, unplaced 0" in capsys.readouterr().out
+    # bad input is reported, not raised
+    assert main(args + ["--rotate-layer", "Nope=none"]) == 2
+    assert main(args + ["--rotate-layer", "Grain=sideways"]) == 2
+    assert main(args + ["--angles", "a,b"]) == 2
+    capsys.readouterr()
+    # squeezing: a 280 mm bar does not fit a 300 plate between 10 mm border gaps; 4 mm give-back is enough
+    p2, s2, o2 = make_project([shapes.rectangle(0, 0, 280, 100)], size=(500, 500))
+    p2.save(tmp_path / "k.icam")
+    sq = ["--no-plugins", "nest", str(tmp_path / "k.icam"), "-o", str(tmp_path / "k2.icam"), "--leftover", "300x200",
+          "--no-new-sheets", "--margin", "10", "--spacing", "8", "--squeeze-margin", "4"]
+    assert main(sq) == 0
+    out = capsys.readouterr().out
+    assert "placed 0, unplaced 1" in out and "suggestion:" in out and "closer to the edge" in out
+    assert main(sq + ["--apply-squeeze"]) == 0
+    out = capsys.readouterr().out
+    assert "placed 1, unplaced 0" in out and "squeezed in:" in out
+    assert len(Project.load(tmp_path / "k2.icam").sheets[0].vectors) == 1

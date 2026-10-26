@@ -272,6 +272,122 @@ def test_leftover_of_a_sheet_goes_to_the_stock_and_the_outline_is_set_from_vecto
     assert not ctrl.set_sheet_outline_from_selection()  # nothing selected
 
 
+def _bars(ctrl, n=2, length=300):
+    """Bars that fit a 100 x 400 strip of the stock only turned, one per layer; the strip is the only plate."""
+    from iyicam.core.stock import StockItem
+    ctrl.project.sheets[0].vectors = []
+    second = ctrl.project.add_layer("Grain")
+    objs = [VectorObject([shapes.rectangle(0, 120 * i, length, 20)], ctrl.layer_id if i == 0 else second.id)
+            for i in range(n)]
+    ctrl.add_vectors(objs)
+    ctrl.project.stock = [StockItem("strip", 100, 400, None, 1, True)]
+    return objs
+
+
+def _nest_dialog(win, **values):
+    from iyicam.gui.dialogs import NestingDialog
+    nd = NestingDialog(win.ctrl, win)
+    w = nd.form.widgets
+    w["target"].setCurrentIndex(w["target"].findData("new"))
+    w["new_sheets"].setChecked(False)
+    w["use_up"].setChecked(False)
+    w["margin"].setValue(win.ctrl.units.to_display(5.0))
+    w["spacing"].setValue(win.ctrl.units.to_display(4.0))
+    for k, v in values.items():
+        wd = w[k]
+        if hasattr(wd, "findData"):
+            wd.setCurrentIndex(wd.findData(v))
+        elif hasattr(wd, "setText"):
+            wd.setText(v)
+        else:
+            wd.setValue(v)
+    return nd
+
+
+def test_nesting_dialog_free_angles_and_rotation_rules(win, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    ctrl = win.ctrl
+    objs = _bars(ctrl)
+    # a list of any angles: 0 and 45 do not let a 300 mm bar into the strip, 0 and 90 do
+    nd = _nest_dialog(win, rotation="list", angles="0, 45")
+    assert nd.rotations(nd.form.values()) == [0.0, 45.0]
+    out = nd.run()
+    assert out.placed == 0 and out.unplaced == 2
+    ctrl.undo()
+    out = _nest_dialog(win, rotation="list", angles="0, 90").run()
+    assert out.placed == 2
+    ctrl.undo()
+    # own step: 30 degrees (90 is a multiple)
+    nd = _nest_dialog(win, rotation="custom", rotation_step=30.0)
+    assert nd.rotations(nd.form.values()) == [float(a) for a in range(0, 360, 30)]
+    assert nd.run().placed == 2
+    ctrl.undo()
+    # a bad list is refused before the dialog closes
+    warned = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: warned.append(a[2]))
+    nd = _nest_dialog(win, rotation="list", angles="0, ninety")
+    nd.accept()
+    assert warned and nd.result() == 0
+    # rules by layer: "Grain" never rotates
+    nd = _nest_dialog(win)
+    names = [nd.layer_table.item(r, 0).text() for r in range(nd.layer_table.rowCount())]
+    nd.layer_rules[names.index("Grain")].set_rule({"mode": "none"})
+    out = nd.run()
+    assert out.placed == 1 and out.unplaced == 1
+    saved = ctrl.project.metadata["nesting"]
+    assert list(saved["layer_rules"].values()) == [{"mode": "none", "value": pytest.approx(10.0)}]
+    ctrl.undo()
+    # ... which the dialog remembers, and a part's own rule beats its layer
+    nd = _nest_dialog(win)
+    assert nd.layer_rules[names.index("Grain")].rule()["mode"] == "none"
+    nd.rules[1].set_rule({"mode": "default"})
+    assert nd.run().placed == 2
+    ctrl.undo()
+    # rules for several selected parts at once
+    nd = _nest_dialog(win)
+    nd.table.selectAll()
+    nd.bulk.set_rule({"mode": "limit", "value": 15.0})
+    nd._apply_bulk()
+    assert [r.rule()["mode"] for r in nd.rules] == ["limit", "limit"]
+    assert nd.run().placed == 0  # 15 degrees does not get a bar into the strip
+    ctrl.undo()
+    assert objs[0].id in {p.root.id for p in nd.parts}
+
+
+def test_nesting_dialog_squeezing_in_asks_applies_or_is_off(win):
+    from iyicam.core.stock import StockItem
+    ctrl = win.ctrl
+    ctrl.project.sheets[0].vectors = []
+    ctrl.add_vectors([VectorObject([shapes.rectangle(0, 0, 280, 100)], ctrl.layer_id)])
+    ctrl.project.stock = [StockItem("plate", 300, 200, None, 1, True)]
+    asked = []
+
+    def run(answer, **values):
+        nd = _nest_dialog(win, margin=10.0, spacing=8.0, rotation="90", **values)
+        nd._ask_squeeze = lambda text: (asked.append(text), answer)[1]
+        out = nd.run()
+        ctrl.undo()
+        return out
+
+    # off: it does not fit and nothing is said
+    out = run(True)
+    assert out.unplaced == 1 and not asked
+    # suggest: the parts that would fit are named, the answer decides
+    out = run(False, squeeze="ask", squeeze_margin=4.0, squeeze_angle=0.0)
+    assert out.unplaced == 1 and len(asked) == 1
+    assert "place 1 part(s) that do not fit" in asked[0] and "1 mm closer to the edge" in asked[0]
+    out = run(True, squeeze="ask", squeeze_margin=4.0, squeeze_angle=0.0)
+    assert out.unplaced == 0 and out.placed == 1 and len(asked) == 2
+    assert [q.relief for q in out.squeezed] == [pytest.approx(1.0)]
+    # automatic: it is done without asking
+    out = run(False, squeeze="auto", squeeze_margin=4.0, squeeze_angle=0.0)
+    assert out.unplaced == 0 and len(asked) == 2
+    # the limits are only offered while squeezing is on
+    nd = _nest_dialog(win)
+    nd.form.widgets["squeeze"].setCurrentIndex(nd.form.widgets["squeeze"].findData("ask"))
+    assert nd.form.widgets["squeeze_angle"].isEnabled()
+
+
 def test_text_and_import(win, tmp_path):
     from iyicam.formats.dxf import export_dxf
     from iyicam.gui.qtgeom import text_contours

@@ -21,6 +21,7 @@ from ..core.document import XY_ORIGINS, Selection, ToolpathDef
 from ..core.params import Param
 from ..core.stock import StockItem, load_stock, save_stock
 from ..core.tooling import TOOL_TYPES, Tool
+from ..nesting.parts import ROTATION_MODES, RULE_USES_VALUE, parse_angles, squeeze_lines
 from ..nesting.stock import leftover_of_sheet, stock_from_vectors, use_up
 from .forms import ParamForm
 
@@ -786,6 +787,42 @@ class StockDialog(QDialog):
         super().accept()
 
 
+class RotationRuleEdit(QWidget):
+    """How far a part may turn: a rule and, for some rules, an angle."""
+
+    def __init__(self, rule: dict | None = None, inherit: bool = False, parent=None):
+        super().__init__(parent)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        self.mode = QComboBox()
+        if inherit:
+            self.mode.addItem("Like its layer", "inherit")
+        for k, label in ROTATION_MODES:
+            self.mode.addItem(label, k)
+        self.value = QDoubleSpinBox()
+        self.value.setRange(0.0, 360.0)
+        self.value.setDecimals(1)
+        self.value.setSuffix("°")
+        self.value.setValue(10.0)
+        lay.addWidget(self.mode, 1)
+        lay.addWidget(self.value)
+        self.mode.currentIndexChanged.connect(self._enable)
+        self.set_rule(rule or {"mode": "inherit" if inherit else "default"})
+
+    def _enable(self) -> None:
+        self.value.setEnabled(self.mode.currentData() in RULE_USES_VALUE)
+
+    def set_rule(self, rule: dict) -> None:
+        i = self.mode.findData(rule.get("mode", "default"))
+        self.mode.setCurrentIndex(max(0, i))
+        if rule.get("value"):
+            self.value.setValue(float(rule["value"]))
+        self._enable()
+
+    def rule(self) -> dict:
+        return {"mode": self.mode.currentData(), "value": self.value.value()}
+
+
 class NestingDialog(QDialog):
     def __init__(self, ctrl, parent=None):
         super().__init__(parent)
@@ -797,6 +834,7 @@ class NestingDialog(QDialog):
         self.parts = group_parts(objs)
         s = ctrl.sheet
         tool_d = max((t.tool.diameter for t in ctrl.project.toolpaths if t.op == "profile"), default=6.0)
+        saved = ctrl.project.metadata.get("nesting", {})
         params = [
             Param("width", "New sheet width", "length", s.width, min=1.0, group="Sheets"),
             Param("height", "New sheet height", "length", s.height, min=1.0, group="Sheets"),
@@ -813,60 +851,127 @@ class NestingDialog(QDialog):
                   help="Leftovers with a quantity are counted down, used up ones are removed"),
             Param("rotation", "Rotation", "choice", "90",
                   choices=[("0", "No rotation"), ("180", "0 / 180°"), ("90", "90° steps"),
-                           ("45", "45° steps"), ("15", "15° steps")], group="Strategy"),
+                           ("45", "45° steps"), ("15", "15° steps"), ("custom", "Steps of my own..."),
+                           ("list", "List of angles...")], group="Strategy"),
+            Param("rotation_step", "Rotation step", "angle", 30.0, min=0.1, max=360.0, group="Strategy",
+                  visible={"rotation": "custom"}, help="Every angle of this step around the circle is tried"),
+            Param("angles", "Angles (degrees)", "str", "0, 45, 90, 135", group="Strategy",
+                  visible={"rotation": "list"}, help="Any angles, separated by commas, e.g. 0, 22.5, 90"),
+            Param("tilt_step", "Step of limited rotation", "angle", 5.0, min=0.1, max=90.0, group="Strategy",
+                  help="The step of 'Tilt up to ±X°' set for parts or layers below"),
             Param("gravity", "Pack towards", "choice", "left",
                   choices=[("left", "Left (X min)"), ("bottom", "Bottom (Y min)"), ("compact", "Smallest area")],
                   group="Strategy"),
             Param("iterations", "Optimisation attempts", "int", 1, min=1, max=200, group="Strategy"),
             Param("tolerance", "Outline tolerance", "length", 0.5, min=0.01, group="Strategy",
                   help="Outlines are simplified this much; parts may end up this much further apart"),
+            Param("squeeze", "Squeeze parts in", "choice", "off",
+                  choices=[("off", "Off"), ("ask", "Suggest it, I decide"), ("auto", "Squeeze in automatically")],
+                  group="Squeezing in",
+                  help="When parts do not fit, find out whether tilting some a little or letting them come "
+                       "closer to the edge than the border gap places them (or saves a sheet)"),
+            Param("squeeze_angle", "Tilt by up to", "angle", 5.0, min=0.0, max=90.0, group="Squeezing in",
+                  visible={"squeeze": ["ask", "auto"]}, help="Off their angles; 0 = never tilt"),
+            Param("squeeze_step", "Tilt step", "angle", 1.0, min=0.1, max=45.0, group="Squeezing in",
+                  visible={"squeeze": ["ask", "auto"]}),
+            Param("squeeze_margin", "Closer to the edge by up to", "length", 3.0, min=0.0, group="Squeezing in",
+                  visible={"squeeze": ["ask", "auto"]}, help="What parts may take from the border gap; 0 = never"),
         ]
         lay = QVBoxLayout(self)
+        tabs = QTabWidget()
+        lay.addWidget(tabs, 1)
+        page1, page2, page3 = QWidget(), QWidget(), QWidget()
+        l1, l2, l3 = QVBoxLayout(page1), QVBoxLayout(page2), QVBoxLayout(page3)
         presets = QComboBox()
         presets.addItem("Preset sheet sizes...")
         for name, w, h in SHEET_PRESETS:
             presets.addItem(name, (w, h))
-        lay.addWidget(presets)
+        l1.addWidget(presets)
         self.form = ParamForm(params, None, ctrl.units)
         presets.activated.connect(lambda i: self._preset(presets.itemData(i)))
-        lay.addWidget(self.form)
+        form_scroll = scroll(self.form)
+        form_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        l1.addWidget(form_scroll, 1)
         self.stock_holder = QVBoxLayout()
-        lay.addLayout(self.stock_holder)
+        l2.addLayout(self.stock_holder)
         self.stock_table: StockTable | None = None
         self._build_stock()
         manage = QPushButton("Manage stock...")
         manage.setToolTip("Add leftovers of any shape, sheet sizes and quantities")
         manage.clicked.connect(self._manage_stock)
-        lay.addWidget(manage)
-        lay.addWidget(QLabel(f"<b>{len(self.parts)}</b> part(s) found. Set the quantities:"))
-        self.table = QTableWidget(len(self.parts), 3)
-        self.table.setHorizontalHeaderLabels(["Part", "Size", "Quantity"])
+        l2.addWidget(manage)
+        l2.addStretch(1)
+        # how far parts may turn: by layer and by part
+        layer_ids = []
+        for p in self.parts:
+            if p.root.layer_id not in layer_ids:
+                layer_ids.append(p.root.layer_id)
+        l3.addWidget(QLabel("<b>Rotation by layer</b> (parts follow their layer unless set below):"))
+        self.layer_table = QTableWidget(len(layer_ids), 2)
+        self.layer_table.setHorizontalHeaderLabels(["Layer", "Rotation"])
+        self.layer_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.layer_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.layer_table.setMaximumHeight(130)
+        self.layer_ids = layer_ids
+        self.layer_rules: list[RotationRuleEdit] = []
+        for i, lid in enumerate(layer_ids):
+            layer = ctrl.project.layer(lid)
+            self.layer_table.setItem(i, 0, QTableWidgetItem(layer.name if layer else "?"))
+            ed = RotationRuleEdit(saved.get("layer_rules", {}).get(lid))
+            self.layer_table.setCellWidget(i, 1, ed)
+            self.layer_rules.append(ed)
+        l3.addWidget(self.layer_table)
+        l3.addWidget(QLabel(f"<b>{len(self.parts)}</b> part(s) found. Set the quantities and how far each may "
+                            "turn (select several rows to set them together):"))
+        self.table = QTableWidget(len(self.parts), 4)
+        self.table.setHorizontalHeaderLabels(["Part", "Size", "Quantity", "Rotation"])
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         u = ctrl.units
         self.qty: list[QSpinBox] = []
+        self.rules: list[RotationRuleEdit] = []
         for i, p in enumerate(self.parts):
             bb = p.root.bbox()
             name = p.root.name or f"Part {i + 1}"
             if p.members:
                 name += f" (+{len(p.members)})"
-            self.table.setItem(i, 0, QTableWidgetItem(name))
+            item = QTableWidgetItem(name)
+            item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+            self.table.setItem(i, 0, item)
             self.table.setItem(i, 1, QTableWidgetItem(f"{u.fmt(bb.width)} x {u.fmt(bb.height)}"))
             sp = QSpinBox()
             sp.setRange(0, 10000)
             sp.setValue(1)
             self.table.setCellWidget(i, 2, sp)
             self.qty.append(sp)
-        lay.addWidget(self.table)
+            ed = RotationRuleEdit(saved.get("part_rules", {}).get(p.root.id), inherit=True)
+            self.table.setCellWidget(i, 3, ed)
+            self.rules.append(ed)
+        l3.addWidget(self.table, 1)
+        bulk = QHBoxLayout()
+        bulk.addWidget(QLabel("Selected parts:"))
+        self.bulk = RotationRuleEdit(None, inherit=True)
+        bulk.addWidget(self.bulk, 1)
+        apply = QPushButton("Apply")
+        apply.setToolTip("Set the rotation of the selected rows")
+        apply.clicked.connect(self._apply_bulk)
+        bulk.addWidget(apply)
+        l3.addLayout(bulk)
+        for page, title in ((page1, "Settings"), (page2, "Plates"), (page3, "Parts and rotation")):
+            tabs.addTab(page, title)
+        self.tabs = tabs
         lay.addWidget(buttons(self, "Nest"))
-        self.resize(560, 760)
+        self.resize(700, 760)
 
+    # -- stock ---------------------------------------------------------------------------
     def _build_stock(self) -> None:
         if self.stock_table is not None:
             self.stock_holder.removeWidget(self.stock_table)
             self.stock_table.deleteLater()
         stock = self.ctrl.project.stock
         self.stock_table = StockTable(self.ctrl, list(stock), checkable=True)
-        self.stock_table.setMaximumHeight(150)
         label = "Plates of the stock (leftovers are used first):" if stock else \
             "The stock is empty: add leftovers of any shape below to nest onto them."
         if getattr(self, "stock_label", None) is None:
@@ -885,15 +990,65 @@ class NestingDialog(QDialog):
             self.form.widgets["width"].setValue(u.to_display(wh[0]))
             self.form.widgets["height"].setValue(u.to_display(wh[1]))
 
+    def _apply_bulk(self) -> None:
+        rule = self.bulk.rule()
+        for idx in self.table.selectionModel().selectedRows():
+            self.rules[idx.row()].set_rule(rule)
+
+    # -- running -------------------------------------------------------------------------
+    def accept(self) -> None:
+        v = self.form.values()
+        if v["rotation"] == "list":
+            try:
+                parse_angles(v["angles"])
+            except ValueError:
+                QMessageBox.warning(self, "Rotation", "The angles must be numbers separated by commas, "
+                                    "for example: 0, 22.5, 90")
+                return
+        super().accept()
+
+    def rotations(self, v: dict) -> list[float]:
+        """The angles every part may take unless a rule says otherwise."""
+        rot = v["rotation"]
+        if rot == "list":
+            return parse_angles(v["angles"])
+        step = v["rotation_step"] if rot == "custom" else float(rot)
+        return [0.0] if step <= 0 else [round(k * step, 6) for k in range(max(1, int(round(360 / step))))]
+
+    def _suggestion_text(self, strict, better) -> str:
+        gain = []
+        placed = len(strict.unplaced) - len(better.unplaced)
+        if placed > 0:
+            gain.append(f"place {placed} part(s) that do not fit")
+        if better.sheets < strict.sheets:
+            gain.append(f"save {strict.sheets - better.sheets} plate(s)")
+        head = "Squeezing parts in would " + " and ".join(gain or ["improve the layout"]) + ":"
+        return "\n".join([head] + squeeze_lines(self.parts, better.squeezed)[:14])
+
+    def _ask_squeeze(self, text: str) -> bool:
+        box = QMessageBox(self)
+        box.setWindowTitle("Squeeze parts in?")
+        box.setText(text)
+        yes = box.addButton("Squeeze them in", QMessageBox.AcceptRole)
+        box.addButton("Keep it as it is", QMessageBox.RejectRole)
+        box.exec()
+        return box.clickedButton() is yes
+
     def run(self):
         from ..nesting.nest import NestSettings
         from ..nesting.parts import nest_objects
         v = self.form.values()
-        step = float(v["rotation"])
-        rots = [0.0] if step == 0 else [k * step for k in range(int(round(360 / step)))]
-        st = NestSettings(v["width"], v["height"], v["margin"], v["spacing"], rots, v["gravity"],
-                          iterations=v["iterations"], tolerance=v["tolerance"])
+        squeezing = v["squeeze"] != "off"
+        st = NestSettings(v["width"], v["height"], v["margin"], v["spacing"], self.rotations(v), v["gravity"],
+                          iterations=v["iterations"], tolerance=v["tolerance"],
+                          squeeze_angle=v["squeeze_angle"] if squeezing else 0.0,
+                          squeeze_margin=v["squeeze_margin"] if squeezing else 0.0,
+                          squeeze_step=v["squeeze_step"])
         quantities = {p.root.id: sp.value() for p, sp in zip(self.parts, self.qty)}
+        part_rules = {p.root.id: ed.rule() for p, ed in zip(self.parts, self.rules)
+                      if ed.rule()["mode"] != "inherit"}
+        layer_rules = {lid: ed.rule() for lid, ed in zip(self.layer_ids, self.layer_rules)
+                       if ed.rule()["mode"] != "default"}
         total = sum(quantities.values())
         prog = QProgressDialog("Nesting parts...", "Cancel", 0, max(1, total), self)
         prog.setWindowModality(Qt.WindowModal)
@@ -904,11 +1059,16 @@ class NestingDialog(QDialog):
             prog.setValue(k)
             QApplication.processEvents()
 
+        def choose(strict, better) -> bool:
+            return v["squeeze"] == "auto" or self._ask_squeeze(self._suggestion_text(strict, better))
+
         ctrl = self.ctrl
         table = self.stock_table
         stock = [table.item(r) for r in range(len(table.items)) if table.used(r)]
         target = v["target"]
         use_sheets = [ctrl.sheet] if target == "current" else list(ctrl.project.sheets) if target == "all" else []
+        # the rules are kept with the project, and stay when the nesting is undone
+        ctrl.project.metadata["nesting"] = {"part_rules": part_rules, "layer_rules": layer_rules}
         ctrl.checkpoint("Nesting")
         try:
             moving = {o.id for p in self.parts for o in p.objects}
@@ -916,7 +1076,9 @@ class NestingDialog(QDialog):
             if target == "current" and not sheet.outline and all(o.id in moving for o in sheet.vectors):
                 sheet.width, sheet.height = v["width"], v["height"]  # a blank sheet takes the size asked for
             out = nest_objects(ctrl.project, self.objs, st, quantities, [], progress, prog.wasCanceled,
-                               stock=stock, use_sheets=use_sheets, new_sheets=v["new_sheets"])
+                               stock=stock, use_sheets=use_sheets, new_sheets=v["new_sheets"],
+                               rotation_rules=part_rules, layer_rules=layer_rules, tilt_step=v["tilt_step"],
+                               choose=choose if squeezing else None)
             if v["use_up"]:
                 self._use_up(out)
         except Exception:

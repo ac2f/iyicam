@@ -6,6 +6,8 @@
     python -m iyicam import drawing.dxf -o job.icam --thickness 18
     python -m iyicam nest job.icam --width 2800 --height 2100 --spacing 8 -o nested.icam
     python -m iyicam nest job.icam --leftover 900x600:2 --stock leftovers.json -o nested.icam
+    python -m iyicam nest job.icam --angles 0,22.5,90 --rotate-layer Grain=none -o nested.icam
+    python -m iyicam nest job.icam --squeeze-angle 5 --squeeze-margin 3 --apply-squeeze -o nested.icam
 """
 from __future__ import annotations
 
@@ -111,13 +113,32 @@ def cmd_import(a) -> int:
 def cmd_nest(a) -> int:
     from .core.stock import StockItem, load_stock
     from .nesting.nest import NestSettings
-    from .nesting.parts import nest_objects
+    from .nesting.parts import nest_objects, parse_angles, parse_rule, squeeze_lines
     from .nesting.stock import use_up
     p = Project.load(a.project)
     objs = [v for s in p.sheets for v in s.vectors]
     step = a.rotation
     rots = [0.0] if step <= 0 else [k * step for k in range(int(round(360 / step)))]
-    st = NestSettings(a.width, a.height, a.margin, a.spacing, rots, a.gravity, iterations=a.iterations)
+    if a.angles:  # any angles at all
+        try:
+            rots = parse_angles(a.angles)
+        except ValueError:
+            print(f"--angles: numbers separated by commas expected, not {a.angles!r}", file=sys.stderr)
+            return 2
+    layer_rules = {}
+    for spec in a.rotate_layer or []:  # LAYER=RULE
+        name, _, rule = spec.rpartition("=")
+        layer = p.layer_by_name(name)
+        if layer is None:
+            print(f"--rotate-layer: no layer named {name!r}", file=sys.stderr)
+            return 2
+        try:
+            layer_rules[layer.id] = parse_rule(rule)
+        except ValueError as e:
+            print(f"--rotate-layer: {e}", file=sys.stderr)
+            return 2
+    st = NestSettings(a.width, a.height, a.margin, a.spacing, rots, a.gravity, iterations=a.iterations,
+                      squeeze_angle=a.squeeze_angle, squeeze_margin=a.squeeze_margin, squeeze_step=a.squeeze_step)
     stock = [] if a.no_project_stock else list(p.stock)
     if a.stock:
         stock += load_stock(a.stock)
@@ -128,13 +149,21 @@ def cmd_nest(a) -> int:
     plates = bool(stock) or a.no_new_sheets
     out = nest_objects(p, objs, st, {o.id: a.quantity for o in objs}, [p.sheets[0]],
                        stock=stock if plates else None, use_sheets=[] if plates else None,
-                       new_sheets=not a.no_new_sheets)
+                       new_sheets=not a.no_new_sheets, layer_rules=layer_rules, tilt_step=a.tilt_step,
+                       choose=(lambda strict, better: True) if a.apply_squeeze else None)
     if plates and not a.keep_stock:
         p.stock = use_up(p.stock, out.plates)
     p.save(a.output)
     print(f"placed {out.placed}, unplaced {out.unplaced}, plates {out.result.sheets}")
     for sh, u in zip(out.sheets, out.result.utilization):
         print(f"  {sh.name}: {sh.width:g} x {sh.height:g}{' (shape)' if sh.outline else ''}, {u * 100:.1f}% used")
+    if out.squeezed:
+        print("squeezed in:")
+        print("\n".join(squeeze_lines(out.parts, out.squeezed)))
+    if out.suggestion is not None:
+        print(f"suggestion: squeezing parts in would leave {len(out.suggestion.unplaced)} unplaced on "
+              f"{out.suggestion.sheets} plate(s); use --apply-squeeze to take it:")
+        print("\n".join(squeeze_lines(out.parts, out.suggestion.squeezed)))
     return 0
 
 
@@ -172,6 +201,18 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--no-project-stock", action="store_true", help="ignore the stock saved in the project")
     s.add_argument("--no-new-sheets", action="store_true", help="only use the leftovers and stock plates")
     s.add_argument("--keep-stock", action="store_true", help="do not take the plates used out of the project's stock")
+    s.add_argument("--angles", metavar="LIST", help="any angles in degrees, e.g. 0,22.5,90 (instead of --rotation)")
+    s.add_argument("--rotate-layer", action="append", metavar="LAYER=RULE",
+                   help="how far the parts of a layer may turn: none, flip, limit:X, limit-flip:X, step:X, "
+                        "default; can be repeated")
+    s.add_argument("--tilt-step", type=float, default=5.0, help="step of limited rotation (limit:X), degrees")
+    s.add_argument("--squeeze-angle", type=float, default=0.0,
+                   help="parts that do not fit may be tilted by up to this many degrees (0 = no)")
+    s.add_argument("--squeeze-margin", type=float, default=0.0,
+                   help="... and come this many mm closer to the edge than the border gap (0 = no)")
+    s.add_argument("--squeeze-step", type=float, default=2.0, help="tilt step of squeezing, degrees")
+    s.add_argument("--apply-squeeze", action="store_true",
+                   help="take the squeezed layout when it is better (else it is only suggested)")
     a = ap.parse_args(argv)
     _setup(not a.no_plugins)
     return {"posts": cmd_posts, "plugins": cmd_plugins, "info": cmd_info, "gcode": cmd_gcode,
