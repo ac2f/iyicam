@@ -127,6 +127,21 @@ iyicam                      # or: python -m iyicam
 On Linux the Qt platform libraries may need to be installed (for example
 `libegl1 libxkbcommon0 libfontconfig1` on Debian / Ubuntu).
 
+On Windows use a **64-bit** Python (the *Windows installer (64-bit)* from python.org):
+PySide6 has no wheels for 32-bit Python, and `pip install -e ".[gui]"` then ends with
+*No matching distribution found for PySide6-Essentials*. Check with
+`python -c "import struct; print(struct.calcsize('P') * 8)"` (it must print 64). A virtual
+environment avoids the "normal site-packages is not writeable" warning:
+
+```bat
+py -3.13 -m venv .venv
+.venv\Scripts\activate
+python -m pip install -e ".[gui]"
+iyicam
+```
+
+(Turkçe: Windows'ta **64 bit** Python gerekir; 32 bit Python'da PySide6 kurulamaz.)
+
 ## Quick start
 
 1. **File ▸ New** — set the sheet size and material thickness.
