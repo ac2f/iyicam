@@ -185,6 +185,23 @@ python -m iyicam gcode nested.icam --post ncstudio --sheet all -o out/job.nc
 
 Set the `IYICAM_HOME` environment variable to use another folder.
 
+### What the program remembers
+
+Nothing has to be entered twice. `settings.json` keeps, between sessions:
+
+* the values of every dialog: new project (size, thickness), material setup (heights, zero, origin, home;
+  a new project starts with it), toolpaths (the settings **and the tool** of the last toolpath of each kind),
+  nesting (all options, also the quantities of the parts in the project), import and export options, G-code
+  saving (post-processor, sheets, tiling), vector commands, text, text on curve, bitmap tracing, feeds & speeds,
+  stock plates and leftovers;
+* the cut order and start point choices (strategy, inner pieces first, smart start points) for new toolpaths;
+* the **last folder** of every kind of file: projects, imports, exports, G-code, stock, tools, images,
+  templates, plugins (a kind never used starts where the last file dialog was);
+* the window size, position and docks, units, grid, snaps and display options.
+
+A damaged or hand-edited settings file is read as far as it is valid; a folder that cannot be written to is not
+an error.
+
 ## Architecture
 
 ```

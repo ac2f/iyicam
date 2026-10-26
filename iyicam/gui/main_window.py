@@ -8,7 +8,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QByteArray, QRectF, Qt, QUrl
 from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QImage, QKeySequence
-from PySide6.QtWidgets import (QApplication, QDialog, QDockWidget, QFileDialog, QLabel, QMainWindow, QMenu,
+from PySide6.QtWidgets import (QApplication, QDialog, QDockWidget, QLabel, QMainWindow, QMenu,
                                QMessageBox, QProgressDialog, QTabWidget, QToolBar, QVBoxLayout)
 
 from .. import __version__
@@ -24,6 +24,7 @@ from .dialogs import (CommandDialog, ExportDialog, ImportDialog, LeftoverDialog,
                       PluginsDialog, PostEditorDialog, PreferencesDialog, StockDialog, ToolDatabaseDialog,
                       ToolpathDialog, buttons)
 from ..nesting.parts import find_duplicates, squeeze_lines
+from .files import open_file, save_file
 from .forms import ParamForm
 from .icons import icon
 from .panels import LayersPanel, PropertiesPanel, SheetsPanel, ToolpathsPanel
@@ -62,6 +63,11 @@ class MainWindow(QMainWindow):
         if ctrl.settings.window_state:
             try:
                 self.restoreState(QByteArray.fromBase64(ctrl.settings.window_state.encode()))
+            except Exception:
+                pass
+        if ctrl.settings.window_geometry:
+            try:  # the size and place of the window, as it was closed (after the docks, which would change it)
+                self.restoreGeometry(QByteArray.fromBase64(ctrl.settings.window_geometry.encode()))
             except Exception:
                 pass
         for _, ext in list(ctrl.registry.gui_extensions):
@@ -224,7 +230,7 @@ class MainWindow(QMainWindow):
         self._act(m, "&Recalculate All", self.recalculate, "F5")
         self._act(m, "Cut &Order...", self.cut_order, "Ctrl+Shift+O")
         self.inner_first_action = self._act(m, "Cut Inner Pieces (&Göbek) First", self.toggle_inner_first, None, True,
-                                            s.default_grouping == "depth")
+                                            s.sequence_defaults.get("grouping", "depth") == "depth")
         self.inner_first_action.setToolTip("Cut the holes and inner pieces of all parts first, then the outlines, "
                                            "each in the order of the cut order strategy")
         m.addSeparator()
@@ -359,20 +365,24 @@ class MainWindow(QMainWindow):
         dlg = QDialog(self)
         dlg.setWindowTitle("New Project")
         lay = QVBoxLayout(dlg)
-        form = ParamForm([Param("width", "Width (X)", "length", 600.0, min=1.0),
-                          Param("height", "Height (Y)", "length", 400.0, min=1.0),
-                          Param("thickness", "Thickness", "length", 18.0, min=0.01)], None, self.ctrl.units)
+        params = [Param("width", "Width (X)", "length", 600.0, min=1.0),
+                  Param("height", "Height (Y)", "length", 400.0, min=1.0),
+                  Param("thickness", "Thickness", "length", 18.0, min=0.01)]
+        s = self.ctrl.settings
+        form = ParamForm(params, s.recall("new_project", params), self.ctrl.units)
         lay.addWidget(form)
         lay.addWidget(buttons(dlg, "Create"))
         if dlg.exec():
             v = form.values()
+            s.remember("new_project", v, params)
             self.ctrl.new_project(v["width"], v["height"], v["thickness"])
 
     def open_project(self, path: str | None = None) -> None:
         if not self.confirm_discard():
             return
         if not path:
-            path, _ = QFileDialog.getOpenFileName(self, "Open project", "", "iyiCAM project (*.icam);;All files (*)")
+            path = open_file(self, self.ctrl.settings, "project", "Open project",
+                             "iyiCAM project (*.icam);;All files (*)")
         if path:
             try:
                 self.ctrl.open_project(path)
@@ -387,8 +397,8 @@ class MainWindow(QMainWindow):
         return True
 
     def save_project_as(self) -> bool:
-        fn, _ = QFileDialog.getSaveFileName(self, "Save project", f"{self.ctrl.project.name}.icam",
-                                            "iyiCAM project (*.icam)")
+        fn, _ = save_file(self, self.ctrl.settings, "project", "Save project", f"{self.ctrl.project.name}.icam",
+                          "iyiCAM project (*.icam)")
         if not fn:
             return False
         self.ctrl.save_project(fn)
@@ -401,7 +411,7 @@ class MainWindow(QMainWindow):
             exts = sorted({e for imp in reg.importers.values() for e in imp.extensions})
             filt = "Vector files (" + " ".join(f"*.{e}" for e in exts) + ");;" + ";;".join(
                 f"{imp.label} (" + " ".join(f"*.{e}" for e in imp.extensions) + ")" for imp in reg.importers.values())
-            path, _ = QFileDialog.getOpenFileName(self, "Import vectors", "", filt)
+            path = open_file(self, self.ctrl.settings, "import", "Import vectors", filt)
             if not path:
                 return []
         imp = reg.importer_for(Path(path).suffix)
@@ -449,8 +459,8 @@ class MainWindow(QMainWindow):
         from ..core.trace import centerline, trace
         from .qtgeom import image_to_gray
         if not path:
-            path, _ = QFileDialog.getOpenFileName(self, "Trace bitmap", "",
-                                                  "Images (*.png *.jpg *.jpeg *.bmp *.gif *.tif *.tiff)")
+            path = open_file(self, self.ctrl.settings, "image", "Trace bitmap",
+                             "Images (*.png *.jpg *.jpeg *.bmp *.gif *.tif *.tiff)")
             if not path:
                 return []
         try:
@@ -474,12 +484,14 @@ class MainWindow(QMainWindow):
             dlg = QDialog(self)
             dlg.setWindowTitle(f"Trace {Path(path).name} ({w} x {h} px)")
             lay = QVBoxLayout(dlg)
-            form = ParamForm(params, None, self.ctrl.units)
+            memo = [q for q in params if q.name != "width"]   # the width follows the sheet, not the last trace
+            form = ParamForm(params, self.ctrl.settings.recall("trace", memo), self.ctrl.units)
             lay.addWidget(form)
             lay.addWidget(buttons(dlg, "Trace"))
             if not dlg.exec():
                 return []
             options = form.values()
+            self.ctrl.settings.remember("trace", options, memo)
         px = options.get("width", 100.0) / max(1, w)
         if options.get("mode") == "centerline":
             contours = centerline(np.asarray(gray), options.get("threshold", 128), options.get("invert", False),
@@ -519,12 +531,13 @@ class MainWindow(QMainWindow):
             dlg = QDialog(self)
             dlg.setWindowTitle("Text on Curve")
             lay = QVBoxLayout(dlg)
-            form = ParamForm(params, None, self.ctrl.units)
+            form = ParamForm(params, self.ctrl.settings.recall("text_on_curve", params), self.ctrl.units)
             lay.addWidget(form)
             lay.addWidget(buttons(dlg, "Create"))
             if not dlg.exec():
                 return None
             values = form.values()
+            self.ctrl.settings.remember("text_on_curve", values, params)
         curve = sel[0].contours[0]
         if values.get("reverse"):
             curve = curve.reversed()
@@ -540,7 +553,7 @@ class MainWindow(QMainWindow):
     def export_vectors(self) -> None:
         reg = self.ctrl.registry
         filt = ";;".join(f"{e.label} (*.{e.extension})" for e in reg.exporters.values())
-        fn, chosen = QFileDialog.getSaveFileName(self, "Export vectors", self.ctrl.project.name, filt)
+        fn, chosen = save_file(self, self.ctrl.settings, "export", "Export vectors", self.ctrl.project.name, filt)
         if not fn:
             return
         ext = Path(fn).suffix.lower().lstrip(".")
@@ -674,8 +687,8 @@ class MainWindow(QMainWindow):
         tps = self.ctrl.project.toolpaths
         if not tps:
             return
-        fn, _ = QFileDialog.getSaveFileName(self, "Save toolpath template", "toolpaths.icamtpl",
-                                            "Toolpath template (*.icamtpl)")
+        fn, _ = save_file(self, self.ctrl.settings, "template", "Save toolpath template", "toolpaths.icamtpl",
+                          "Toolpath template (*.icamtpl)")
         if fn:
             layers = {l.id: l.name for l in self.ctrl.project.layers}
             data = []
@@ -688,7 +701,8 @@ class MainWindow(QMainWindow):
                                 encoding="utf-8")
 
     def load_toolpath_template(self) -> None:
-        fn, _ = QFileDialog.getOpenFileName(self, "Load toolpath template", "", "Toolpath template (*.icamtpl)")
+        fn = open_file(self, self.ctrl.settings, "template", "Load toolpath template",
+                       "Toolpath template (*.icamtpl)")
         if not fn:
             return
         data = json.loads(Path(fn).read_text(encoding="utf-8"))
@@ -752,9 +766,8 @@ class MainWindow(QMainWindow):
         from ..cam.gcode_reader import ReadOptions, read_gcode
         from ..post.engine import ORIGINS
         if not path:
-            path, _ = QFileDialog.getOpenFileName(self, "Open G-code", "",
-                                                  "G-code (*.nc *.tap *.ngc *.gcode *.cnc *.txt *.u00 *.eia);;"
-                                                  "All files (*)")
+            path = open_file(self, self.ctrl.settings, "gcode", "Open G-code",
+                             "G-code (*.nc *.tap *.ngc *.gcode *.cnc *.txt *.u00 *.eia);;All files (*)")
             if not path:
                 return []
         c = self.ctrl
@@ -844,8 +857,8 @@ class MainWindow(QMainWindow):
             self.canvas.zoom_extents()
 
     def export_image(self) -> None:
-        fn, _ = QFileDialog.getSaveFileName(self, "Export image", f"{self.ctrl.project.name}.png",
-                                            "PNG image (*.png);;JPEG image (*.jpg)")
+        fn, _ = save_file(self, self.ctrl.settings, "export", "Export image", f"{self.ctrl.project.name}.png",
+                          "PNG image (*.png);;JPEG image (*.jpg)")
         if fn:
             self.canvas.grab().save(fn)
 
@@ -854,7 +867,7 @@ class MainWindow(QMainWindow):
         p = c.project
         if c.stale:
             c.recalculate()
-        fn, _ = QFileDialog.getSaveFileName(self, "Job report", f"{p.name}_report.html", "HTML (*.html)")
+        fn, _ = save_file(self, self.ctrl.settings, "export", "Job report", f"{p.name}_report.html", "HTML (*.html)")
         if not fn:
             return
         Path(fn).write_text(job_report_html(c), encoding="utf-8")
@@ -883,6 +896,7 @@ class MainWindow(QMainWindow):
             return
         s = self.ctrl.settings
         s.window_state = bytes(self.saveState().toBase64()).decode()
+        s.window_geometry = bytes(self.saveGeometry().toBase64()).decode()
         try:
             s.save()
         except OSError:

@@ -20,6 +20,7 @@ class Robot:
         self.messages: list[tuple[str, str]] = []  # (kind, text) of every message box
         self.dialogs: list[str] = []     # titles of the dialogs that were shown
         self.files: list[str] = []       # paths for the next file dialogs
+        self.file_calls: list[tuple[str, str]] = []  # (title, where the dialog started) of every file dialog
         self.hook = None                 # called with every dialog before it is accepted
         self.refuse = False              # reject dialogs instead of accepting them
         self.squeeze = False             # answer of the squeeze question
@@ -31,6 +32,7 @@ class Robot:
         self.messages.clear()
         self.dialogs.clear()
         self.files.clear()
+        self.file_calls.clear()
         self.hook = None
         self.refuse = False
 
@@ -88,14 +90,21 @@ class Robot:
         mp.setattr(QMessageBox, "clickedButton", lambda self: getattr(self, "_chosen", None))
 
         def file_open(*a, **k):
+            robot.file_calls.append((a[1] if len(a) > 1 else "", a[2] if len(a) > 2 else ""))
             return (robot.files.pop(0), "") if robot.files else ("", "")
 
         mp.setattr(QFileDialog, "getOpenFileName", staticmethod(file_open))
         mp.setattr(QFileDialog, "getSaveFileName", staticmethod(file_open))
-        mp.setattr(QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **k: robot.files.pop(0)
-                                                                    if robot.files else ""))
-        mp.setattr(QFileDialog, "getOpenFileNames", staticmethod(lambda *a, **k: (
-            ([robot.files.pop(0)] if robot.files else []), "")))
+        def file_dir(*a, **k):
+            robot.file_calls.append((a[1] if len(a) > 1 else "", a[2] if len(a) > 2 else ""))
+            return robot.files.pop(0) if robot.files else ""
+
+        def file_many(*a, **k):
+            robot.file_calls.append((a[1] if len(a) > 1 else "", a[2] if len(a) > 2 else ""))
+            return ([robot.files.pop(0)] if robot.files else []), ""
+
+        mp.setattr(QFileDialog, "getExistingDirectory", staticmethod(file_dir))
+        mp.setattr(QFileDialog, "getOpenFileNames", staticmethod(file_many))
         mp.setattr(QInputDialog, "getText", staticmethod(lambda p=None, t="", l="", *a, text="", **k: (text or "x", True)))
         mp.setattr(QInputDialog, "getInt", staticmethod(lambda p=None, t="", l="", value=0, *a, **k: (value, True)))
         mp.setattr(QInputDialog, "getDouble", staticmethod(lambda p=None, t="", l="", value=0.0, *a, **k: (value, True)))

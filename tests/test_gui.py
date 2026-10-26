@@ -719,13 +719,13 @@ def test_inner_pieces_first_is_one_click_and_remembered(win):
         c.add_toolpath(t)
         return t
     first = make("a")
-    assert first.sequence["grouping"] == "depth"
+    assert first.sequence.get("grouping", "depth") == "depth"
     win.inner_first_action.trigger()                     # the menu item: off -> part by part
     assert first.sequence["grouping"] == "part" and not win.inner_first_action.isChecked()
     assert make("b").sequence["grouping"] == "part"      # new toolpaths start the way the last choice was
-    assert Settings.load().default_grouping == "part"    # and so does the next session
+    assert Settings.load().sequence_defaults["grouping"] == "part"    # and so does the next session
     win.inner_first_action.trigger()
-    assert first.sequence["grouping"] == "depth" and Settings.load().default_grouping == "depth"
+    assert first.sequence["grouping"] == "depth" and Settings.load().sequence_defaults["grouping"] == "depth"
 
 
 def test_nesting_dialog_inner_pieces_and_filled_holes(win):

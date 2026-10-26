@@ -11,7 +11,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices, QFont, QFontDatabase
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog,
-                               QDialogButtonBox, QDoubleSpinBox, QFileDialog, QFontComboBox, QFormLayout,
+                               QDialogButtonBox, QDoubleSpinBox, QFontComboBox, QFormLayout,
                                QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QListWidget,
                                QListWidgetItem, QMessageBox, QPlainTextEdit, QProgressDialog, QPushButton,
                                QRadioButton, QScrollArea, QSpinBox, QSplitter, QTableWidget, QTableWidgetItem,
@@ -26,6 +26,7 @@ from ..nesting.nest import NestCancelled, NestSettings
 from ..nesting.parts import (ROTATION_MODES, RULE_USES_VALUE, apply_nesting, parse_angles, prepare_nesting,
                              run_nesting, squeeze_lines)
 from ..nesting.stock import leftover_of_sheet, stock_from_vectors, use_up
+from .files import open_file, save_file
 from .forms import ParamForm
 
 
@@ -83,10 +84,9 @@ def scroll(widget: QWidget) -> QScrollArea:
 # ---------------------------------------------------------------------------
 
 class CommandDialog(QDialog):
-    last_values: dict[str, dict] = {}
-
     def __init__(self, ctrl, cmd, parent=None):
         super().__init__(parent)
+        self.ctrl = ctrl
         self.cmd = cmd
         self.setWindowTitle(cmd.label.rstrip("."))
         lay = QVBoxLayout(self)
@@ -94,14 +94,15 @@ class CommandDialog(QDialog):
             lab = QLabel(cmd.tooltip)
             lab.setWordWrap(True)
             lay.addWidget(lab)
-        self.form = ParamForm(cmd.params, self.last_values.get(cmd.id), ctrl.units, ctrl.tools)
+        self.form = ParamForm(cmd.params, ctrl.settings.recall(f"command:{cmd.id}", cmd.params), ctrl.units,
+                              ctrl.tools)
         lay.addWidget(scroll(self.form))
         lay.addWidget(buttons(self))
         self.resize(380, min(640, 120 + 34 * len(cmd.params)))
 
     def values(self) -> dict:
         v = self.form.values()
-        self.last_values[self.cmd.id] = v
+        self.ctrl.settings.remember(f"command:{self.cmd.id}", v, self.cmd.params)
         return v
 
 
@@ -209,6 +210,7 @@ class MaterialDialog(QDialog):
                 m.thickness = m.rotary_diameter / 2
                 for s in self.ctrl.project.sheets:
                     s.height, s.thickness = math.pi * m.rotary_diameter, None
+        self.ctrl.settings.remember("material", {k: v[k] for k in self.ctrl.MATERIAL_MEMORY})  # for new projects
         self.ctrl.sheet_changed.emit()
         super().accept()
 
@@ -284,7 +286,8 @@ class FeedsDialog(QDialog):
                   Param("flutes", "Flutes", "int", tool.flutes, min=1, max=12),
                   Param("rpm", "Spindle speed (rpm)", "int", tool.spindle_speed or 18000, min=1000, max=100000)]
         lay = QVBoxLayout(self)
-        self.form = ParamForm(params, None, ctrl.units)
+        self.params = params
+        self.form = ParamForm(params, ctrl.settings.recall("feeds", params[:1]), ctrl.units)   # the material
         lay.addWidget(self.form)
         self.result_label = QLabel()
         self.result_label.setTextFormat(Qt.RichText)
@@ -310,6 +313,7 @@ class FeedsDialog(QDialog):
 
     def apply_to(self, t: Tool) -> Tool:
         c, v = self.suggestion()
+        self.ctrl.settings.remember("feeds", v, self.params[:1])
         t = t.copy()
         t.feed_rate, t.plunge_rate = round(c.feed_rate), round(c.plunge_rate)
         t.stepdown, t.stepover = round(c.stepdown, 2), round(c.stepover, 2)
@@ -423,7 +427,7 @@ class ToolDatabaseDialog(QDialog):
             self.editor.set_tool(t)
 
     def import_(self) -> None:
-        fn, _ = QFileDialog.getOpenFileName(self, "Import tools", "", "Tool library (*.json)")
+        fn = open_file(self, self.ctrl.settings, "tools", "Import tools", "Tool library (*.json)")
         if fn:
             from ..core.tooling import ToolLibrary
             try:
@@ -436,7 +440,7 @@ class ToolDatabaseDialog(QDialog):
             self.refresh()
 
     def export(self) -> None:
-        fn, _ = QFileDialog.getSaveFileName(self, "Export tools", "tools.json", "Tool library (*.json)")
+        fn, _ = save_file(self, self.ctrl.settings, "tools", "Export tools", "tools.json", "Tool library (*.json)")
         if fn:
             from ..core.tooling import ToolLibrary
             self._commit_editor()
@@ -489,7 +493,9 @@ class ToolpathDialog(QDialog):
         b.clicked.connect(self.pick_tool)
         row.addWidget(b)
         tl.addLayout(row)
-        tool = self.tdef.tool if self.tdef else self._default_tool()
+        self.memory_key = f"toolpath:{op_id}"
+        mem = {} if self.tdef else ctrl.settings.recall(self.memory_key)
+        tool = self.tdef.tool if self.tdef else self._remembered_tool(mem.get("tool")) or self._default_tool()
         self.tool_editor = ToolEditor(ctrl, tool)
         tl.addWidget(scroll(self.tool_editor))
         # -- vectors tab
@@ -513,7 +519,8 @@ class ToolpathDialog(QDialog):
             self.layer_list.addItem(it)
         vl.addWidget(self.layer_list)
         self.all_sheets = QCheckBox("Calculate on every sheet")
-        self.all_sheets.setChecked(self.tdef is None or self.tdef.sheet_ids is None)
+        self.all_sheets.setChecked(self.tdef is None and mem.get("all_sheets", True) is not False
+                                   or self.tdef is not None and self.tdef.sheet_ids is None)
         vl.addWidget(self.all_sheets)
         cur_ids = [o.id for o in ctrl.selected_objects()]
         if self.tdef and self.tdef.selection.mode == "vectors" and not cur_ids:
@@ -528,11 +535,13 @@ class ToolpathDialog(QDialog):
                 if it.data(Qt.UserRole) == ctrl.layer_id:
                     it.setCheckState(Qt.Checked)
         # -- parameters tab
-        values = dict(self.tdef.params) if self.tdef else {}
         params = self.op.params()
         for p in params:
             if p.name == "cut_depth" and not self.tdef and self.op.id == "profile":
                 p.default = ctrl.project.material.thickness
+        # a new toolpath starts with the settings of the last one of its kind, but its depth is the material's
+        self.params = [p for p in params if not (p.name == "cut_depth" and self.op.id == "profile")]
+        values = dict(self.tdef.params) if self.tdef else ctrl.settings.recall(self.memory_key + ":params", self.params)
         self.form = ParamForm(params, values, ctrl.units, ctrl.tools)
         tabs.addTab(scroll(self.form), "Settings")
         tabs.addTab(tool_tab, "Tool")
@@ -541,6 +550,22 @@ class ToolpathDialog(QDialog):
         self._update_tool_label()
         self.tool_editor.form.changed.connect(self._update_tool_label)
         self.resize(460, 680)
+
+    def _remembered_tool(self, d) -> Tool | None:
+        """The tool of the last toolpath of this kind (when it still fits the toolpath)."""
+        if not isinstance(d, dict):
+            return None
+        try:
+            t = Tool.from_dict(d)
+        except (TypeError, ValueError, KeyError):
+            return None
+        return t if self.op.tool_types is None or t.type in self.op.tool_types else None
+
+    def _remember(self) -> None:
+        s = self.ctrl.settings
+        s.remember(self.memory_key + ":params", self.form.values(), self.params, save=False)
+        s.remember(self.memory_key, {"tool": self.tool_editor.tool().to_dict(),
+                                     "all_sheets": self.all_sheets.isChecked()})
 
     def _default_tool(self) -> Tool:
         lib = self.ctrl.tools.tools
@@ -587,6 +612,7 @@ class ToolpathDialog(QDialog):
         if self.rb_sel.isChecked() and not self.vector_ids:
             QMessageBox.information(self, "Toolpath", "Select vectors first, or choose layers on the Vectors tab.")
             return
+        self._remember()
         super().accept()
 
 
@@ -673,10 +699,8 @@ class PlateDialog(QDialog):
         for name, w, h in SHEET_PRESETS:
             presets.addItem(name, (w, h))
         lay.addWidget(presets)
-        self.form = ParamForm(params, None, ctrl.units)
-        self._grouped = False
-        self._memory: dict = {"qty": {}, "rules": {}, "layer_rules": {}}   # what was set for parts that left the table
-        self.form.changed.connect(self._form_changed)
+        self.params = [p for p in params if p.name in ("quantity", "leftover")]   # the size follows the sheet
+        self.form = ParamForm(params, ctrl.settings.recall("plate", self.params), ctrl.units)
         presets.activated.connect(lambda i: self._preset(presets.itemData(i)))
         lay.addWidget(self.form)
         lay.addWidget(buttons(self))
@@ -689,6 +713,7 @@ class PlateDialog(QDialog):
 
     def item(self) -> StockItem:
         v = self.form.values()
+        self.ctrl.settings.remember("plate", v, self.params)
         return StockItem(v["name"], v["width"], v["height"], None, v["quantity"], v["leftover"])
 
 
@@ -706,12 +731,14 @@ class LeftoverDialog(QDialog):
         lay = QVBoxLayout(self)
         lay.addWidget(QLabel(f"The material that is left on <b>{ctrl.sheet.name}</b> after its parts are cut out "
                              "becomes plates of the stock."))
-        self.form = ParamForm(params, None, ctrl.units)
+        self.ctrl, self.params = ctrl, params[1:]   # the cut width follows the tools; the rest is remembered
+        self.form = ParamForm(params, ctrl.settings.recall("leftover", self.params), ctrl.units)
         lay.addWidget(self.form)
         lay.addWidget(buttons(self))
 
     def values(self) -> tuple[float, float, float]:
         v = self.form.values()
+        self.ctrl.settings.remember("leftover", v, self.params)
         return v["clearance"], v["min_width"], v["min_area"] * 100.0
 
 
@@ -803,7 +830,7 @@ class StockDialog(QDialog):
             self._build()
 
     def _load(self) -> None:
-        fn, _ = QFileDialog.getOpenFileName(self, "Load stock", "", "Stock (*.json)")
+        fn = open_file(self, self.ctrl.settings, "stock", "Load stock", "Stock (*.json)")
         if not fn:
             return
         try:
@@ -816,7 +843,7 @@ class StockDialog(QDialog):
         self._build()
 
     def _save(self) -> None:
-        fn, _ = QFileDialog.getSaveFileName(self, "Save stock", "stock.json", "Stock (*.json)")
+        fn, _ = save_file(self, self.ctrl.settings, "stock", "Save stock", "stock.json", "Stock (*.json)")
         if fn:
             self._commit()
             save_stock(fn, self.items)
@@ -942,7 +969,9 @@ class NestingDialog(QDialog):
         for name, w, h in SHEET_PRESETS:
             presets.addItem(name, (w, h))
         l1.addWidget(presets)
-        self.form = ParamForm(params, None, ctrl.units)
+        # everything is remembered but the sheet size, which is the current sheet's unless it is changed here
+        self.memo = [p for p in params if p.name not in ("width", "height")]
+        self.form = ParamForm(params, ctrl.settings.recall("nesting", self.memo), ctrl.units)
         self._grouped = False
         self._memory: dict = {"qty": {}, "rules": {}, "layer_rules": {}}   # what was set for parts that left the table
         self.form.changed.connect(self._form_changed)
@@ -965,6 +994,7 @@ class NestingDialog(QDialog):
         self.tabs = tabs
         lay.addWidget(buttons(self, "Nest"))
         self.resize(700, 760)
+        self._form_changed()   # remembered: the inner pieces stay with their part
 
     def _build_parts_page(self, saved: dict, prev: dict | None = None) -> None:
         """The table of the parts (quantities, rotation rules); ``prev`` carries over what was set for the
@@ -1013,7 +1043,7 @@ class NestingDialog(QDialog):
             self.table.setItem(i, 1, QTableWidgetItem(f"{u.fmt(bb.width)} x {u.fmt(bb.height)}"))
             sp = QSpinBox()
             sp.setRange(0, 10000)
-            sp.setValue(prev.get("qty", {}).get(p.root.id, 1))
+            sp.setValue(prev.get("qty", {}).get(p.root.id, saved.get("quantities", {}).get(p.root.id, 1)))
             self.table.setCellWidget(i, 2, sp)
             self.qty.append(sp)
             ed = RotationRuleEdit(prev.get("rules", {}).get(p.root.id) or saved.get("part_rules", {}).get(p.root.id),
@@ -1160,7 +1190,9 @@ class NestingDialog(QDialog):
         target = v["target"]
         use_sheets = [ctrl.sheet] if target == "current" else list(ctrl.project.sheets) if target == "all" else []
         # the rules are kept with the project, and stay when the nesting is undone
-        ctrl.project.metadata["nesting"] = {"part_rules": part_rules, "layer_rules": layer_rules}
+        ctrl.project.metadata["nesting"] = {"part_rules": part_rules, "layer_rules": layer_rules,
+                                            "quantities": {k: n for k, n in quantities.items() if n != 1}}
+        ctrl.settings.remember("nesting", v, self.memo)
         moving = {o.id for p in self.parts for o in p.objects}
         sheet = ctrl.sheet
         blank = target == "current" and not sheet.outline and all(o.id in moving for o in sheet.vectors)
@@ -1232,6 +1264,20 @@ class ExportDialog(QDialog):
             sig.connect(self.preview)
         form.addRow("Tiling", tiling)
         lay.addLayout(form)
+        mem = ctrl.settings.recall("export_gcode")   # the options of the last export
+        for w in (self.sheets, self.tile, self.tile_axis, self.tile_len):
+            w.blockSignals(True)   # the preview is made once, below
+        for combo, key in ((self.sheets, "sheets"), (self.tile_axis, "tile_axis")):
+            i = combo.findData(mem.get(key))
+            if i >= 0:
+                combo.setCurrentIndex(i)
+        if isinstance(mem.get("tile"), bool):
+            self.tile.setChecked(mem["tile"])
+        if isinstance(mem.get("tile_len"), (int, float)) and not isinstance(mem.get("tile_len"), bool) \
+                and mem["tile_len"] >= 1.0:
+            self.tile_len.setValue(ctrl.units.to_display(float(mem["tile_len"])))
+        for w in (self.sheets, self.tile, self.tile_axis, self.tile_len):
+            w.blockSignals(False)
         self.desc = QLabel()
         self.desc.setWordWrap(True)
         lay.addWidget(self.desc)
@@ -1309,9 +1355,11 @@ class ExportDialog(QDialog):
         from ..post.export import write_gcode
         post = self.current_post()
         ctrl = self.ctrl
-        base = ctrl.project.path.with_suffix("") if ctrl.project.path else Path.home() / ctrl.project.name
-        fn, _ = QFileDialog.getSaveFileName(self, "Save G-code", f"{base}.{post.extension}",
-                                            f"{post.name} (*.{post.extension});;All files (*)")
+        proj = ctrl.project
+        name = proj.path.stem if proj.path else proj.name
+        fn, _ = save_file(self, ctrl.settings, "gcode", "Save G-code", f"{name}.{post.extension}",
+                          f"{post.name} (*.{post.extension});;All files (*)",
+                          str(proj.path.parent) if proj.path else str(Path.home()))
         if not fn:
             return
         sheets = [ctrl.sheet] if self.sheets.currentData() == "current" else ctrl.project.sheets
@@ -1328,8 +1376,15 @@ class ExportDialog(QDialog):
                 QMessageBox.warning(self, "Save G-code", f"{type(exc).__name__}: {exc}")
                 return
         ctrl.settings.last_post = post.id
+        self._remember()
         ctrl.message.emit("Saved " + ", ".join(p.name for p in written) if written else "Nothing to save")
         self.accept()
+
+    def _remember(self) -> None:
+        s, u = self.ctrl.settings, self.ctrl.units
+        s.remember("export_gcode", {"sheets": self.sheets.currentData(), "tile": self.tile.isChecked(),
+                                    "tile_axis": self.tile_axis.currentData(),
+                                    "tile_len": u.from_display(self.tile_len.value())})
 
 
 # ---------------------------------------------------------------------------
@@ -1408,7 +1463,7 @@ class PluginsDialog(QDialog):
             self.parent().rebuild_plugin_ui()
 
     def install(self) -> None:
-        fn, _ = QFileDialog.getOpenFileName(self, "Install plugin", "", "Python plugin (*.py)")
+        fn = open_file(self, self.ctrl.settings, "plugin", "Install plugin", "Python plugin (*.py)")
         if fn:
             dst = paths.ensure(paths.plugins_dir()) / Path(fn).name
             shutil.copy(fn, dst)
@@ -1565,8 +1620,8 @@ class PostEditorDialog(QDialog):
 # ---------------------------------------------------------------------------
 
 class TextDialog(QDialog):
-    last = {"text": "iyiCAM", "font": "", "height": 30.0, "bold": False, "italic": False, "align": "left",
-            "spacing": 0.0}
+    DEFAULTS = {"text": "iyiCAM", "font": "", "height": 30.0, "bold": False, "italic": False, "align": "left",
+                "spacing": 0.0}
 
     def __init__(self, ctrl, parent=None):
         super().__init__(parent)
@@ -1574,7 +1629,14 @@ class TextDialog(QDialog):
         self.setWindowTitle("Text")
         lay = QVBoxLayout(self)
         form = QFormLayout()
-        L = self.last
+        L = dict(self.DEFAULTS)   # what the last text was set to, if it still fits
+        for k, v in ctrl.settings.recall("text").items():
+            if k in L and type(v) is type(L[k]) or (k in ("height", "spacing") and isinstance(v, (int, float))
+                                                    and not isinstance(v, bool)):
+                L[k] = v
+        if L["align"] not in ("left", "center", "right"):
+            L["align"] = "left"
+        L["height"] = max(0.1, float(L["height"]))
         self.edit = QPlainTextEdit(L["text"])
         self.edit.setMaximumHeight(90)
         form.addRow("Text", self.edit)
@@ -1618,7 +1680,7 @@ class TextDialog(QDialog):
              "height": u.from_display(self.height.value()), "bold": self.bold.isChecked(),
              "italic": self.italic.isChecked(), "align": self.align.currentData(),
              "spacing": u.from_display(self.spacing.value())}
-        TextDialog.last = v
+        self.ctrl.settings.remember("text", v)
         return text_contours(v["text"], v["font"], v["height"], v["bold"], v["italic"], v["spacing"],
                              align=v["align"])
 
@@ -1642,13 +1704,18 @@ class ImportDialog(QDialog):
                 params.append(Param("join", "Join gaps up to", "length", 0.05, min=0.0))
             params.append(Param("scale", "Scale", "percent", 100.0, min=0.001))
         params.append(Param("center", "Centre on the sheet", "bool", False))
+        self.ctrl = ctrl
+        self.params = params
+        self.key = f"import:{Path(path).suffix.lower().lstrip('.')}"
         lay = QVBoxLayout(self)
-        self.form = ParamForm(params, None, ctrl.units)
+        self.form = ParamForm(params, ctrl.settings.recall(self.key, params), ctrl.units)
         lay.addWidget(self.form)
         lay.addWidget(buttons(self, "Import"))
 
     def values(self) -> dict:
-        return self.form.values()
+        v = self.form.values()
+        self.ctrl.settings.remember(self.key, v, self.params)
+        return v
 
 
 class PreferencesDialog(QDialog):

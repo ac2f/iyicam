@@ -10,7 +10,7 @@ from PySide6.QtCore import QObject, QTimer, Signal
 from ..cam.job import ComputeResult, compute_all, sheet_toolpaths, sheets_for
 from ..core import clip, paths, vectorops
 from ..core.commands import Command, CommandContext, CommandError, run_command
-from ..core.document import Project, Sheet, ToolpathDef, VectorObject
+from ..core.document import XY_ORIGINS, Project, Sheet, ToolpathDef, VectorObject
 from ..core.geom import Pt, Transform
 from ..core.registry import REGISTRY, Registry
 from ..core.stock import StockItem, normalized
@@ -98,7 +98,29 @@ class Controller(QObject):
         p = Project()
         p.sheets[0].width, p.sheets[0].height = width, height
         p.material.thickness = thickness
+        self._apply_material_defaults(p)
         self._replace(p)
+
+    MATERIAL_MEMORY = ("z_zero", "xy_origin", "safe_z", "clearance", "home_x", "home_y", "home_z", "rapid_rate")
+
+    def _apply_material_defaults(self, p: Project) -> None:
+        """A new project starts with the material setup (heights, zero, origin, home) that was set last."""
+        v = self.settings.recall("material")
+        m = p.material
+        try:
+            if v.get("z_zero") in ("top", "bottom"):
+                m.z_zero = v["z_zero"]
+            if v.get("xy_origin") in XY_ORIGINS:
+                m.xy_origin = v["xy_origin"]
+            for name, attr, low in (("safe_z", "safe_z", 0.1), ("clearance", "clearance", 0.0),
+                                    ("rapid_rate", "rapid_rate", 1.0)):
+                if isinstance(v.get(name), (int, float)) and not isinstance(v.get(name), bool) and v[name] >= low:
+                    setattr(m, attr, float(v[name]))
+            home = [v.get("home_x"), v.get("home_y"), v.get("home_z")]
+            if all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in home):
+                m.home = tuple(float(x) for x in home)
+        except (TypeError, ValueError):
+            pass
 
     def open_project(self, path: str | Path) -> None:
         p = Project.load(path)
@@ -296,7 +318,7 @@ class Controller(QObject):
     def add_toolpath(self, tdef: ToolpathDef) -> None:
         if self.settings.strategy_directions and "directions" not in tdef.sequence:
             tdef.sequence["directions"] = dict(self.settings.strategy_directions)
-        for key, value in (("strategy", self.settings.default_strategy), ("grouping", self.settings.default_grouping)):
+        for key, value in self.settings.sequence_defaults.items():
             tdef.sequence.setdefault(key, value)   # new toolpaths are ordered the way the last one was
         with self.edit(f"Add toolpath {tdef.name}", geometry=False):
             self.project.toolpaths.append(tdef)
@@ -405,13 +427,15 @@ class Controller(QObject):
             t.sequence.update(changes)
         self.recalculate({tid})
 
+    # cut order and start point settings that new toolpaths start with (what was chosen last)
+    REMEMBERED_SEQUENCE = ("strategy", "grouping", "direction", "smart_starts", "start_margin", "corner_distance")
+
     def remember_cut_order(self, **changes) -> None:
-        """Strategy / grouping chosen by the user: new toolpaths start with them."""
-        if changes.get("strategy"):
-            self.settings.default_strategy = changes["strategy"]
-        if changes.get("grouping"):
-            self.settings.default_grouping = changes["grouping"]
-        self.settings.save()
+        """Cut order / start point settings chosen by the user: new toolpaths start with them."""
+        keep = {k: v for k, v in changes.items() if k in self.REMEMBERED_SEQUENCE and v is not None}
+        if keep:
+            self.settings.sequence_defaults.update(keep)
+            self.settings.save()
 
     def set_inner_first(self, on: bool) -> int:
         """Cut the inner pieces (göbek) of all parts first (``on``) or part by part, on every toolpath that
