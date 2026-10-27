@@ -111,3 +111,16 @@ def test_a_project_with_nothing_to_do(capsys, tmp_path):
     assert code == 1                    # nothing was written: not a success, and not a crash
     code, out, err = run(capsys, "nest", str(path), "-o", str(tmp_path / "n.icam"))
     assert code in (0, 1) and "Traceback" not in err
+
+
+def test_help_lists_the_commands_without_opening_a_window(capsys, monkeypatch):
+    from iyicam import __main__ as entry
+
+    def no_window(*_a, **_k):
+        raise AssertionError("the window must not open for --help")
+    monkeypatch.setattr("iyicam.gui.app.main", no_window)
+    with pytest.raises(SystemExit) as exit_:
+        entry.main(["--help"])
+    assert exit_.value.code == 0
+    out = capsys.readouterr().out
+    assert "nest" in out and "gcode" in out
