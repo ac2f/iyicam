@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable
 
+from . import clip
 from .document import Project, Sheet, VectorObject
 from .geom import Contour
 from .params import Param
@@ -87,5 +88,8 @@ def run_command(cmd: Command, ctx: CommandContext, values: dict[str, Any] | None
     from .params import resolve
     if len(ctx.selected) < cmd.min_selection:
         raise CommandError(f"{cmd.label}: select at least {cmd.min_selection} vector(s)")
-    cmd.run(ctx, resolve(cmd.params, values))
+    try:
+        cmd.run(ctx, resolve(cmd.params, values))
+    except clip.TooComplex as exc:
+        raise CommandError(f"{cmd.label}: {exc}") from exc
     return ctx

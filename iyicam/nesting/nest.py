@@ -236,29 +236,29 @@ def convex_parts(path: IntPath) -> list[IntPath] | None:
         tris.append(idx)
     elif len(idx) > 3:
         return None
-    pieces = tris
-    merged = True
-    while merged:
-        merged = False
-        for a in range(len(pieces)):
-            for b in range(a + 1, len(pieces)):
-                pa, pb = pieces[a], pieces[b]
-                for i in range(len(pa)):
-                    u, v = pa[i], pa[(i + 1) % len(pa)]
-                    if v in pb and pb[(pb.index(v) + 1) % len(pb)] == u:
-                        # shared edge u->v in pa is v->u in pb: splice pb into pa
-                        j = pb.index(u)
-                        rest = [pb[(j + 1 + k) % len(pb)] for k in range(len(pb) - 2)]
-                        cand = pa[:i + 1] + rest + pa[i + 1:]
-                        if is_convex([P[t] for t in cand]):
-                            pieces[a] = cand
-                            del pieces[b]
-                            merged = True
-                        break
-                if merged:
-                    break
-            if merged:
-                break
+    # Hertel-Mehlhorn: take away every diagonal whose two pieces together are still convex (each diagonal is
+    # looked at once; ``owner`` says which piece has the directed edge u -> v, so none is searched for)
+    pieces = dict(enumerate(tris))
+    owner = {(pc[k], pc[(k + 1) % len(pc)]): pid for pid, pc in pieces.items() for k in range(len(pc))}
+    for u, v in [e for e in owner if e[0] < e[1] and (e[1], e[0]) in owner]:
+        a, b = owner.get((u, v)), owner.get((v, u))
+        if a is None or b is None or a == b:
+            continue
+        pa, pb = pieces[a], pieces[b]
+        i, j = pa.index(u), pb.index(u)
+        rest = [pb[(j + 1 + k) % len(pb)] for k in range(len(pb) - 2)]       # the other piece's corners but u, v
+        cand = pa[:i + 1] + rest + pa[i + 1:]
+        if not is_convex([P[t] for t in cand]):
+            continue
+        keep, drop = (a, b) if len(pa) >= len(pb) else (b, a)
+        for pid in (a, b):
+            for k, w in enumerate(pieces[pid]):
+                owner.pop((w, pieces[pid][(k + 1) % len(pieces[pid])]), None)
+        del pieces[drop]
+        pieces[keep] = cand
+        for k in range(len(cand)):
+            owner[(cand[k], cand[(k + 1) % len(cand)])] = keep
+    pieces = list(pieces.values())
     return [[P[t] for t in pc] for pc in pieces]
 
 

@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QButtonGroup, QC
                                QRadioButton, QScrollArea, QSpinBox, QSplitter, QTableWidget, QTableWidgetItem,
                                QTabWidget, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
-from ..core import paths
+from ..core import clip, paths
 from ..core.document import XY_ORIGINS, Selection, ToolpathDef
 from ..core.params import Param
 from ..core.stock import StockItem, load_stock, save_stock
@@ -1222,11 +1222,15 @@ class NestingDialog(RemembersSize, QDialog):
         moving = {o.id for p in self.parts for o in p.objects}
         sheet = ctrl.sheet
         blank = target == "current" and not sheet.outline and all(o.id in moving for o in sheet.vectors)
-        job = prepare_nesting(ctrl.project, self.objs, st, quantities, [], stock, use_sheets, v["new_sheets"],
-                              part_rules, layer_rules, v["tilt_step"], v["group_inner"], v["fill_holes"])
-        try:  # the long part runs in a thread: the program stays alive and Cancel works at once
+        try:
+            job = prepare_nesting(ctrl.project, self.objs, st, quantities, [], stock, use_sheets, v["new_sheets"],
+                                  part_rules, layer_rules, v["tilt_step"], v["group_inner"], v["fill_holes"])
+            # the long part runs in a thread: the program stays alive and Cancel works at once
             res = run_in_thread(lambda: run_nesting(job, progress, state["cancel"].is_set), prog, state)
         except NestCancelled:
+            return None
+        except clip.TooComplex as exc:    # (copies piled on one spot, on the plate or among the parts)
+            QMessageBox.warning(self, "Nesting", f"This cannot be nested:\n{exc}")
             return None
         finally:
             prog.close()

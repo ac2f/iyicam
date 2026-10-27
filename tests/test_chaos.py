@@ -18,6 +18,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 from test_cam_fuzz import random_value, scenario  # noqa: E402
 from test_command_fuzz import broken, same, state  # noqa: E402
 
+from iyicam.core import clip  # noqa: E402
 from iyicam.core.document import Project, Selection, ToolpathDef, VectorObject  # noqa: E402
 from iyicam.core.registry import REGISTRY  # noqa: E402
 from iyicam.nesting.nest import NestSettings  # noqa: E402
@@ -188,6 +189,9 @@ def step_nest(c, r):
     try:
         nest_objects(c.project, objs, st, group_inner=r.random() < 0.5, fill_holes=r.random() < 0.5,
                      new_sheets=True, use_sheets=[c.sheet])
+    except clip.TooComplex:        # (a pile of copies on one spot: refused, and nothing is changed)
+        c.undo_stack.rollback(c.project)
+        return
     except Exception:
         c.undo_stack.rollback(c.project)
         raise
@@ -256,7 +260,7 @@ def test_a_long_random_session(ctrl, seed, tmp_path):
     ctrl.recalculate()
     for tp_def in ctrl.project.toolpaths:
         for res in ctrl.results_for(tp_def):
-            assert res.error is None, f"{tp_def.name}: {res.error}\nsteps: {log}"
+            assert res.error is None or "on top of each other" in res.error, f"{tp_def.name}: {res.error}\nsteps: {log}"
     end = full_state(ctrl)
     steps_back = 0
     while ctrl.undo_stack.can_undo:

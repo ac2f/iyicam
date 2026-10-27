@@ -112,11 +112,73 @@ def contours_to_polys(contours: Iterable[Contour], tol: float = 0.005) -> list[P
     return [c.flatten(tol) for c in contours if c.closed and len(c.segs) > 0]
 
 
+class TooComplex(ValueError):
+    """Shapes lie on top of each other so much that putting them together would take minutes (or forever:
+    Clipper cannot be interrupted)."""
+
+
+MAX_OVERLAPS = 300_000   # pairs of shapes that overlap, counted as ten-point shapes: about 15 seconds of Clipper
+MAX_STACK = 120          # shapes on top of each other at one spot (a hundred squares on the same spot: a second)
+CHECK_FROM = 100         # (fewer shapes cannot get there)
+
+
+def check_overlaps(paths: Sequence[Sequence[tuple[int, int]]]) -> None:
+    """Refuse a pile of shapes that would take Clipper too long: ``TooComplex`` with the reason.
+
+    How many lie on top of each other is estimated from the boxes of the shapes on a grid (cells the size of a
+    small shape), so a thousand parts side by side cost nothing and a thousand copies of one part on the same
+    spot are refused."""
+    n = len(paths)
+    if n < CHECK_FROM:
+        return
+    boxes = []
+    for p in paths:
+        xs, ys = [q[0] for q in p], [q[1] for q in p]
+        boxes.append((min(xs), max(xs), min(ys), max(ys)))
+    sizes = sorted(max(b[1] - b[0], b[3] - b[2]) for b in boxes)
+    base = max(sizes[n // 5], 1)
+    occupied: dict[tuple[int, int, int], int] = {}
+    for x0, x1, y0, y1 in boxes:
+        cell, level = base, 0
+        while (x1 // cell) - (x0 // cell) > 1 or (y1 // cell) - (y0 // cell) > 1:
+            cell, level = cell * 2, level + 1       # (a shape is counted among those of its own size)
+        for cx in range(x0 // cell, x1 // cell + 1):
+            for cy in range(y0 // cell, y1 // cell + 1):
+                occupied[(level, cx, cy)] = occupied.get((level, cx, cy), 0) + 1
+    stack = max(occupied.values(), default=0)
+    pairs = sum(k * (k - 1) // 2 for k in occupied.values())
+    points = sum(len(p) for p in paths) / n
+    if stack > MAX_STACK or pairs * max(1.0, points / 10) > MAX_OVERLAPS:
+        raise TooComplex(f"{stack} of {n} shapes lie on top of each other at one spot: this would take far too "
+                         f"long. Remove the copies that sit on the same spot, or select fewer vectors.")
+
+
+def without_copies(paths: list[list[tuple[int, int]]], any_way_round: bool = True) -> list[list[tuple[int, int]]]:
+    """The paths with each outline once, however many times and from whichever point it is drawn, and (with
+    ``any_way_round``) in whichever direction (a doubled drawing in a file: with the even-odd rule two of the
+    same would cancel out; with the non-zero rule, where direction counts, a hole drawn on a part is kept)."""
+    seen = set()
+    out = []
+    for p in paths:
+        q = p
+        if any_way_round and sum(p[i][0] * p[i - 1][1] - p[i - 1][0] * p[i][1] for i in range(len(p))) < 0:
+            q = p[::-1]
+        k = min(range(len(q)), key=q.__getitem__)
+        key = tuple(q[k:] + q[:k])
+        if key not in seen:
+            seen.add(key)
+            out.append(p)
+    return out
+
+
 def normalize(polys: Iterable[Sequence[Pt]], fill: str = "evenodd") -> list[Poly]:
     """Resolve self-intersections / nesting into clean outer (CCW) + hole (CW) polygons."""
     paths = _clean(polys)
     if not paths:
         return []
+    if len(paths) > 1:
+        paths = without_copies(paths, fill == "evenodd")
+    check_overlaps(paths)
     pc = Clipper()
     pc.AddPaths(paths, pyclipper.PT_SUBJECT, True)
     res = pc.Execute(pyclipper.CT_UNION, _FILL[fill], _FILL[fill])

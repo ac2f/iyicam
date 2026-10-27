@@ -35,13 +35,20 @@ def ctrl(tmp_path_factory):
     QApplication.processEvents()
 
 
+def coarse(contour) -> float:
+    """The tolerance to compare outlines at: fine for small ones, a thousandth of the size for big ones (ten
+    thousand copies of a huge circle would otherwise take gigabytes to remember)."""
+    bb = contour.bbox()
+    return max(0.05, max(bb.width, bb.height) / 1000)
+
+
 def state(c):
     """What is on the sheets and layers: ids, names and outlines."""
     out = []
     for s in c.project.sheets:
         for v in s.vectors:
             out.append((s.id, v.id, v.layer_id, v.name, tuple(
-                (k.closed, tuple(k.flatten(0.05))) for k in v.contours)))
+                (k.closed, tuple(k.flatten(coarse(k)))) for k in v.contours)))
     return sorted(out, key=lambda t: (t[0], t[1])), [(la.id, la.name) for la in c.project.layers]
 
 

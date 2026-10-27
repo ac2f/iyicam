@@ -3,7 +3,7 @@ import math
 import pytest
 
 from iyicam.core import arcfit, clip, shapes, vectorops
-from iyicam.core.geom import Arc, BBox, Bezier, Contour, Line, Transform, dist, same
+from iyicam.core.geom import Arc, BBox, Bezier, Contour, Line, Transform, dist, polygon_area, same
 
 
 def approx_pt(a, b, tol=1e-6):
@@ -229,7 +229,6 @@ def test_polygons_with_no_area_are_nothing_not_an_error():
     import random
 
     from iyicam.core import clip
-    from iyicam.core.geom import polygon_area
     slits = [[(0, 0), (3, 1), (1, 2), (3, 1)], [(0, 0), (5, 0), (10, 0)], [(1, 1)] * 5,
              [(0, 0), (10, 1), (0, 0), (10, 1)], [(0, 0.0003), (0.0002, 0), (0, 0), (0.0001, 0), (0.0002, 0)]]
     square = [(0, 0), (10, 0), (10, 10), (0, 10)]
@@ -246,3 +245,49 @@ def test_polygons_with_no_area_are_nothing_not_an_error():
         clip.normalize([poly])
         clip.offset([poly], 0.5)
         clip.boolean([poly], [square], "difference")
+
+
+def test_a_pile_of_shapes_on_one_spot_is_refused_at_once_not_after_minutes():
+    """Clipper cannot be interrupted, and a few hundred squares on the same spot take it minutes: the pile is
+    refused with a message, whatever the number of vectors, but parts side by side cost nothing."""
+    import time
+
+    square = [(0, 0), (10, 0), (10, 10), (0, 10)]
+    pile = [[(x + i * 1e-3, y) for x, y in square] for i in range(300)]
+    t = time.time()
+    with pytest.raises(clip.TooComplex, match="on top of each other"):
+        clip.normalize(pile)
+    assert time.time() - t < 1
+    grid = [[(x * 12 + a, y * 12 + b) for a, b in square] for x in range(80) for y in range(50)]
+    t = time.time()
+    assert len(clip.normalize(grid)) == 4000
+    assert time.time() - t < 5
+    ring = [(-5, -5), (500, -5), (500, 500), (-5, 500)]       # a frame round many small parts is no pile
+    small = [[(x * 12 + a, y * 12 + b) for a, b in square] for x in range(30) for y in range(30)]
+    assert len(clip.normalize([ring] + small)) == 901
+
+
+def test_copies_of_one_outline_count_once():
+    square = [(0, 0), (10, 0), (10, 10), (0, 10)]
+    copies = [square[i:] + square[:i] for i in range(4)] + [square[::-1]] * 3     # (even-odd: two cancel out)
+    out = clip.normalize(copies * 40)
+    assert len(out) == 1 and abs(polygon_area(out[0]) - 100) < 1e-9
+    inner = [(2, 2), (4, 2), (4, 4), (2, 4)]                 # a hole in it is still a hole
+    out = clip.normalize([square, square, inner])
+    assert sorted(round(polygon_area(p)) for p in out) == [-4, 100]
+
+
+def test_the_command_that_would_pile_shapes_up_says_so(tmp_path):
+    from iyicam.builtins import ensure_registered
+    from iyicam.core import vectorops
+    from iyicam.core.commands import CommandContext, CommandError, run_command
+    from iyicam.core.document import Project, VectorObject
+    reg = ensure_registered(__import__("iyicam.core.registry", fromlist=["REGISTRY"]).REGISTRY)
+    p = Project()
+    s = p.sheets[0]
+    s.vectors.extend(VectorObject([shapes.rectangle(i * 1e-3, 0, 10, 10)], p.layers[0].id, f"v{i}")
+                     for i in range(400))
+    ctx = CommandContext(p, s, [v.id for v in s.vectors])
+    with pytest.raises(CommandError, match="on top of each other"):
+        run_command(reg.commands["edit.weld"], ctx, {})
+    assert vectorops is not None

@@ -78,6 +78,10 @@ nothing. What keeps it fast:
   quarter turn) are tried once.
 * Only the neighbours that really get in the way of a part are looked at in detail.
 
+Copies lying on top of each other are looked at once: identical outlines (a doubled drawing) count as one,
+and a pile of more than about a hundred different shapes on one spot is refused with a message ("shapes lie on
+top of each other"), because putting such a pile together takes minutes and cannot be interrupted.
+
 If nesting is still slow: fewer angles (90° steps instead of 15°), fewer *Optimisation
 attempts*, fewer outline points. On the command line: `--max-points N`.
 

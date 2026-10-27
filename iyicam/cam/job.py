@@ -57,6 +57,8 @@ def compute_toolpath(project: Project, tdef: ToolpathDef, sheet: Sheet,
     try:
         res.toolpaths = cls(tdef.params).compute(ctx)
         res.order, res.start_updates = ctx.order, dict(ctx.start_updates or {})
+    except clip.TooComplex as exc:      # (shapes piled on one spot: said as it is, no traceback)
+        res.error = str(exc)
     except Exception as exc:  # strategies (and plugins) must never crash the application
         res.error = f"{type(exc).__name__}: {exc}"
         res.warnings.append(traceback.format_exc(limit=4))

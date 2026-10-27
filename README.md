@@ -257,6 +257,7 @@ How the program is tested besides the usual unit tests (all in `tests/`):
 | `test_cam_fuzz.py` | random drawings (open, tiny, self-crossing, huge, doubled) and random settings through every toolpath type and post: no toolpath may fail, no G-code may hold `nan` or absurd coordinates |
 | `test_command_fuzz.py` | every vector command with random settings and selections: no exception, no broken or destroyed vector, undo and redo restore exactly, a refused command changes nothing |
 | `test_chaos.py` | a long random session (vectors, commands, layers, sheets, toolpaths, nesting, saving) after which undoing everything gives the first project and redoing it the last |
+| `test_thin.py`, `test_geom.py` | the fast centre-line thinning against the plain algorithm, shapes with no area and piles of shapes on one spot (refused with a message, never a hang) |
 | `test_import_fidelity.py` | DXF compared with an independent reading, SVG and HPGL with exactly known shapes |
 | `test_nesting_*.py` | an independent check of every layout (overlap, spacing, border, counts) and fuzzing that nesting and re-nesting never adds or loses a vector |
 

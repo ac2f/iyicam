@@ -117,3 +117,47 @@ def test_all_quantities_zero_changes_nothing(rwin):
     robot.hook = hook
     win.nest()
     assert census(c.project) == before and robot.problems() == []
+
+
+def _wobbly(n, rnd, r=50000, wob=0.3):
+    """A simple counter-clockwise polygon of n corners (a star-like blob with rough edges)."""
+    import math
+    pts = []
+    for k in range(n):
+        a = 2 * math.pi * k / n
+        rr = r * (1 + wob * math.sin(7 * a) + 0.15 * rnd.uniform(-1, 1) * wob)
+        pts.append((round(rr * math.cos(a)), round(rr * math.sin(a))))
+    return pts
+
+
+@pytest.mark.parametrize("n", [3, 4, 5, 12, 40, 150, 400])
+def test_convex_pieces_cover_the_outline_exactly(n):
+    import random
+
+    import pyclipper
+
+    from iyicam.nesting.nest import convex_parts, is_convex
+    rnd = random.Random(n)
+    for _ in range(4):
+        poly = _wobbly(n, rnd)
+        pieces = convex_parts(poly)
+        if pieces is None:
+            continue
+        assert all(is_convex(p) and pyclipper.Orientation(p) for p in pieces)
+        whole = abs(pyclipper.Area(poly))
+        assert sum(abs(pyclipper.Area(p)) for p in pieces) == pytest.approx(whole, rel=1e-9)
+        pc = pyclipper.Pyclipper()
+        pc.AddPaths(pieces, pyclipper.PT_SUBJECT, True)
+        united = pc.Execute(pyclipper.CT_UNION, pyclipper.PFT_NONZERO, pyclipper.PFT_NONZERO)
+        assert sum(abs(pyclipper.Area(p)) for p in united) == pytest.approx(whole, rel=1e-9)   # no overlaps, no gaps
+
+
+def test_a_scribble_of_thousands_of_points_does_not_stall_nesting():
+    import random
+    import time
+
+    from iyicam.nesting.nest import convex_parts
+    poly = _wobbly(3000, random.Random(5), wob=0.5)
+    t = time.time()
+    convex_parts(poly)                       # (a piece list, or None: then Clipper's sum is used)
+    assert time.time() - t < 20
