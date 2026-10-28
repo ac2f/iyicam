@@ -18,6 +18,7 @@ dependencies = [
 [project.optional-dependencies]
 gui = ["PySide6-Essentials>=6.5"]
 dev = ["pytest>=7", "PySide6-Essentials>=6.5"]
+package = ["PySide6-Essentials>=6.5", "pyinstaller>=6.6"]
 
 [project.scripts]
 iyicam = "iyicam.__main__:main"

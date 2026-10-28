@@ -9,3 +9,4 @@ dist/
 *.tap
 *.ngc
 !tests/data/**
+.venv-build/

@@ -24,7 +24,7 @@ from .core.registry import REGISTRY
 from .formats.report import ImportReport, run_importer
 from .plugins.manager import PluginManager
 
-COMMANDS = ("posts", "info", "gcode", "import", "nest", "plugins")
+COMMANDS = ("posts", "info", "gcode", "import", "nest", "plugins", "selftest")
 
 
 def _setup(plugins: bool = True) -> None:
@@ -37,6 +37,11 @@ def _setup(plugins: bool = True) -> None:
         for info in PluginManager(REGISTRY, [paths.plugins_dir()]).load_all():
             if info.error:
                 print(f"warning: plugin {info.key} failed to load", file=sys.stderr)
+
+
+def cmd_selftest(a) -> int:
+    from .selftest import run
+    return run(gui=not a.no_gui)
 
 
 def cmd_posts(a) -> int:
@@ -183,6 +188,8 @@ def main(argv: list[str] | None = None) -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("posts", help="list post-processors")
     sub.add_parser("plugins", help="list plugins")
+    s = sub.add_parser("selftest", help="use every part of the program once and report what does not work")
+    s.add_argument("--no-gui", action="store_true", help="leave out the window (a machine without Qt)")
     s = sub.add_parser("info", help="summarise a project")
     s.add_argument("project")
     s = sub.add_parser("gcode", help="calculate toolpaths and write G-code")
@@ -235,7 +242,7 @@ def main(argv: list[str] | None = None) -> int:
     _setup(not a.no_plugins)
     try:
         return {"posts": cmd_posts, "plugins": cmd_plugins, "info": cmd_info, "gcode": cmd_gcode,
-                "import": cmd_import, "nest": cmd_nest}[a.cmd](a)
+                "import": cmd_import, "nest": cmd_nest, "selftest": cmd_selftest}[a.cmd](a)
     except FileNotFoundError as exc:
         print(f"error: {exc.filename or exc} was not found", file=sys.stderr)
     except (OSError, ValueError, KeyError, TypeError, IndexError) as exc:   # a bad file or a bad number

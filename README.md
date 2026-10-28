@@ -21,6 +21,17 @@ with Python plugins.
 
 ## Features
 
+**Workspace**
+- **Tabs**: every project (model) is open in a tab of its own, each with its own drawing, selection, tool, undo
+  history and sheets; the layer, sheet, selection and toolpath panels, the menus and the Python console follow
+  the tab that is open. New, open (a file that is open already is shown, not opened twice), close (asks to save),
+  duplicate, reopen a closed tab (Ctrl+Shift+T), Ctrl+PgUp / PgDown, middle-click to close, drag files onto the
+  window, and the tabs come back the next time the program is started
+- **Modern look**: light and dark themes (or the system's, also while the program runs), icons and drawing that
+  follow the theme, a quick tool bar (new, open, save, undo, redo, zoom, nest, toolpath, simulate, G-code),
+  flat tabs, docks and inputs. View ▸ Appearance or Edit ▸ Preferences
+- A **packaged program** (no Python needed) for Windows, Linux and macOS: [docs/packaging.md](docs/packaging.md)
+
 **Design**
 - Vectors made of lines, arcs and cubic beziers; open or closed; compound vectors (text, groups)
 - Vector layers (colour, show/hide, lock, active layer) and multiple **sheets** per project
@@ -124,7 +135,11 @@ interface allow scripting and batch work.
 
 ## Installation
 
-Python 3.11 or newer is required.
+**Without Python:** a packaged program is built by `packaging/build_windows.bat` (or `packaging/build_unix.sh`) or
+by the GitHub workflow; see [docs/packaging.md](docs/packaging.md). `iyicam selftest` (or `iyicam-cli selftest`
+in a package) uses every part of the program once and says what does not work.
+
+**From the source:** Python 3.11 or newer is required.
 
 ```bash
 git clone https://github.com/ac2f/iyicam.git
