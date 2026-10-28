@@ -9,7 +9,7 @@ import pytest
 
 pytest.importorskip("PySide6.QtWidgets")
 
-from gui_robot import Robot, process  # noqa: E402
+from gui_robot import Robot, process, release  # noqa: E402
 
 from iyicam.core import shapes  # noqa: E402
 from iyicam.core.document import VectorObject  # noqa: E402
@@ -29,9 +29,10 @@ class Session:
 
     def restart(self, resize=True):
         if self.win is not None:
-            self.win.ctrl.dirty = False
+            for c in self.win.documents():
+                c.dirty = False
             self.win.close()
-            process()
+            release(self.win)
         from iyicam.gui.app import create_window
         app, self.win = create_window(["test"], load_plugins=False)
         if resize:
@@ -46,9 +47,10 @@ class Session:
         return self.win.ctrl
 
     def close(self):
-        self.win.ctrl.dirty = False
+        for c in self.win.documents():
+            c.dirty = False
         self.win.close()
-        process()
+        release(self.win)
 
 
 @pytest.fixture

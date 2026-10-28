@@ -28,15 +28,19 @@ class Controller(QObject):
     toolpaths_changed = Signal()  # toolpath definitions or results changed
     project_replaced = Signal()   # new / opened project
     message = Signal(str)
+    units_changed = Signal()      # the display units of every document changed (they are a setting of the window)
 
     AUTO_LIMIT_S = 1.5  # stop auto recalculation when a full calculation is slower than this
 
-    def __init__(self, registry: Registry = REGISTRY, settings: Settings | None = None):
+    def __init__(self, registry: Registry = REGISTRY, settings: Settings | None = None,
+                 tools: ToolLibrary | None = None):
+        """One document. The settings and the tool library are shared by the documents of a window (the tabs):
+        pass the ones of the first."""
         super().__init__()
         self.registry = registry
         self.settings = settings or Settings()
-        self.units = Units(self.settings.units)
-        self.tools = ToolLibrary.load_or_default(paths.tools_file())
+        self._units = Units(self.settings.units)
+        self.tools = tools if tools is not None else ToolLibrary.load_or_default(paths.tools_file())
         self.undo_stack = UndoStack()
         self.project = Project()
         self.sheet_id = self.project.sheets[0].id
@@ -55,6 +59,15 @@ class Controller(QObject):
         self._recalc.setInterval(250)
         self._recalc.timeout.connect(self._auto_recalculate)
 
+    def _busy_window(self):
+        """The window the progress box belongs to, unless that is gone (a timer can fire while a window closes)."""
+        w = self.busy_parent
+        try:
+            from shiboken6 import isValid
+            return w if w is not None and isValid(w) else None
+        except ImportError:
+            return w
+
     # -- convenience ------------------------------------------------------------------
     @property
     def sheet(self) -> Sheet:
@@ -71,6 +84,24 @@ class Controller(QObject):
             l = self.project.layers[0]
             self.layer_id = l.id
         return l
+
+    @property
+    def units(self) -> Units:
+        if self._units.name != self.settings.units:       # (changed through the settings, perhaps in another tab)
+            self._units = Units(self.settings.units)
+        return self._units
+
+    @property
+    def pristine(self) -> bool:
+        """A new, untouched document: opening a file may take its place (a tab that was never used)."""
+        p = self.project
+        return (p.path is None and not self.dirty and not p.toolpaths and not self.undo_stack.can_undo
+                and not any(s.vectors for s in p.sheets))
+
+    @property
+    def title(self) -> str:
+        p = self.project
+        return p.path.stem if p.path else p.name
 
     def selected_objects(self) -> list[VectorObject]:
         s = self.sheet
@@ -375,7 +406,7 @@ class Controller(QObject):
             res = run_busy(lambda: compute_all(self.project, self.registry, only, self.results, force_smart,
                                                cancel=lambda: state["cancel"].is_set(), progress=progress,
                                                events=events),
-                           self.busy_parent, "Calculating toolpaths...", ComputeCancelled, state=state)
+                           self._busy_window(), "Calculating toolpaths...", ComputeCancelled, state=state)
         except ComputeCancelled:
             self.stale = True
             self.message.emit("Calculation cancelled: Toolpaths > Recalculate All (F5) calculates again")
@@ -551,8 +582,8 @@ class Controller(QObject):
     # -- misc -------------------------------------------------------------------------------------------
     def set_units(self, name: str) -> None:
         self.settings.units = name
-        self.units = Units(name)
         self.changed.emit()
+        self.units_changed.emit()
 
     def save_tools(self) -> None:
         self.tools.save(paths.tools_file())

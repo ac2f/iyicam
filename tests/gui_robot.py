@@ -136,8 +136,18 @@ def rwin_gen(tmp_path, monkeypatch):
     w.show()
     process()
     yield w, robot
-    w.ctrl.dirty = False
+    for c in w.documents():
+        c.dirty = False
     w.close()
+    release(w)
+
+
+def release(window) -> None:
+    """Let go of a window that is closed (windows that are only closed stay alive for the whole test run, and
+    everything that restyles the program, a theme for example, has to visit every one of them)."""
+    from PySide6.QtCore import QEvent
+    window.deleteLater()
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     process()
 
 

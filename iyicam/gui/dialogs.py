@@ -1796,6 +1796,8 @@ class PreferencesDialog(QDialog):
         self.setWindowTitle("Preferences")
         params = [
             Param("units", "Display units", "choice", s.units, choices=[("mm", "Millimetres"), ("inch", "Inches")]),
+            Param("theme", "Appearance", "choice", s.theme,
+                  choices=[("system", "Follow the system"), ("light", "Light"), ("dark", "Dark")]),
             Param("grid", "Grid spacing (mm)", "float", s.grid, min=0.0),
             Param("snap_grid", "Snap to grid", "bool", s.snap_grid),
             Param("snap_objects", "Snap to vectors", "bool", s.snap_objects),
@@ -1812,8 +1814,13 @@ class PreferencesDialog(QDialog):
         v = self.form.values()
         s = self.ctrl.settings
         for k, val in v.items():
-            if k != "units":
+            if k not in ("units", "theme"):
                 setattr(s, k, val)
         self.ctrl.set_units(v["units"])
+        window = self.parent()
+        if hasattr(window, "set_theme"):
+            window.set_theme(v["theme"])
+        else:
+            s.theme = v["theme"]
         s.save()
         super().accept()

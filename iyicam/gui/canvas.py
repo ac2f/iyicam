@@ -10,6 +10,7 @@ from PySide6.QtWidgets import QWidget
 from ..core import clip
 from ..core.document import VectorObject
 from ..core.geom import Arc, BBox, Pt, dist
+from . import theme
 from .qtgeom import contours_path, toolpath_paths
 
 TP_COLORS = ["#e6550d", "#3182bd", "#31a354", "#756bb1", "#de2d26", "#636363", "#fd8d3c", "#6baed6"]
@@ -45,6 +46,7 @@ class Canvas(QWidget):
         self.tool = None
         self.context_menu_hook = None
         self._guide_drag: list | None = None  # [kind, index or None, value]
+        self._fit_when_shown = True           # (a view made before the widget has its size would be wrong)
         ctrl.changed.connect(self._doc_changed)
         ctrl.selection_changed.connect(self.update)
         ctrl.toolpaths_changed.connect(self._tp_changed)
@@ -52,6 +54,12 @@ class Canvas(QWidget):
         ctrl.project_replaced.connect(lambda: self.zoom_extents())
         from .tools import SelectTool
         self.set_tool(SelectTool(self))
+
+    def showEvent(self, ev) -> None:
+        super().showEvent(ev)
+        if self._fit_when_shown:
+            self._fit_when_shown = False
+            self.zoom_extents()
 
     # -- view transform ---------------------------------------------------------------------
     def world_to_screen(self, x: float, y: float) -> QPointF:
@@ -308,16 +316,17 @@ class Canvas(QWidget):
     def paintEvent(self, ev) -> None:
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        p.fillRect(self.rect(), QColor("#d8dce2"))
+        t = theme.get()
+        p.fillRect(self.rect(), QColor(t.canvas))
         sh = self.ctrl.sheet
         T = self.view_transform()
         # sheet
         p.setTransform(T)
         if sh.outline:  # a leftover: material only inside its outline
-            p.fillRect(QRectF(0, 0, sh.width, sh.height), QColor("#c9ccd2"))
-            p.fillPath(self._outline_path(sh), QColor("#fbf7ee"))
+            p.fillRect(QRectF(0, 0, sh.width, sh.height), QColor(t.sheet_shadow))
+            p.fillPath(self._outline_path(sh), QColor(t.sheet))
         else:
-            p.fillRect(QRectF(0, 0, sh.width, sh.height), QColor("#fbf7ee"))
+            p.fillRect(QRectF(0, 0, sh.width, sh.height), QColor(t.sheet))
         if self.show_sim and self.sim_image is not None and self.sim_rect is not None:
             p.save()
             p.translate(self.sim_rect.x(), self.sim_rect.y() + self.sim_rect.height())
@@ -325,7 +334,7 @@ class Canvas(QWidget):
             p.drawImage(0, 0, self.sim_image)
             p.restore()
         self._paint_grid(p, sh)
-        pen = QPen(QColor("#8a7f6b"), 1.2)
+        pen = QPen(QColor(t.sheet_edge), 1.2)
         pen.setCosmetic(True)
         p.setPen(pen)
         p.setBrush(Qt.NoBrush)
@@ -342,7 +351,7 @@ class Canvas(QWidget):
             if layer is not None and not layer.visible:
                 continue
             path = self.obj_path(o)
-            color = QColor(layer.color if layer else "#000000")
+            color = theme.adapt(QColor(layer.color if layer else "#000000"))
             if layer is not None and layer.locked:
                 color.setAlpha(110)
             if o.id in sel:
@@ -432,9 +441,10 @@ class Canvas(QWidget):
         R = self.RULER
         W, H = self.width(), self.height()
         u = self.ctrl.units
-        p.fillRect(QRectF(0, 0, W, R), QColor("#eceff1"))
-        p.fillRect(QRectF(0, 0, R, H), QColor("#eceff1"))
-        p.setPen(QPen(QColor("#90a4ae"), 1))
+        t = theme.get()
+        p.fillRect(QRectF(0, 0, W, R), QColor(t.ruler))
+        p.fillRect(QRectF(0, 0, R, H), QColor(t.ruler))
+        p.setPen(QPen(QColor(t.ruler_text), 1))
         p.drawLine(QPointF(R, R), QPointF(W, R))
         p.drawLine(QPointF(R, R), QPointF(R, H))
         g = self.grid_step()
@@ -472,7 +482,7 @@ class Canvas(QWidget):
             p.drawLine(QPointF(q.x(), 0), QPointF(q.x(), R))
         if q.y() > R:
             p.drawLine(QPointF(0, q.y()), QPointF(R, q.y()))
-        p.fillRect(QRectF(0, 0, R, R), QColor("#cfd8dc"))
+        p.fillRect(QRectF(0, 0, R, R), QColor(t.canvas))
 
     def _paint_grid(self, p: QPainter, sh) -> None:
         g = self.grid_step()
@@ -484,8 +494,10 @@ class Canvas(QWidget):
         x1, y1 = min(sh.width, x1), min(sh.height, y1)
         if x1 <= x0 or y1 <= y0:
             return
-        minor = QPen(QColor(0, 0, 0, 22), 1)
-        major = QPen(QColor(0, 0, 0, 45), 1)
+        g0 = theme.get().grid_rgb
+        dark = theme.get().dark
+        minor = QPen(QColor(g0, g0, g0, 16 if dark else 22), 1)
+        major = QPen(QColor(g0, g0, g0, 36 if dark else 45), 1)
         minor.setCosmetic(True)
         major.setCosmetic(True)
         i0, i1 = math.ceil(x0 / g), math.floor(x1 / g)
@@ -508,7 +520,7 @@ class Canvas(QWidget):
         p.drawLine(q, q + QPointF(28, 0))
         p.setPen(QPen(QColor("#008000"), 2))
         p.drawLine(q, q + QPointF(0, -28))
-        p.setPen(QPen(QColor("#303030"), 1))
+        p.setPen(QPen(QColor(theme.get().text), 1))
         p.drawEllipse(q, 3, 3)
         p.restore()
 

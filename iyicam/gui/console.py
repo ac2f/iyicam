@@ -42,22 +42,29 @@ class Console(QWidget):
 
         def add(contours, name: str = "script"):
             cs = contours if isinstance(contours, list) else [contours]
-            obj = VectorObject(cs, ctrl.layer_id, name)
-            ctrl.add_vectors([obj], "Script")
+            obj = VectorObject(cs, self.ctrl.layer_id, name)
+            self.ctrl.add_vectors([obj], "Script")
             return obj
 
         def run(cmd_id: str, **values):
-            return ctrl.run_command(REGISTRY.commands[cmd_id], values)
+            return self.ctrl.run_command(REGISTRY.commands[cmd_id], values)
 
+        # (``ctrl``, ``project`` and the functions follow the document of the tab that is open)
         self.ns = {"ctrl": ctrl, "window": window, "REGISTRY": REGISTRY, "shapes": shapes,
                    "vectorops": vectorops, "geom": geom, "add": add, "run": run,
-                   "sheet": lambda: ctrl.sheet, "selected": ctrl.selected_objects}
+                   "sheet": lambda: self.ctrl.sheet, "selected": lambda: self.ctrl.selected_objects()}
         self.interp = code.InteractiveInterpreter(self.ns)
         self.out.setPlainText(BANNER + "\n")
 
     @property
     def project(self):
         return self.ctrl.project
+
+    def bind(self, ctrl) -> None:
+        """Work on the document of another tab."""
+        self.ctrl = ctrl
+        self.ns["ctrl"] = ctrl
+        self.ns["project"] = ctrl.project
 
     def eventFilter(self, obj, ev) -> bool:
         if obj is self.inp and ev.type() == ev.Type.KeyPress and self.history:

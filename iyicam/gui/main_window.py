@@ -6,10 +6,10 @@ import json
 import traceback
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray, QRectF, Qt, QUrl
-from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QImage, QKeySequence
+from PySide6.QtCore import QByteArray, QRectF, QSize, Qt, QUrl
+from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QGuiApplication, QImage, QKeySequence
 from PySide6.QtWidgets import (QApplication, QDialog, QDockWidget, QLabel, QMainWindow, QMenu,
-                               QMessageBox, QProgressDialog, QTabWidget, QToolBar, QVBoxLayout)
+                               QMessageBox, QProgressDialog, QTabWidget, QToolBar, QToolButton, QVBoxLayout)
 
 from .. import __version__
 from ..cam.moves import PathStats, format_time
@@ -17,7 +17,7 @@ from ..core.document import VectorObject, new_id, toolpath_from_dict, toolpath_t
 from ..core.geom import BBox, Transform
 from ..core.params import Param
 from ..formats.report import ImportReport, run_importer
-from . import menus
+from . import menus, theme
 from .canvas import Canvas
 from .console import Console
 from .controller import Controller
@@ -29,6 +29,7 @@ from .files import open_file, save_file
 from .forms import ParamForm
 from .icons import icon
 from .panels import LayersPanel, PropertiesPanel, SheetsPanel, ToolpathsPanel
+from .tabs import DocumentTabs
 from .tools import TOOLS
 
 TOOL_KEYS = {"select": "S", "nodes": "N", "polyline": "P", "line": "L", "rectangle": "R", "circle": "C",
@@ -44,24 +45,31 @@ class MainWindow(QMainWindow):
     last_import_report: ImportReport | None = None
 
     def __init__(self, ctrl: Controller, plugin_manager=None):
+        """``ctrl`` is the document of the first tab; every tab has a controller and a drawing of its own, and the
+        panels show the one of the tab that is open. ``self.ctrl`` and ``self.canvas`` are those."""
         super().__init__()
-        self.ctrl = ctrl
         self.pm = plugin_manager
         self.setWindowTitle("iyiCAM")
         self.resize(1400, 900)
-        self.canvas = Canvas(ctrl)
-        self.canvas.context_menu_hook = self._canvas_menu
-        self.setCentralWidget(self.canvas)
-        self._build_docks()
+        self.setAcceptDrops(True)
+        self.closed_tabs: list[str] = []       # paths of the projects closed (the last one first): Ctrl+Shift+T
+        self._themed: list[tuple[QAction, str]] = []     # tool bar actions and the icon each wears (follows the theme)
+        self.tabs = DocumentTabs()
+        self.tabs.tabCloseRequested.connect(self.close_tab)
+        self.tabs.new_requested.connect(self.new_project)
+        self.tabs.menu_requested.connect(self._tab_menu)
+        self.setCentralWidget(self.tabs)
+        self._attach(ctrl)
+        self._build_docks(ctrl)
         self._build_toolbar()
         self._build_status()
         self.build_menus()
-        ctrl.busy_parent = self
-        ctrl.message.connect(lambda m: self.statusBar().showMessage(m, 6000))
-        ctrl.changed.connect(self._update_title)
-        ctrl.project_replaced.connect(self._update_title)
-        self.canvas.tool_changed.connect(self._tool_changed)
-        self._update_title()
+        self.tabs.currentChanged.connect(self._show_document)
+        self._show_document()
+        try:        # (a theme that follows the system changes with it)
+            QGuiApplication.styleHints().colorSchemeChanged.connect(self._system_scheme_changed)
+        except AttributeError:
+            pass
         if ctrl.settings.window_state:
             try:
                 self.restoreState(QByteArray.fromBase64(ctrl.settings.window_state.encode()))
@@ -76,9 +84,234 @@ class MainWindow(QMainWindow):
             self._safe(ext, self)
         ctrl.registry.emit("gui_ready", self)
 
+    # -- documents (tabs) ------------------------------------------------------------------------
+    @property
+    def canvas(self) -> Canvas:
+        """The drawing of the tab that is open."""
+        return self.tabs.currentWidget()
+
+    @property
+    def ctrl(self) -> Controller:
+        """The document of the tab that is open."""
+        return self.tabs.currentWidget().ctrl
+
+    def documents(self) -> list[Controller]:
+        return [cv.ctrl for cv in self.tabs.documents()]
+
+    def _attach(self, ctrl: Controller) -> Canvas:
+        """Put a document in a new tab (and make it the one that is open)."""
+        canvas = Canvas(ctrl)
+        canvas.context_menu_hook = self._canvas_menu
+        ctrl.busy_parent = self
+        ctrl.message.connect(lambda m: self.statusBar().showMessage(m, 6000))
+        ctrl.changed.connect(lambda c=ctrl: self._doc_changed(c))
+        ctrl.project_replaced.connect(lambda c=ctrl: self._doc_changed(c))
+        ctrl.units_changed.connect(lambda c=ctrl: self._units_changed(c))
+        # (only the drawing that is shown tells the window about its tool, prompt and mouse)
+        canvas.tool_changed.connect(lambda name, cv=canvas: cv is self.canvas and self._tool_changed(name))
+        canvas.prompt.connect(lambda text, cv=canvas: cv is self.canvas and self.prompt.setText(text))
+        canvas.cursor_moved.connect(lambda x, y, cv=canvas: cv is self.canvas and self._coords(x, y))
+        i = self.tabs.addTab(canvas, "")
+        self._label(i)
+        self.tabs.setCurrentIndex(i)
+        return canvas
+
+    def _index_of(self, ctrl: Controller) -> int:
+        return next((i for i, cv in enumerate(self.tabs.documents()) if cv.ctrl is ctrl), -1)
+
+    def _label(self, i: int) -> None:
+        ctrl = self.tabs.widget(i).ctrl
+        name = ctrl.title.replace("&", "&&")
+        self.tabs.setTabText(i, f"{name} \u2022" if ctrl.dirty else name)
+        self.tabs.setTabToolTip(i, str(ctrl.project.path) if ctrl.project.path else "Not saved yet")
+
+    def _doc_changed(self, ctrl: Controller) -> None:
+        i = self._index_of(ctrl)
+        if i >= 0:
+            self._label(i)
+        if ctrl is self.ctrl:
+            self._update_title()
+            self._update_actions()
+
+    def _update_actions(self) -> None:
+        u = self.ctrl.undo_stack
+        if hasattr(self, "quick"):
+            self.quick["undo"].setEnabled(u.can_undo)
+            self.quick["redo"].setEnabled(u.can_redo)
+
+    # -- look ---------------------------------------------------------------------------------------
+    def set_theme(self, name: str) -> None:
+        """Light, dark or the system's look for the whole program (kept in the settings)."""
+        s = self.ctrl.settings
+        s.theme = name if name in theme.THEMES else "system"
+        theme.apply(QApplication.instance(), s.theme)
+        self.apply_theme()
+        try:
+            s.save()
+        except OSError:
+            pass
+
+    def apply_theme(self) -> None:
+        """The icons and the drawings take the colours of the theme that is applied."""
+        for action, name in self._themed:
+            action.setIcon(icon(name))
+        for cv in self.tabs.documents():
+            cv._tp_cache = None
+            cv.update()
+        for name, a in getattr(self, "theme_actions", {}).items():
+            a.setChecked(name == self.ctrl.settings.theme)
+
+    def _system_scheme_changed(self, *_) -> None:
+        if self.ctrl.settings.theme == "system":
+            self.set_theme("system")
+
+    def _units_changed(self, source: Controller) -> None:
+        for c in self.documents():
+            if c is not source:
+                c.changed.emit()
+
+    def _show_document(self, *_) -> None:
+        """The tab that is open changed: the panels, the tool and the title follow it."""
+        c, cv = self.ctrl, self.canvas
+        for panel in (self.layers_panel, self.sheets_panel, self.props_panel, self.toolpaths_panel, self.console):
+            panel.bind(c)
+        cv._tp_cache = None                    # (settings may have changed while another tab was open)
+        cv.update()
+        self._tool_changed(cv.tool.name)
+        self.prompt.setText(cv.tool.prompt)
+        self.sim_action.setChecked(cv.show_sim)
+        self._update_title()
+        self._update_actions()
+        cv.setFocus()
+
+    def _new_tab(self) -> Controller:
+        """A new tab with an empty project (the settings and the tools are shared with the others)."""
+        first = self.ctrl
+        c = Controller(first.registry, first.settings, first.tools)
+        self._attach(c)
+        return c
+
+    def _blank_values(self) -> tuple[float, float, float]:
+        p = [Param("width", "Width (X)", "length", 600.0, min=1.0), Param("height", "Height (Y)", "length", 400.0, min=1.0),
+             Param("thickness", "Thickness", "length", 18.0, min=0.01)]
+        v = {**{q.name: q.default for q in p}, **self.ctrl.settings.recall("new_project", p)}
+        return v["width"], v["height"], v["thickness"]
+
+    def _name_new(self, ctrl: Controller, base: str = "Untitled") -> None:
+        """A project that was never saved is told from the others by a number: Untitled, Untitled 2, ..."""
+        taken = {c.title for c in self.documents() if c is not ctrl}
+        name, n = base, 1
+        while name in taken:
+            n += 1
+            name = f"{base} {n}"
+        ctrl.project.name = name
+        self._doc_changed(ctrl)
+
+    def activate(self, ctrl: Controller) -> None:
+        i = self._index_of(ctrl)
+        if i >= 0:
+            self.tabs.setCurrentIndex(i)
+
+    def tab_of_path(self, path) -> Controller | None:
+        """The open document of this file, if there is one."""
+        try:
+            want = Path(path).resolve()
+        except OSError:
+            return None
+        for c in self.documents():
+            if c.project.path is not None:
+                try:
+                    if c.project.path.resolve() == want:
+                        return c
+                except OSError:
+                    continue
+        return None
+
+    def close_tab(self, index: int | None = None) -> bool:
+        """Close a tab (the open one without ``index``), asking first when it has changes. The last tab is
+        emptied instead: there is always a project to draw on."""
+        if index is None:
+            index = self.tabs.currentIndex()
+        if not 0 <= index < self.tabs.count():
+            return False
+        ctrl = self.tabs.widget(index).ctrl
+        self.tabs.setCurrentIndex(index)
+        if not self.confirm_discard(ctrl):
+            return False
+        if ctrl.project.path is not None:
+            self.closed_tabs.insert(0, str(ctrl.project.path))
+            del self.closed_tabs[20:]
+        if self.tabs.count() == 1:
+            ctrl.new_project(*self._blank_values())
+            self._name_new(ctrl)
+            return True
+        canvas = self.tabs.widget(index)
+        ctrl._recalc.stop()
+        self.tabs.removeTab(index)
+        canvas.setParent(None)
+        canvas.deleteLater()
+        return True
+
+    def close_other_tabs(self, keep: int) -> None:
+        keep_ctrl = self.tabs.widget(keep).ctrl
+        for c in [c for c in self.documents() if c is not keep_ctrl]:
+            i = self._index_of(c)
+            if i < 0 or not self.close_tab(i):
+                break
+        self.activate(keep_ctrl)
+
+    def reopen_closed_tab(self) -> None:
+        while self.closed_tabs:
+            path = self.closed_tabs.pop(0)
+            if Path(path).is_file():
+                self.open_project(path)
+                return
+
+    def duplicate_tab(self, index: int) -> None:
+        """A copy of the project of a tab in a new tab (to try another layout or settings)."""
+        from ..core.document import project_from_dict
+        src = self.tabs.widget(index).ctrl
+        c = self._new_tab()
+        c.project = project_from_dict(src.project.to_dict())
+        c._replace(c.project)
+        c.dirty = True
+        self._name_new(c, f"{src.title} copy")
+
+    def next_tab(self, step: int = 1) -> None:
+        n = self.tabs.count()
+        if n > 1:
+            self.tabs.setCurrentIndex((self.tabs.currentIndex() + step) % n)
+
+    def _tab_menu(self, index: int, pos) -> None:
+        if index < 0:
+            return
+        m = QMenu(self)
+        ctrl = self.tabs.widget(index).ctrl
+        self._act(m, "Close", lambda: self.close_tab(index))
+        a = self._act(m, "Close Other Tabs", lambda: self.close_other_tabs(index))
+        a.setEnabled(self.tabs.count() > 1)
+        m.addSeparator()
+        self._act(m, "Duplicate as New Tab", lambda: self.duplicate_tab(index))
+        a = self._act(m, "Copy File Path", lambda: QApplication.clipboard().setText(str(ctrl.project.path)))
+        a.setEnabled(ctrl.project.path is not None)
+        menus.show_menu(m, pos)
+
+    def dragEnterEvent(self, ev) -> None:
+        if ev.mimeData().hasUrls():
+            ev.acceptProposedAction()
+
+    def dropEvent(self, ev) -> None:
+        """Files dropped on the window: projects open in tabs, drawings are imported into the open one."""
+        for url in ev.mimeData().urls():
+            f = url.toLocalFile()
+            if f.lower().endswith(".icam"):
+                self._safe(self.open_project, f)
+            elif f and self.ctrl.registry.importer_for(Path(f).suffix) is not None:
+                self._safe(self.import_vectors, f)
+        ev.acceptProposedAction()
+
     # -- layout ------------------------------------------------------------------------------------
-    def _build_docks(self) -> None:
-        c = self.ctrl
+    def _build_docks(self, c: Controller) -> None:
         self.layers_panel = LayersPanel(c)
         self.sheets_panel = SheetsPanel(c)
         tabs = QTabWidget()
@@ -102,6 +335,42 @@ class MainWindow(QMainWindow):
         return d
 
     def _build_toolbar(self) -> None:
+        top = QToolBar("Main")
+        top.setObjectName("MainToolbar")
+        top.setMovable(False)
+        top.setIconSize(QSize(22, 22))
+        self.addToolBar(Qt.TopToolBarArea, top)
+        self.quick: dict[str, QAction] = {}
+
+        def quick(name: str, text: str, slot, tip: str = "") -> QAction:
+            a = QAction(icon(name), text, self)
+            a.setToolTip(f"{text} ({tip})" if tip else text)
+            a.triggered.connect(lambda checked=False: self._safe(slot))
+            top.addAction(a)
+            self._themed.append((a, name))
+            self.quick[name] = a
+            return a
+
+        quick("new", "New project", self.new_project, "Ctrl+N")
+        quick("open", "Open project", self.open_project, "Ctrl+O")
+        quick("save", "Save project", self.save_project, "Ctrl+S")
+        top.addSeparator()
+        quick("undo", "Undo", lambda: self.ctrl.undo(), "Ctrl+Z")
+        quick("redo", "Redo", lambda: self.ctrl.redo(), "Ctrl+Y")
+        top.addSeparator()
+        quick("fit", "Zoom to the whole sheet", lambda: self.canvas.zoom_extents(), "F")
+        top.addSeparator()
+        quick("nest", "Nest parts", self.nest, "Ctrl+Shift+N")
+        tp = quick("toolpath", "New toolpath", lambda: None)
+        self._toolpath_menu = QMenu(self)
+        tp.setMenu(self._toolpath_menu)
+        quick("recalculate", "Recalculate toolpaths", self.recalculate, "F5")
+        quick("simulate", "Simulate", self.simulate, "F6")
+        quick("gcode", "Save G-code", self.export_gcode, "Ctrl+Shift+E")
+        button = top.widgetForAction(tp)
+        if isinstance(button, QToolButton):
+            button.setPopupMode(QToolButton.InstantPopup)
+
         tb = QToolBar("Drawing")
         tb.setObjectName("DrawingToolbar")
         tb.setOrientation(Qt.Vertical)
@@ -110,6 +379,7 @@ class MainWindow(QMainWindow):
         self.tool_actions: dict[str, QAction] = {}
         for name, cls in TOOLS.items():
             a = QAction(icon(name), TOOL_LABELS.get(name, name.title()), self)
+            self._themed.append((a, name))
             a.setCheckable(True)
             key = TOOL_KEYS.get(name)
             if key:
@@ -129,9 +399,6 @@ class MainWindow(QMainWindow):
         self.prompt = QLabel()
         self.statusBar().addWidget(self.prompt, 1)
         self.statusBar().addPermanentWidget(self.coords)
-        self.canvas.prompt.connect(self.prompt.setText)
-        self.canvas.cursor_moved.connect(self._coords)
-        self.prompt.setText(self.canvas.tool.prompt)
 
     def _coords(self, x: float, y: float) -> None:
         u = self.ctrl.units
@@ -159,15 +426,19 @@ class MainWindow(QMainWindow):
     def build_menus(self) -> None:
         mb = self.menuBar()
         mb.clear()
-        c = self.ctrl
+        c = self.ctrl            # (only for what every tab shares: the settings and the registry)
         s = c.settings
         m = mb.addMenu("&File")
         self._act(m, "&New...", self.new_project, QKeySequence.New)
         self._act(m, "&Open...", self.open_project, QKeySequence.Open)
         self.recent_menu = m.addMenu("Open &Recent")
         self.recent_menu.aboutToShow.connect(self._fill_recent)
+        self._act(m, "Re&open Closed Tab", self.reopen_closed_tab, "Ctrl+Shift+T")
+        m.addSeparator()
         self._act(m, "&Save", self.save_project, QKeySequence.Save)
         self._act(m, "Save &As...", self.save_project_as, QKeySequence.SaveAs)
+        self._act(m, "Save A&ll", self.save_all)
+        self._act(m, "&Close Tab", self.close_tab, QKeySequence.Close)
         m.addSeparator()
         self._act(m, "&Import Vectors...", self.import_vectors, "Ctrl+I")
         self._act(m, "&Export Vectors...", self.export_vectors)
@@ -180,8 +451,8 @@ class MainWindow(QMainWindow):
         self._act(m, "&Quit", self.close, QKeySequence.Quit)
 
         m = mb.addMenu("&Edit")
-        self.undo_action = self._act(m, "&Undo", c.undo, QKeySequence.Undo)
-        self.redo_action = self._act(m, "&Redo", c.redo, QKeySequence.Redo)
+        self.undo_action = self._act(m, "&Undo", lambda: self.ctrl.undo(), QKeySequence.Undo)
+        self.redo_action = self._act(m, "&Redo", lambda: self.ctrl.redo(), QKeySequence.Redo)
         m.aboutToShow.connect(self._update_undo)
         m.addSeparator()
         self._act(m, "&Delete", self.delete, QKeySequence.Delete)
@@ -191,11 +462,11 @@ class MainWindow(QMainWindow):
         m.addSeparator()
         self._command_menus(m, "Edit")
         m.addSeparator()
-        self._act(m, "&Preferences...", lambda: PreferencesDialog(c, self).exec())
+        self._act(m, "&Preferences...", lambda: PreferencesDialog(self.ctrl, self).exec())
 
         m = mb.addMenu("&View")
-        self._act(m, "Zoom &Extents", self.canvas.zoom_extents, "F")
-        self._act(m, "Zoom &Selection", self.canvas.zoom_selection, "Shift+F")
+        self._act(m, "Zoom &Extents", lambda: self.canvas.zoom_extents(), "F")
+        self._act(m, "Zoom &Selection", lambda: self.canvas.zoom_selection(), "Shift+F")
         m.addSeparator()
         self._act(m, "Show &Toolpaths", lambda v: self._toggle("show_toolpaths", v), None, True, s.show_toolpaths)
         self._act(m, "Show Tool &Width", lambda v: self._toggle("show_tool_width", v), None, True, s.show_tool_width)
@@ -203,13 +474,21 @@ class MainWindow(QMainWindow):
         self._act(m, "Show Cut &Order", lambda v: self._toggle("show_cut_order", v), None, True, s.show_cut_order)
         self.sim_action = self._act(m, "Show Si&mulation", self._toggle_sim, None, True, self.canvas.show_sim)
         m.addSeparator()
-        self._act(m, "Clear &Guides", self.canvas.clear_guides)
+        self._act(m, "Clear &Guides", lambda: self.canvas.clear_guides())
         m.addSeparator()
         self._act(m, "Snap to &Grid", lambda v: self._toggle("snap_grid", v), "F7", True, s.snap_grid)
         self._act(m, "Snap to &Vectors", lambda v: self._toggle("snap_objects", v), "F8", True, s.snap_objects)
         m.addSeparator()
         for d in (self.project_dock, self.props_dock, self.toolpaths_dock, self.console_dock):
             m.addAction(d.toggleViewAction())
+
+        tm = m.addMenu("&Appearance")
+        group = QActionGroup(self)
+        self.theme_actions = {}
+        for name, label in (("system", "Follow the &System"), ("light", "&Light"), ("dark", "&Dark")):
+            a = self._act(tm, label, lambda n=name: self.set_theme(n), None, True, s.theme == name)
+            group.addAction(a)
+            self.theme_actions[name] = a
 
         m = mb.addMenu("&Draw")
         for name, a in self.tool_actions.items():
@@ -236,8 +515,8 @@ class MainWindow(QMainWindow):
         self.inner_first_action.setToolTip("Cut the holes and inner pieces of all parts first, then the outlines, "
                                            "each in the order of the cut order strategy")
         m.addSeparator()
-        self._act(m, "&Material Setup...", lambda: MaterialDialog(c, self).exec(), "Ctrl+Shift+M")
-        self._act(m, "&Tool Database...", lambda: ToolDatabaseDialog(c, self).exec())
+        self._act(m, "&Material Setup...", lambda: MaterialDialog(self.ctrl, self).exec(), "Ctrl+Shift+M")
+        self._act(m, "&Tool Database...", lambda: ToolDatabaseDialog(self.ctrl, self).exec())
         m.addSeparator()
         self._act(m, "&Simulate", self.simulate, "F6")
         self._act(m, "Clear Simulation", self.clear_simulation)
@@ -247,21 +526,21 @@ class MainWindow(QMainWindow):
         self._act(m, "Load Toolpath Template...", self.load_toolpath_template)
         m.addSeparator()
         self._act(m, "Save &G-code...", self.export_gcode)
-        self._act(m, "&Post-processors...", lambda: PostEditorDialog(c, self).exec())
+        self._act(m, "&Post-processors...", lambda: PostEditorDialog(self.ctrl, self).exec())
 
         m = mb.addMenu("&Nesting")
         self._act(m, "&Nest Parts...", self.nest, "Ctrl+Shift+N")
         m.addSeparator()
-        self._act(m, "&Stock of Plates...", lambda: StockDialog(c, self).exec())
+        self._act(m, "&Stock of Plates...", lambda: StockDialog(self.ctrl, self).exec())
         self._act(m, "Add Selected Vectors to Stock", self.stock_from_selection)
         self._act(m, "Add &Leftover of Current Sheet to Stock...", self.leftover_to_stock)
         m.addSeparator()
         self._act(m, "Set Sheet &Outline from Selected Vectors", self.sheet_outline_from_selection)
-        self._act(m, "&Clear Sheet Outline", lambda: c.set_sheet_outline(None))
+        self._act(m, "&Clear Sheet Outline", lambda: self.ctrl.set_sheet_outline(None))
 
         m = mb.addMenu("&Plugins")
         if self.pm is not None:
-            self._act(m, "Plugin &Manager...", lambda: PluginsDialog(c, self.pm, self).exec())
+            self._act(m, "Plugin &Manager...", lambda: PluginsDialog(self.ctrl, self.pm, self).exec())
         self._act(m, "Python &Console", lambda: self.console_dock.setVisible(not self.console_dock.isVisible()),
                   "Ctrl+`")
         m.addSeparator()
@@ -270,9 +549,32 @@ class MainWindow(QMainWindow):
                           - {"Edit", "Vectors", "Plugins"}):
             self._command_menus(mb.addMenu(top), top)
 
+        self.window_menu = mb.addMenu("&Window")
+        self.window_menu.aboutToShow.connect(self._fill_window_menu)
+
+        self._fill_toolpath_menu()
+
         m = mb.addMenu("&Help")
         self._act(m, "&Keyboard Shortcuts", self.shortcuts_help)
         self._act(m, "&About iyiCAM", self.about)
+
+    def _fill_toolpath_menu(self) -> None:
+        self._toolpath_menu.clear()
+        for op in self.ctrl.registry.operations.values():
+            self._act(self._toolpath_menu, op.label + "...", lambda o=op.id: self.new_toolpath(o))
+
+    def _fill_window_menu(self) -> None:
+        m = self.window_menu
+        m.clear()
+        self._act(m, "&Next Tab", lambda: self.next_tab(1), "Ctrl+PgDown")
+        self._act(m, "&Previous Tab", lambda: self.next_tab(-1), "Ctrl+PgUp")
+        m.addSeparator()
+        for i, cv in enumerate(self.tabs.documents()):
+            title = cv.ctrl.title.replace("&", "&&")
+            a = self._act(m, f"&{i + 1}  {title}{' *' if cv.ctrl.dirty else ''}",
+                          lambda i_=i: self.tabs.setCurrentIndex(i_))
+            a.setCheckable(True)
+            a.setChecked(i == self.tabs.currentIndex())
 
     def _command_menus(self, menu: QMenu, top: str) -> None:
         subs: dict[str, QMenu] = {}
@@ -303,8 +605,9 @@ class MainWindow(QMainWindow):
 
     def _toggle(self, key: str, value: bool) -> None:
         setattr(self.ctrl.settings, key, value)
-        self.canvas._tp_cache = None
-        self.canvas.update()
+        for cv in self.tabs.documents():
+            cv._tp_cache = None
+            cv.update()
 
     def _toggle_sim(self, value: bool) -> None:
         self.canvas.show_sim = value
@@ -351,10 +654,13 @@ class MainWindow(QMainWindow):
         name = p.path.name if p.path else p.name
         self.setWindowTitle(f"{name}{' *' if self.ctrl.dirty else ''} — iyiCAM {__version__}")
 
-    def confirm_discard(self) -> bool:
-        if not self.ctrl.dirty:
+    def confirm_discard(self, ctrl: Controller | None = None) -> bool:
+        """Whether the project of a tab (the open one) may go: asks to save when it has changes."""
+        ctrl = ctrl or self.ctrl
+        if not ctrl.dirty:
             return True
-        r = QMessageBox.question(self, "iyiCAM", "Save changes to the current project?",
+        self.activate(ctrl)
+        r = QMessageBox.question(self, "iyiCAM", f"Save changes to \u201c{ctrl.title}\u201d?",
                                  QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel)
         if r == QMessageBox.Save:
             return self.save_project()
@@ -362,8 +668,7 @@ class MainWindow(QMainWindow):
 
     # -- file ---------------------------------------------------------------------------------------
     def new_project(self) -> None:
-        if not self.confirm_discard():
-            return
+        """A new project in a new tab (in the open one when that has never been used)."""
         dlg = QDialog(self)
         dlg.setWindowTitle("New Project")
         lay = QVBoxLayout(dlg)
@@ -377,35 +682,67 @@ class MainWindow(QMainWindow):
         if dlg.exec():
             v = form.values()
             s.remember("new_project", v, params)
-            self.ctrl.new_project(v["width"], v["height"], v["thickness"])
+            target = self.ctrl if self.ctrl.pristine else self._new_tab()
+            target.new_project(v["width"], v["height"], v["thickness"])
+            self._name_new(target)
 
     def open_project(self, path: str | None = None) -> None:
-        if not self.confirm_discard():
-            return
+        """Open a project in a new tab (in the open one when that has never been used); one that is open
+        already is shown instead."""
         if not path:
             path = open_file(self, self.ctrl.settings, "project", "Open project",
                              "iyiCAM project (*.icam);;All files (*)")
-        if path:
-            try:
-                self.ctrl.open_project(path)
-            except (OSError, ValueError, KeyError) as exc:
-                QMessageBox.warning(self, "Open project", f"Cannot open {path}:\n{exc}")
+        if not path:
+            return
+        same = self.tab_of_path(path)
+        if same is not None:
+            self.activate(same)
+            return
+        fresh = self.ctrl.pristine
+        c = self.ctrl if fresh else Controller(self.ctrl.registry, self.ctrl.settings, self.ctrl.tools)
+        c.busy_parent = self
+        try:
+            c.open_project(path)
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            QMessageBox.warning(self, "Open project", f"Cannot open {path}:\n{exc}")
+            return
+        if not fresh:
+            self._attach(c)
+        self._doc_changed(c)
 
-    def save_project(self) -> bool:
-        if self.ctrl.project.path is None:
-            return self.save_project_as()
-        self.ctrl.save_project()
-        self.statusBar().showMessage(f"Saved {self.ctrl.project.path}", 4000)
+    def restore_tabs(self) -> None:
+        """Open the projects that were open when the program was closed."""
+        s = self.ctrl.settings
+        saved = [f for f in s.open_tabs if Path(f).is_file()]
+        for f in saved:
+            self.open_project(f)
+        if saved:
+            self.tabs.setCurrentIndex(min(max(0, s.active_tab), self.tabs.count() - 1))
+
+    def save_project(self, ctrl: Controller | None = None) -> bool:
+        ctrl = ctrl or self.ctrl
+        if ctrl.project.path is None:
+            return self.save_project_as(ctrl)
+        ctrl.save_project()
+        self.statusBar().showMessage(f"Saved {ctrl.project.path}", 4000)
         return True
 
-    def save_project_as(self) -> bool:
-        fn, _ = save_file(self, self.ctrl.settings, "project", "Save project", f"{self.ctrl.project.name}.icam",
+    def save_project_as(self, ctrl: Controller | None = None) -> bool:
+        ctrl = ctrl or self.ctrl
+        fn, _ = save_file(self, ctrl.settings, "project", "Save project", f"{ctrl.project.name}.icam",
                           "iyiCAM project (*.icam)")
         if not fn:
             return False
-        self.ctrl.save_project(fn)
-        self._update_title()
+        ctrl.save_project(fn)
+        self._doc_changed(ctrl)
         return True
+
+    def save_all(self) -> None:
+        for c in self.documents():
+            if c.dirty:
+                self.activate(c)
+                if not self.save_project(c):
+                    break
 
     def import_vectors(self, path: str | None = None, options: dict | None = None) -> list[VectorObject]:
         reg = self.ctrl.registry
@@ -883,6 +1220,9 @@ class MainWindow(QMainWindow):
                  ("Middle drag / Space+drag", "Pan"), ("Esc", "Back to the select tool"), ("Del", "Delete"),
                  ("Arrows", "Nudge (Shift x10, Ctrl x0.1)"), ("F5", "Recalculate toolpaths"), ("F6", "Simulate"),
                  ("F7 / F8", "Snap to grid / vectors"), ("Ctrl+D", "Duplicate"), ("Ctrl+J", "Join vectors"),
+                 ("Ctrl+N / Ctrl+O", "New project / open project (each in a tab)"),
+                 ("Ctrl+W", "Close tab"), ("Ctrl+Shift+T", "Reopen closed tab"),
+                 ("Ctrl+PgUp / Ctrl+PgDown", "Previous / next tab"), ("Middle-click a tab", "Close it"),
                  ("Ctrl+Shift+O", "Offset"), ("Ctrl+G / Ctrl+Shift+G", "Group / ungroup")]
         rows += [f"<tr><td><b>{k}</b></td><td>{v}</td></tr>" for k, v in extra]
         QMessageBox.information(self, "Keyboard shortcuts", "<table>" + "".join(rows) + "</table>")
@@ -894,10 +1234,18 @@ class MainWindow(QMainWindow):
                           "true shape nesting, template post-processors and a Python plugin API.</p>")
 
     def closeEvent(self, ev) -> None:
-        if not self.confirm_discard():
-            ev.ignore()
-            return
+        keep = self.tabs.currentIndex()
+        for c in self.documents():
+            if not self.confirm_discard(c):
+                ev.ignore()
+                self.activate(c)
+                return
+        for c in self.documents():
+            c._recalc.stop()                   # (no calculation may start in a window that is closing)
         s = self.ctrl.settings
+        files = [(i, str(c.project.path)) for i, c in enumerate(self.documents()) if c.project.path is not None]
+        s.open_tabs = [f for _, f in files]
+        s.active_tab = next((n for n, (i, _) in enumerate(files) if i == keep), 0)
         s.window_state = bytes(self.saveState().toBase64()).decode()
         s.window_geometry = bytes(self.saveGeometry().toBase64()).decode()
         try:

@@ -52,6 +52,11 @@ The built-in features of iyiCAM are registered through this same API in
 | `api.on(hook, func)` | event hooks, see below |
 | `api.add_gui_extension(func)` | `func(main_window)` once the GUI is ready (add menus, docks, ...) |
 
+The main window has one tab per open project. `main_window.ctrl` and `main_window.canvas` are the document and the
+drawing of the tab that is **open now**, so read them when the user does something (in a menu action, a hook)
+and do not keep them; `main_window.documents()` lists the controllers of all tabs and `main_window.tabs` is the
+tab widget. The hooks `project_loaded` and `project_saved` are called for the project of the tab concerned.
+
 Building blocks re-exported on `api`: `Param`, `Command`, `CommandContext`,
 `CommandError`, `Operation`, `OpContext`, `Toolpath`, `MoveBuilder`,
 `PostProcessor`, `depth_params`, `depth_levels`, `final_depth`, `stepdown` and

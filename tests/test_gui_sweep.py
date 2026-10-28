@@ -65,6 +65,48 @@ def test_every_menu_action_in_three_states(rwin):
     assert not failures, "\n\n".join(failures)
 
 
+def three_tabs(win, open_index=1):
+    """Exactly three tabs, each with its own project and drawing, the middle one open."""
+    while win.tabs.count() > 1:
+        win.close_tab(win.tabs.count() - 1)
+    win.ctrl.new_project(600, 400, 18)
+    populate(win, select=False)
+    for _ in range(2):
+        win.new_project()
+        populate(win, select=False)
+    win.tabs.setCurrentIndex(open_index)
+    win.ctrl.select([v.id for v in win.ctrl.sheet.vectors])
+    process()
+
+
+def test_every_menu_action_with_three_tabs_open(rwin):
+    """The same menus with several projects open: whatever an action does (even closing or replacing its tab),
+    the window stays consistent and the panels, the drawing and the menus follow the tab that is open."""
+    win, robot = rwin
+    actions = [(m.menu().title(), a) for m in win.menuBar().actions() if m.menu() for a in all_actions(m.menu())]
+    failures = []
+    for top, a in actions:
+        name = a.text().replace("&", "")
+        if name in ("Quit", "Python Console"):
+            continue
+        three_tabs(win)
+        robot.reset()
+        try:
+            a.trigger()
+            process()
+            ctrl = win.ctrl
+            assert win.canvas.ctrl is ctrl and win.tabs.count() == len(win.documents()) >= 1
+            assert all(p.ctrl is ctrl for p in (win.layers_panel, win.sheets_panel, win.props_panel,
+                                                win.toolpaths_panel, win.console))
+            assert ctrl in win.documents()
+        except Exception as e:  # noqa: BLE001
+            robot.errors.append(f"raised {type(e).__name__}: {e}\n{traceback.format_exc()[-1200:]}")
+        bad = robot.problems()
+        if bad:
+            failures.append(f"{top} > {name}: {bad[0][:600]}")
+    assert not failures, "\n\n".join(failures)
+
+
 def test_every_drawing_tool_with_mouse_and_keys(rwin):
     from iyicam.gui.tools import TOOLS
     win, robot = rwin

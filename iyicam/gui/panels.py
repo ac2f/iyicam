@@ -28,7 +28,29 @@ def small_button(text: str, tip: str, slot) -> QToolButton:
     return b
 
 
-class LayersPanel(QWidget):
+class DocPanel(QWidget):
+    """A panel that shows one document: ``bind`` moves it to the document of another tab."""
+    signals: tuple[str, ...] = ()       # the signals of the controller that make the panel show it again
+
+    def _connect(self, ctrl) -> None:
+        for name in self.signals:
+            getattr(ctrl, name).connect(self.refresh)
+
+    def bind(self, ctrl) -> None:
+        if ctrl is not self.ctrl:
+            for name in self.signals:
+                try:
+                    getattr(self.ctrl, name).disconnect(self.refresh)
+                except (RuntimeError, TypeError):    # (a document that is gone)
+                    pass
+            self.ctrl = ctrl
+            self._connect(ctrl)
+        self.refresh()
+
+
+class LayersPanel(DocPanel):
+    signals = ("changed",)
+
     def __init__(self, ctrl, parent=None):
         super().__init__(parent)
         self.ctrl = ctrl
@@ -57,7 +79,7 @@ class LayersPanel(QWidget):
         lay.addLayout(row)
         self._updating = False
         self._changing = False
-        ctrl.changed.connect(self.refresh)
+        self._connect(ctrl)
         self.refresh()
 
     def refresh(self) -> None:
@@ -193,7 +215,9 @@ class LayersPanel(QWidget):
         self.ctrl.select([o.id for o in self.ctrl.sheet.vectors if o.layer_id == lid])
 
 
-class SheetsPanel(QWidget):
+class SheetsPanel(DocPanel):
+    signals = ("changed", "sheet_changed")
+
     def __init__(self, ctrl, parent=None):
         super().__init__(parent)
         self.ctrl = ctrl
@@ -210,8 +234,7 @@ class SheetsPanel(QWidget):
         row.addStretch(1)
         lay.addLayout(row)
         self._updating = False
-        ctrl.changed.connect(self.refresh)
-        ctrl.sheet_changed.connect(self.refresh)
+        self._connect(ctrl)
         self.refresh()
 
     def refresh(self) -> None:
@@ -260,7 +283,9 @@ class SheetsPanel(QWidget):
         SheetDialog(self.ctrl, self.ctrl.sheet, self).exec()
 
 
-class ToolpathsPanel(QWidget):
+class ToolpathsPanel(DocPanel):
+    signals = ("toolpaths_changed", "sheet_changed")
+
     def __init__(self, ctrl, window, parent=None):
         super().__init__(parent)
         self.ctrl = ctrl
@@ -302,8 +327,7 @@ class ToolpathsPanel(QWidget):
         lay.addLayout(row2)
         self._updating = False
         self._changing = False
-        ctrl.toolpaths_changed.connect(self.refresh)
-        ctrl.sheet_changed.connect(self.refresh)
+        self._connect(ctrl)
         self.refresh()
 
     def selected_ids(self) -> list[str]:
@@ -427,8 +451,9 @@ class ToolpathsPanel(QWidget):
         self.ctrl.select([o.id for o in self.ctrl.project.vectors_for(t, self.ctrl.sheet)])
 
 
-class PropertiesPanel(QWidget):
+class PropertiesPanel(DocPanel):
     """Numeric position / size of the selection, its layer and geometry info."""
+    signals = ("selection_changed", "changed")
 
     def __init__(self, ctrl, parent=None):
         super().__init__(parent)
@@ -460,8 +485,7 @@ class PropertiesPanel(QWidget):
         lay.addLayout(form)
         lay.addStretch(1)
         self._bb: BBox | None = None
-        ctrl.selection_changed.connect(self.refresh)
-        ctrl.changed.connect(self.refresh)
+        self._connect(ctrl)
         self.refresh()
 
     def refresh(self) -> None:

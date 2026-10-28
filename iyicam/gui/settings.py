@@ -31,6 +31,9 @@ class Settings:
     last_post: str = "mach3"
     sim_resolution: float = 0.0       # 0 = automatic
     window_state: str = ""
+    theme: str = "system"             # system | light | dark
+    open_tabs: list[str] = field(default_factory=list)   # the projects that were open when the program was closed
+    active_tab: int = 0
 
     def add_recent(self, path: str) -> None:
         if path in self.recent_files:
@@ -119,6 +122,8 @@ class Settings:
             if isinstance(d, float):
                 v = float(v)
             if fld.name == "units" and v not in ("mm", "inch"):
+                continue
+            if fld.name == "theme" and v not in ("system", "light", "dark"):
                 continue
             out[fld.name] = v
         return cls(**out)
