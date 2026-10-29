@@ -175,7 +175,7 @@ def step_move_toolpath(c, r):
 def step_sequence(c, r):
     tps = [t for t in c.project.toolpaths if t.op in ("profile", "engrave")]
     if tps:
-        c.set_sequence(r.choice(tps).id, strategy=r.choice(["nearest", "rows_bl", "centre_out", "small_first"]),
+        c.set_sequence(r.choice(tps).id, strategy=r.choice(["nearest", "smart", "rows_bl", "centre_out", "small_first"]),
                        grouping=r.choice(["depth", "part"]), smart_starts=r.random() < 0.5)
 
 

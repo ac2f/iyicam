@@ -628,20 +628,28 @@ def _parts_with_profile(win, n=3):
     return ctrl, t, objs
 
 
-def test_cut_order_dialog_and_picking_the_order(win):
-    from iyicam.gui.sequence_dialogs import CutOrderDialog
+def _order_panel(win, tid):
+    """The cut order panel on show for a toolpath, applying changes at once (the preview has its own tests)."""
+    win.cut_order(tid)
+    QApplication.processEvents()
+    panel = win.cutorder_panel
+    panel.preview_first.setChecked(False)
+    return panel
+
+
+def test_cut_order_panel_and_picking_the_order(win):
     ctrl, t, objs = _parts_with_profile(win)
     keys = [f"{o.id}:0" for o in objs]
-    dlg = CutOrderDialog(ctrl, t.id, win)
-    dlg.strategy.setCurrentIndex(dlg.strategy.findData("rows_br"))  # from the right
+    panel = _order_panel(win, t.id)
+    panel.strategy.setCurrentIndex(panel.strategy.findData("rows_br"))  # from the right
     assert ctrl.cut_order(t.id) == keys[::-1]
-    assert dlg.list.count() == 3 and dlg.list.item(0).text().endswith("P2")
-    dlg.list.setCurrentRow(2)
-    dlg._move(-1)
+    assert panel.list.topLevelItemCount() == 3 and panel.list.topLevelItem(0).text(1).startswith("P2")
+    panel.list.setCurrentItem(panel.list.topLevelItem(2))
+    panel._move(-1)
     assert ctrl.cut_order(t.id) == [keys[2], keys[0], keys[1]] and t.sequence["auto_order"] is False
     # pick the order on the drawing from #1: click inside P1 then P2
-    dlg.start_at.setValue(1)
-    dlg._pick()
+    panel.start_at.setValue(1)
+    panel._pick()
     cv = win.canvas
     for o in (objs[1], objs[2]):
         QTest.mouseClick(cv, Qt.LeftButton, Qt.NoModifier, at(cv, *o.bbox().center))
@@ -654,12 +662,11 @@ def test_cut_order_dialog_and_picking_the_order(win):
     win.canvas.grab()  # paints the cut numbers
 
 
-def test_start_points_dialog_and_tool(win):
-    from iyicam.gui.sequence_dialogs import StartPointsDialog
+def test_start_points_panel_and_tool(win):
     ctrl, t, objs = _parts_with_profile(win)
     starts = [o.contours[0].start for o in objs]
-    dlg = StartPointsDialog(ctrl, t.id, win)
-    dlg._now()  # optimise once: new nodes away from the corners, undoable
+    panel = _order_panel(win, t.id)
+    panel._optimise_now()  # optimise once: new nodes away from the corners, undoable
     moved = [o.contours[0].start for o in objs]
     assert all(m != s for m, s in zip(moved, starts))
     assert all(len(o.contours[0].segs) == 5 for o in objs)
@@ -671,7 +678,7 @@ def test_start_points_dialog_and_tool(win):
     o = ctrl.sheet.vectors[0]
     QTest.mouseClick(cv, Qt.LeftButton, Qt.NoModifier, at(cv, 50, 150))
     assert o.contours[0].start == pytest.approx((50, 150), abs=0.5) and o.locked_starts == [0]
-    dlg.smart.setChecked(True)  # automatic: the other start points move, the hand-set one stays
+    panel.smart.setChecked(True)  # automatic: the other start points move, the hand-set one stays
     assert o.contours[0].start == pytest.approx((50, 150), abs=0.5)
     cut = next(c for c in ctrl.sheet_toolpaths()[0].cuts if c["key"] == f"{o.id}:0")
     assert cut["start"] == pytest.approx((47, 150), abs=0.5)
@@ -680,19 +687,19 @@ def test_start_points_dialog_and_tool(win):
 
 
 def test_cutting_direction_per_strategy(win):
-    from iyicam.gui.sequence_dialogs import CutOrderDialog, DirectionsDialog
+    from iyicam.gui.cutorder_panel import DirectionsDialog
     ctrl, t, objs = _parts_with_profile(win)
-    dlg = CutOrderDialog(ctrl, t.id, win)
-    dlg.strategy.setCurrentIndex(dlg.strategy.findData("rows_br"))
-    dlg.direction.setCurrentIndex(dlg.direction.findData("conventional"))
-    dlg.strategy.setCurrentIndex(dlg.strategy.findData("rows_bl"))
-    assert dlg.direction.currentData() == "toolpath"  # rows_bl keeps its own setting
-    dlg.direction.setCurrentIndex(dlg.direction.findData("climb"))
+    panel = _order_panel(win, t.id)
+    panel.strategy.setCurrentIndex(panel.strategy.findData("rows_br"))
+    panel.direction.setCurrentIndex(panel.direction.findData("conventional"))
+    panel.strategy.setCurrentIndex(panel.strategy.findData("rows_bl"))
+    assert panel.direction.currentData() == "toolpath"  # rows_bl keeps its own setting
+    panel.direction.setCurrentIndex(panel.direction.findData("climb"))
     assert t.sequence["directions"] == {"rows_br": "conventional", "rows_bl": "climb"}
     cuts = ctrl.sheet_toolpaths()[0].cuts
     assert all(not c["loop"].is_ccw() for c in cuts)  # climb outside: clockwise
-    dlg.strategy.setCurrentIndex(dlg.strategy.findData("rows_br"))
-    assert dlg.direction.currentData() == "conventional"
+    panel.strategy.setCurrentIndex(panel.strategy.findData("rows_br"))
+    assert panel.direction.currentData() == "conventional"
     assert all(c["loop"].is_ccw() for c in ctrl.sheet_toolpaths()[0].cuts)
     table = DirectionsDialog(ctrl, t.sequence, win)
     table.combos["diag_tr"].setCurrentIndex(table.combos["diag_tr"].findData("cw"))

@@ -10,7 +10,7 @@ from PySide6.QtWidgets import QWidget
 from ..core import clip
 from ..core.document import VectorObject
 from ..core.geom import Arc, BBox, Pt, dist
-from . import theme
+from . import cutview, theme
 from .qtgeom import contours_path, toolpath_paths
 
 TP_COLORS = ["#e6550d", "#3182bd", "#31a354", "#756bb1", "#de2d26", "#636363", "#fd8d3c", "#6baed6"]
@@ -367,11 +367,7 @@ class Canvas(QWidget):
         # toolpaths
         if self.ctrl.settings.show_toolpaths:
             self._paint_toolpaths(p)
-        if self.ctrl.settings.show_cut_order:
-            p.save()
-            p.resetTransform()
-            self._paint_cut_order(p)
-            p.restore()
+        cutview.paint_cut_view(p, self)
         # start points / directions of selected vectors
         p.resetTransform()
         for o in self.ctrl.selected_objects():
@@ -398,28 +394,6 @@ class Canvas(QWidget):
                 p.drawRect(QRectF(q.x() - 5, q.y() - 5, 10, 10))
         self._paint_rulers(p)
         p.end()
-
-    def _paint_cut_order(self, p: QPainter) -> None:
-        """Number the cuts at their start points (where the tool goes down)."""
-        font = p.font()
-        font.setPixelSize(10)
-        font.setBold(True)
-        p.setFont(font)
-        for tp in self.ctrl.sheet_toolpaths():
-            seen = set()
-            for c in tp.cuts:
-                if c.get("finish") or c["key"] in seen or "start" not in c:
-                    continue
-                seen.add(c["key"])
-                q = self.world_to_screen(*c["start"])
-                text = str(c["index"] + 1)
-                w = 8 + 6 * len(text)
-                bad = c.get("ok") is False
-                p.setPen(QPen(QColor("#a50f15" if bad else "#08306b"), 1))
-                p.setBrush(QColor("#fee0d2" if bad else "#deebf7"))
-                p.drawRoundedRect(QRectF(q.x() + 4, q.y() - 15, w, 13), 3, 3)
-                p.drawText(QRectF(q.x() + 4, q.y() - 15, w, 13), Qt.AlignCenter, text)
-                p.drawEllipse(q, 3, 3)
 
     def _paint_guides(self, p: QPainter) -> None:
         items = [(k, v, False) for k, v in self.guides()]
@@ -711,7 +685,7 @@ class Canvas(QWidget):
             if obj is not None and obj.id not in self.ctrl.selection:
                 self.ctrl.select([obj.id])
         if self.context_menu_hook is not None:
-            self.context_menu_hook(ev.globalPos(), self.over_selection(w))
+            self.context_menu_hook(ev.globalPos(), self.over_selection(w), w)
 
     def leaveEvent(self, ev) -> None:
         self.hover_id = None

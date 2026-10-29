@@ -20,6 +20,7 @@ from ..formats.report import ImportReport, run_importer
 from . import menus, theme
 from .canvas import Canvas
 from .console import Console
+from .cutorder_panel import CutOrderPanel, sequenced_toolpaths
 from .controller import Controller
 from .dialogs import (CommandDialog, ExportDialog, ExportOptionsDialog, ImportDialog, LeftoverDialog, MaterialDialog,
                       NestingDialog, PluginsDialog, PostEditorDialog, PreferencesDialog, StockDialog, ToolDatabaseDialog,
@@ -175,7 +176,7 @@ class MainWindow(QMainWindow):
         """The tab that is open changed: the panels, the tool and the title follow it."""
         c, cv = self.ctrl, self.canvas
         for panel in (self.layers_panel, self.sheets_panel, self.props_panel, self.transform_panel, self.toolpaths_panel,
-                      self.console):
+                      self.cutorder_panel, self.console):
             panel.bind(c)
         cv._tp_cache = None                    # (settings may have changed while another tab was open)
         cv.update()
@@ -328,10 +329,14 @@ class MainWindow(QMainWindow):
         self.transform_dock.raise_()
         self.toolpaths_panel = ToolpathsPanel(c, self)
         self.toolpaths_dock = self._dock("Toolpaths", self.toolpaths_panel, Qt.RightDockWidgetArea)
+        self.cutorder_panel = CutOrderPanel(c, self)
+        self.cutorder_dock = self._dock("Cut Order", self.cutorder_panel, Qt.RightDockWidgetArea)
+        self.tabifyDockWidget(self.toolpaths_dock, self.cutorder_dock)
+        self.toolpaths_dock.raise_()
         self.console = Console(c, self)
         self.console_dock = self._dock("Python Console", self.console, Qt.BottomDockWidgetArea)
         self.console_dock.hide()
-        self.resizeDocks([self.project_dock, self.toolpaths_dock], [270, 300], Qt.Horizontal)
+        self.resizeDocks([self.project_dock, self.toolpaths_dock], [270, 340], Qt.Horizontal)
 
     def _dock(self, title: str, widget, area) -> QDockWidget:
         d = QDockWidget(title, self)
@@ -370,6 +375,7 @@ class MainWindow(QMainWindow):
         tp = quick("toolpath", "New toolpath", lambda: None)
         self._toolpath_menu = QMenu(self)
         tp.setMenu(self._toolpath_menu)
+        quick("cutorder", "Cut order, directions and start points", self.cut_order, "Ctrl+Alt+O")
         quick("recalculate", "Recalculate toolpaths", self.recalculate, "F5")
         quick("simulate", "Simulate", self.simulate, "F6")
         quick("gcode", "Save G-code", self.export_gcode, "Ctrl+Shift+E")
@@ -477,8 +483,11 @@ class MainWindow(QMainWindow):
         m.addSeparator()
         self._act(m, "Show &Toolpaths", lambda v: self._toggle("show_toolpaths", v), None, True, s.show_toolpaths)
         self._act(m, "Show Tool &Width", lambda v: self._toggle("show_tool_width", v), None, True, s.show_tool_width)
-        self._act(m, "Show &Directions", lambda v: self._toggle("show_directions", v), None, True, s.show_directions)
-        self._act(m, "Show Cut &Order", lambda v: self._toggle("show_cut_order", v), None, True, s.show_cut_order)
+        self.view_actions = {}
+        for key, label in (("show_directions", "Show &Directions"), ("show_cut_order", "Show Cut &Order"),
+                           ("show_route", "Show &Route Between Cuts"), ("show_starts", "Show &Start Points")):
+            self.view_actions[key] = self._act(m, label, lambda v, k=key: self.set_view(k, v), None, True,
+                                               getattr(s, key))
         self.sim_action = self._act(m, "Show Si&mulation", self._toggle_sim, None, True, self.canvas.show_sim)
         m.addSeparator()
         self._act(m, "Clear &Guides", lambda: self.canvas.clear_guides())
@@ -486,7 +495,8 @@ class MainWindow(QMainWindow):
         self._act(m, "Snap to &Grid", lambda v: self._toggle("snap_grid", v), "F7", True, s.snap_grid)
         self._act(m, "Snap to &Vectors", lambda v: self._toggle("snap_objects", v), "F8", True, s.snap_objects)
         m.addSeparator()
-        for d in (self.project_dock, self.props_dock, self.transform_dock, self.toolpaths_dock, self.console_dock):
+        for d in (self.project_dock, self.props_dock, self.transform_dock, self.toolpaths_dock, self.cutorder_dock,
+                  self.console_dock):
             m.addAction(d.toggleViewAction())
 
         tm = m.addMenu("&Appearance")
@@ -518,7 +528,7 @@ class MainWindow(QMainWindow):
         for op in c.registry.operations.values():
             self._act(new, op.label + "...", lambda o=op.id: self.new_toolpath(o))
         self._act(m, "&Recalculate All", self.recalculate, "F5")
-        self._act(m, "Cut &Order...", self.cut_order, "Ctrl+Shift+O")
+        self._act(m, "Cut &Order...", self.cut_order, "Ctrl+Alt+O")
         self.inner_first_action = self._act(m, "Cut Inner Pieces (&Göbek) First", self.toggle_inner_first, None, True,
                                             s.sequence_defaults.get("grouping", "depth") == "depth")
         self.inner_first_action.setToolTip("Cut the holes and inner pieces of all parts first, then the outlines, "
@@ -638,6 +648,14 @@ class MainWindow(QMainWindow):
             cv._tp_cache = None
             cv.update()
 
+    def set_view(self, key: str, value: bool) -> None:
+        """One of the "show ..." options of the drawing (the View menu and the cut order panel keep to each other)."""
+        self._toggle(key, bool(value))
+        a = getattr(self, "view_actions", {}).get(key)
+        if a is not None and a.isChecked() != bool(value):
+            a.setChecked(bool(value))
+        self.cutorder_panel.sync_view()
+
     def _toggle_sim(self, value: bool) -> None:
         self.canvas.show_sim = value
         self.canvas.update()
@@ -659,7 +677,59 @@ class MainWindow(QMainWindow):
             self._item(menu, cmd.label, cmd.shortcut or "", lambda c_=cmd: self.run_command(c_),
                        selected >= cmd.min_selection)
 
-    def _canvas_menu(self, gpos, on_selection: bool = True) -> None:
+    def selected_cut_keys(self) -> list[str]:
+        """Keys (``vector id:contour``) of the closed contours of the selected vectors: the ones that have a start."""
+        return [f"{o.id}:{i}" for o in self.ctrl.selected_objects() if self.ctrl.editable(o)
+                for i, c in enumerate(o.contours) if c.closed and c.segs]
+
+    def start_at(self, place: str) -> None:
+        """Start the selected vectors at a corner (``sw`` ...) or the middle of a side (``s`` ...)."""
+        for key in self.selected_cut_keys():
+            self.ctrl.start_at_place(key, place)
+
+    def start_here(self, point) -> None:
+        """Start the selected vector that is nearest to ``point`` at its nearest point."""
+        best = None
+        for o in self.ctrl.selected_objects():
+            if not self.ctrl.editable(o):
+                continue
+            for i, c in enumerate(o.contours):
+                if c.closed and c.segs:
+                    q, d = c.nearest(point)[2:]
+                    if best is None or d < best[0]:
+                        best = (d, o, i, q)
+        if best is not None:
+            self.ctrl.edit_start(best[1].id, best[2], best[3])
+
+    def smart_start_selected(self) -> None:
+        from .cutorder_panel import default_toolpath
+        tid = default_toolpath(self.ctrl, self)
+        if tid is None:
+            self.statusBar().showMessage("Add a profile or engraving toolpath first", 5000)
+            return
+        for key in self.selected_cut_keys():
+            self.ctrl.smart_start_one(tid, key)
+
+    def release_selected_starts(self) -> None:
+        for key in self.selected_cut_keys():
+            self.ctrl.unlock_start(key)
+
+    def _start_menu(self, menu: QMenu, world=None) -> None:
+        keys = self.selected_cut_keys()
+        sm = menu.addMenu("Start Point")
+        sm.setEnabled(bool(keys))
+        if world is not None:
+            self._act(sm, "Here (nearest point of the vector)", lambda: self.start_here(world))
+        for place, label in (("sw", "Bottom Left"), ("se", "Bottom Right"), ("nw", "Top Left"), ("ne", "Top Right")):
+            self._act(sm, label + " Corner", lambda p=place: self.start_at(p))
+        sm.addSeparator()
+        self._act(sm, "Smart (best place)", self.smart_start_selected)
+        self._act(sm, "Release (to smart start points)", self.release_selected_starts)
+        sm.addSeparator()
+        self._act(sm, "Draw on the Drawing (B)", lambda: self.set_tool("start"))
+        self._act(sm, "Cut Order Panel", self.cut_order)
+
+    def _canvas_menu(self, gpos, on_selection: bool = True, world=None) -> None:
         m = QMenu(self)
         c = self.ctrl
         n = len(c.selected_objects())
@@ -685,6 +755,7 @@ class MainWindow(QMainWindow):
                 self._command_item(am, cid, n)
             m.addSeparator()
             self._act(m, "Edit Nodes", lambda: self.set_tool("nodes"))
+            self._start_menu(m, world)
             for cid in ("edit.offset", "edit.join", "edit.weld", "edit.subtract", "corner.fillet", "corner.dogbone",
                         "edit.reverse", "edit.group", "edit.ungroup"):
                 self._command_item(m, cid, n)
@@ -1085,13 +1156,19 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"{t.name}: nothing to machine on this sheet", 6000)
 
     def cut_order(self, tid: str | None = None) -> None:
-        from .sequence_dialogs import CutOrderDialog, sequenced_toolpaths
+        """Open the cut order panel (on the toolpath ``tid``): the order, the cutting direction and the start points
+        of the cuts, shown on the drawing."""
         if not sequenced_toolpaths(self.ctrl):
             QMessageBox.information(self, "Cut order", "Add a profile or engraving toolpath first.")
             return
-        if not self.ctrl.settings.show_cut_order:
-            self._toggle("show_cut_order", True)
-        CutOrderDialog(self.ctrl, tid, self).exec()
+        s = self.ctrl.settings
+        if not any(getattr(s, k) for k in ("show_cut_order", "show_route", "show_directions", "show_starts")):
+            for key in ("show_cut_order", "show_directions", "show_starts"):    # (what the panel is about)
+                self.set_view(key, True)
+        self.cutorder_dock.show()
+        self.cutorder_dock.raise_()
+        self.cutorder_panel.refresh()
+        self.cutorder_panel.show_toolpath(tid)
 
     def toggle_inner_first(self, on: bool) -> None:
         n = self.ctrl.set_inner_first(on)
@@ -1100,11 +1177,7 @@ class MainWindow(QMainWindow):
             + (f" on {n} toolpath(s)" if n else ""), 5000)
 
     def start_points(self, tid: str | None = None) -> None:
-        from .sequence_dialogs import StartPointsDialog, sequenced_toolpaths
-        if not sequenced_toolpaths(self.ctrl):
-            QMessageBox.information(self, "Start points", "Add a profile or engraving toolpath first.")
-            return
-        StartPointsDialog(self.ctrl, tid, self).exec()
+        self.cut_order(tid)
 
     def release_starts(self) -> None:
         self.ctrl.unlock_starts(list(self.ctrl.selection))
@@ -1322,7 +1395,9 @@ class MainWindow(QMainWindow):
                  ("Ctrl+drag a vector", "Copy it while moving (Ctrl+click toggles the selection)"),
                  ("Right-click a vector", "Cut, copy, paste, transform, arrange, edit nodes, new toolpath"),
                  ("Alt+F7 / F8 / F9 / F10 / F11", "Transform panel: position / rotate / scale and mirror / size / slant"),
-                 ("Ctrl+M / Ctrl+R", "Move... / Rotate... by numbers")]
+                 ("Ctrl+M / Ctrl+R", "Move... / Rotate... by numbers"),
+                 ("Ctrl+Alt+O", "Cut order panel: order, directions and start points on the drawing"),
+                 ("B", "Start point tool: drag a start point along its vector")]
         rows += [f"<tr><td><b>{k}</b></td><td>{v}</td></tr>" for k, v in extra]
         QMessageBox.information(self, "Keyboard shortcuts", "<table>" + "".join(rows) + "</table>")
 

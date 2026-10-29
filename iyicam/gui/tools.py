@@ -498,8 +498,8 @@ class NodeTool(CanvasTool):
         c = o.contours[ci]
         if hit[0] == "node":
             ni = hit[3]
-            m.addAction("Set as start point", lambda: self._apply(oid, ci, lambda c: vectorops.set_start_node(c, ni),
-                                                                  "Set start point"))
+            if c.closed:      # (kept by smart start points, and the toolpaths follow at once)
+                m.addAction("Set as start point", lambda: self.ctrl.edit_start(oid, ci, c.nodes()[ni]))
             m.addAction("Delete node", lambda: (self.sel.clear(), self.sel.add((oid, ci, ni)), self.delete_nodes()))
             seg = ni if ni < len(c.segs) else len(c.segs) - 1
             t = 0.0 if ni < len(c.segs) else 1.0
@@ -509,8 +509,8 @@ class NodeTool(CanvasTool):
             si, t = hit[3], hit[4]
             m.addAction("Insert node here", lambda: self._apply(oid, ci, lambda c: vectorops.insert_node(c, si, t),
                                                                 "Insert node"))
-            m.addAction("Set start point here", lambda: self._apply(
-                oid, ci, lambda c: vectorops.set_start_point(c, c.segs[si].point_at(t)), "Set start point"))
+            if c.closed:
+                m.addAction("Set start point here", lambda: self.ctrl.edit_start(oid, ci, c.segs[si].point_at(t)))
             m.addAction("Break here", lambda: self._apply(oid, ci, lambda c: vectorops.break_at(c, si, t), "Break vector"))
             m.addSeparator()
             for kind, label in (("line", "Convert span to line"), ("arc", "Convert span to arc"),
@@ -1071,59 +1071,117 @@ class TabTool(CanvasTool):
 
 
 class StartPointTool(CanvasTool):
-    """Click on a vector to start its cut there (a new node is made); the start is then kept
-    as it is by smart start points. Right click releases a start point again."""
+    """Where the cuts of the vectors start (and close). Click on a vector to start its cut there (a node is made
+    there), or drag the marker of a start point along its vector. A start set this way is kept as it is by smart
+    start points. Right click a marker to give it back to smart start points. With ``only`` (a cut key) the tool
+    is about that one vector contour and is done after one change."""
 
     name = "start"
-    prompt = ("Start point: click on a vector where its cut should start (a node is added there). "
-              "Right click a start point to release it to smart start points. Esc when done.")
+    prompt = ("Start point: click on a vector where its cut should start, or drag a marker along its vector "
+              "(a node is added there). Right click a marker to release it to smart start points. Esc when done.")
     cursor = Qt.CrossCursor
+    GRAB_PX = 9.0
+
+    def __init__(self, canvas, only: str | None = None):
+        super().__init__(canvas)
+        self.only = only
+        self.drag: tuple[VectorObject, int] | None = None
+        self.live: Pt | None = None
+        if only is not None:
+            self.prompt = ("Start point of this cut: click on the vector where it should start, or drag the marker "
+                           "along it. Esc cancels.")
+
+    def _contours(self):
+        """``(vector, contour index, contour)`` of the closed contours this tool is about."""
+        for o in self.canvas.visible_objects():
+            for ci, c in enumerate(o.contours):
+                if c.closed and c.segs and (self.only is None or self.only == f"{o.id}:{ci}"):
+                    yield o, ci, c
 
     def _nearest(self, w: Pt):
         best, bd = None, self.canvas.px(12)
-        for o in self.canvas.visible_objects():
+        for o, ci, c in self._contours():
             if not o.bbox().inflated(bd).contains(w):
                 continue
-            for ci, c in enumerate(o.contours):
-                if not c.closed:
-                    continue
-                _, _, q, d = c.nearest(w)
-                if d < bd:
-                    best, bd = (o, ci, q), d
+            _, _, q, d = c.nearest(w)
+            if d < bd:
+                best, bd = (o, ci, q), d
         return best
 
+    def _marker_at(self, pos: QPointF):
+        for o, ci, c in self._contours():
+            q = self.s(c.start)
+            if math.hypot(q.x() - pos.x(), q.y() - pos.y()) <= self.GRAB_PX:
+                return o, ci
+        return None
+
+    def _set(self, o, ci: int, q: Pt) -> None:
+        self.ctrl.edit_start(o.id, ci, q)
+        if self.only is not None:
+            self.canvas.cancel_tool()
+
     def move(self, ev, w):
-        hit = self._nearest(w)
-        self.canvas.hover_id = hit[0].id if hit else None
+        if self.drag is not None:
+            o, ci = self.drag
+            self.live = o.contours[ci].nearest(w)[2]
+            self.say(f"Start point at {self.ctrl.units.fmt(self.live[0])}, {self.ctrl.units.fmt(self.live[1])}: "
+                     "let go to start the cut here")
+            return
+        m = self._marker_at(ev.position())
+        hit = self._nearest(w) if m is None else None
+        self.canvas.hover_id = (m[0].id if m else hit[0].id if hit else None)
+        self.canvas.setCursor(Qt.OpenHandCursor if m else self.cursor)
 
     def press(self, ev, w):
-        hit = self._nearest(w)
-        if hit is None:
-            return
-        o, ci, q = hit
-        if ev.button() == Qt.RightButton:
-            if ci in o.locked_starts:
-                with self.ctrl.edit("Release start point", geometry=False):
-                    o.locked_starts.remove(ci)
-                self.ctrl.stale = True
-                self.ctrl.recalculate()
-            return
         if ev.button() == Qt.LeftButton:
-            self.ctrl.set_start_point(o.id, ci, q)
+            m = self._marker_at(ev.position())
+            if m is not None:
+                self.drag = m
+                self.live = m[0].contours[m[1]].start
+                self.canvas.setCursor(Qt.ClosedHandCursor)
+                return
+            hit = self._nearest(w)
+            if hit is not None:
+                self._set(*hit)
+            return
+        if ev.button() == Qt.RightButton:
+            m = self._marker_at(ev.position())
+            hit = (m[0], m[1]) if m is not None else (self._nearest(w) or (None, None))[:2]
+            o, ci = hit
+            if o is not None and ci in o.locked_starts:
+                self.ctrl.unlock_start(f"{o.id}:{ci}")
+
+    def release(self, ev, w):
+        if self.drag is not None and ev.button() == Qt.LeftButton:
+            o, ci = self.drag
+            q, self.drag, self.live = self.live, None, None
+            self.canvas.setCursor(self.cursor)
+            self.say(self.prompt)
+            if q is not None and dist(q, o.contours[ci].start) > 1e-6:
+                self._set(o, ci, q)
+
+    def cancel(self) -> None:
+        self.drag = None
+        self.live = None
 
     def paint(self, p):
-        for o in self.canvas.visible_objects():
-            for ci, c in enumerate(o.contours):
-                if not c.closed or not c.segs:
-                    continue
-                q = self.s(c.start)
-                locked = ci in o.locked_starts
-                p.setPen(QPen(QColor("#4a1486" if locked else "#08519c"), 1.2))
-                p.setBrush(QBrush(QColor("#9e9ac8" if locked else "#6baed6")))
-                if locked:
-                    p.drawRect(QRectF(q.x() - 4, q.y() - 4, 8, 8))
-                else:
-                    p.drawEllipse(q, 3.5, 3.5)
+        for o, ci, c in self._contours():
+            dragging = self.drag is not None and self.drag[0] is o and self.drag[1] == ci
+            q = self.s(c.start)
+            locked = ci in o.locked_starts
+            p.setPen(QPen(QColor("#4a1486" if locked else "#08519c"), 1.2))
+            p.setBrush(QBrush(QColor("#9e9ac8" if locked else "#6baed6")))
+            if dragging:
+                p.setBrush(Qt.NoBrush)
+            if locked:
+                p.drawRect(QRectF(q.x() - 4, q.y() - 4, 8, 8))
+            else:
+                p.drawEllipse(q, 3.5, 3.5)
+        if self.drag is not None and self.live is not None:
+            q = self.s(self.live)
+            p.setPen(QPen(QColor("#d6249f"), 1.5))
+            p.setBrush(QBrush(QColor("#f1b6da")))
+            p.drawEllipse(q, 5.5, 5.5)
 
 
 class OrderTool(CanvasTool):

@@ -96,7 +96,13 @@ with Python plugins.
 - **Fluting**: follow vectors with linear or S-curve depth ramps at both ends
 - **Rotary axis wrapping**: draw on the unrolled cylinder, get A-axis G-code with inverse time
   (G93) or corrected feed rates
-- **Cut order**: shortest travel, rows / columns / diagonals from any corner, zig-zag sweeps,
+- **Cut Order panel** (Ctrl+Alt+O): the order, the cutting direction and the start points of every cut shown
+  on the drawing (numbers from blue to red, the route between the cuts, arrows along the cuts: orange clockwise,
+  green counter-clockwise, start points marked good / by hand / to check), with a **preview** (pink) of any change
+  and what it saves or moves before it is applied, a list of the cuts to reorder (buttons, dragging, picking), and
+  a box that changes the start point of one cut (along the cut, at a corner, picked or dragged on the drawing)
+  without changing its place in the order
+- **Cut order**: **smart (shortest route, optimised)**, shortest travel, rows / columns / diagonals from any corner, zig-zag sweeps,
   smallest parts first, centre out or edges in; automatic or frozen, picked on the drawing from any
   position; every strategy with its own cutting direction (climb, conventional, clockwise,
   counter-clockwise or mirrored with the sweep). Inside-first and loose-scrap rules guarantee

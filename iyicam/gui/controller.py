@@ -18,10 +18,11 @@ from ..core.tooling import ToolLibrary
 from ..core.undo import UndoStack
 from ..nesting.stock import leftover_of_sheet, stock_from_vectors
 from .busy import run_busy
+from .cutcontrol import CutControl, CutPreview
 from .settings import Settings, Units
 
 
-class Controller(QObject):
+class Controller(CutControl, QObject):
     changed = Signal()            # document content changed (vectors, layers, sheets, material)
     selection_changed = Signal()
     sheet_changed = Signal()      # active sheet switched
@@ -29,6 +30,7 @@ class Controller(QObject):
     project_replaced = Signal()   # new / opened project
     message = Signal(str)
     units_changed = Signal()      # the display units of every document changed (they are a setting of the window)
+    cut_view_changed = Signal()   # the cut that is looked at, or the preview of a cut order, changed (redraw)
 
     AUTO_LIMIT_S = 1.5  # stop auto recalculation when a full calculation is slower than this
 
@@ -52,6 +54,8 @@ class Controller(QObject):
         self.dirty = False
         self.last_compute_s = 0.0
         self.busy_parent = None       # the window the "please wait" window of a long calculation belongs to
+        self.cut_preview: CutPreview | None = None    # a toolpath calculated with other cut order settings (shown only)
+        self.focus_cut: str | None = None             # the cut (vector contour key) the cut order panel points at
         self._computing = False
         self._compute_again = False
         self._recalc = QTimer(self)
@@ -189,6 +193,9 @@ class Controller(QObject):
 
     def _after_change(self, geometry: bool = True) -> None:
         _ = self.layer   # a current layer that is gone (undone, deleted) is replaced by the first one
+        if self.cut_preview is not None:      # (a preview is of the document as it was)
+            self.cut_preview = None
+            self.cut_view_changed.emit()
         self.selection = [v.id for v in self.sheet.pick(self.selection)]
         self.changed.emit()
         self.selection_changed.emit()

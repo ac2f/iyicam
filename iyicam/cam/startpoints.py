@@ -125,6 +125,7 @@ class StartChoice:
     corner: float      # distance along the loop to the nearest corner
     ok: bool           # clear of machined areas by the margin and away from corners
     kept: bool         # the previous start was good enough to keep
+    held: float = 0.0  # 0..1, how firmly the stretch that closes the cut is held by the material around it
 
 
 def corners(walker: PathWalker, tight: float = 0.0, angle: float = 12.0) -> list[tuple[float, float]]:
@@ -362,4 +363,4 @@ def choose_start(walker: PathWalker, r: float, entry: Callable[[float], list[Pt]
         if h in set(pick.tolist()) and score[h] >= score[best] - 0.005:
             best, kept = h, True
     return StartChoice(float(cand[best]), tuple(map(float, pts[best])), float(gap[best]), float(cdist[best]),
-                       bool(ok[best]), kept or locked)
+                       bool(ok[best]), kept or locked, float(end[best]))

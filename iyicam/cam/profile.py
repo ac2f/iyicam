@@ -216,6 +216,7 @@ class ProfileOp(Operation):
                     first = first or close
                     info["close"] = close
                 info["start"] = c.start
+                info["path"] = c                  # what the tool walks (its direction is the cutting direction)
                 if c.closed:
                     info["loop"] = c
                     info["radius"] = kerf_r
@@ -227,6 +228,7 @@ class ProfileOp(Operation):
                     last = next(m for m in reversed(block) if hasattr(m, "z"))
                     mb.pos = (last.x, last.y, last.z)
                     info["entry"] = next((m.x, m.y) for m in block if hasattr(m, "x"))
+                    info["end"] = (last.x, last.y)
                     if track:
                         machined.add_polyline(c.flatten(0.1), kerf_r, closed=c.closed)
                         lead_in = self._entry_fn(PathWalker(c.segs, True), it) if c.closed else None
@@ -321,7 +323,7 @@ class ProfileOp(Operation):
                               hold=seq.hold_direction(cfg["strategy"], it.source.bbox().center, self._sheet),
                               kind=shape_kind(it.source), sheet=self._sheet, shift=shift)
             s = ch.s
-            info.update(gap=ch.gap, ok=ch.ok, locked=locked)
+            info.update(gap=ch.gap, ok=ch.ok, locked=locked, corner=ch.corner, held=ch.held, kept=ch.kept)
             if not ch.ok:
                 ctx.warn("Some cuts have no start point clear of machined areas and corners"
                          if not locked else "A start point set by hand is close to machined areas or a corner")

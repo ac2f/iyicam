@@ -16,7 +16,8 @@ def rwin(tmp_path, monkeypatch):
     yield from rwin_gen(tmp_path, monkeypatch)
 
 
-OPTIONS = ("show_toolpaths", "show_tool_width", "show_directions", "show_cut_order", "snap_grid", "snap_objects")
+OPTIONS = ("show_toolpaths", "show_tool_width", "show_directions", "show_cut_order", "show_route", "show_starts",
+           "snap_grid", "snap_objects")
 
 
 def with_toolpaths(win):

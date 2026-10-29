@@ -131,7 +131,7 @@ def test_random_jobs_never_fail_and_post_cleanly(op_id, batch):
         tool = random_tool(op, r)
         seq = {}
         if op_id in ("profile", "engrave", "vcarve", "inlay") and r.random() < 0.6:
-            seq = {"strategy": r.choice(["nearest", "rows_bl", "zigzag_up", "diag_tr", "centre_out", "small_first"]),
+            seq = {"strategy": r.choice(["nearest", "smart", "rows_bl", "zigzag_up", "diag_tr", "centre_out", "small_first"]),
                    "grouping": r.choice(["depth", "part"]), "smart_starts": r.random() < 0.5,
                    "direction": r.choice(["toolpath", "climb", "conventional", "cw", "mirror"])}
         t = ToolpathDef("fuzz", op_id, tool, params, Selection("vectors", [o.id for o in objs]))

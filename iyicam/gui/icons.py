@@ -168,6 +168,17 @@ def _toolpath(p):
     p.drawRoundedRect(QRectF(7, 9, 10, 6), 1.5, 1.5)
 
 
+def _cutorder(p):
+    """Three cuts in a row with the route between them and the arrow of the direction."""
+    for x in (3.5, 10.5, 17.5):
+        p.drawRoundedRect(QRectF(x, 13, 4, 7), 1, 1)
+    p.setPen(QPen(QColor(theme.get().accent), 1.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+    p.drawPolyline(QPolygonF([QPointF(5.5, 10), QPointF(5.5, 5), QPointF(12.5, 5), QPointF(12.5, 10)]))
+    p.drawPolyline(QPolygonF([QPointF(12.5, 5), QPointF(19.5, 5), QPointF(19.5, 10)]))
+    p.setBrush(QColor(theme.get().accent))
+    p.drawPolygon(QPolygonF([QPointF(19.5, 11.5), QPointF(17.8, 8.5), QPointF(21.2, 8.5)]))
+
+
 def _recalc(p):
     p.drawArc(QRectF(4.5, 4.5, 15, 15), 40 * 16, 270 * 16)
     p.setBrush(_ink())
@@ -194,7 +205,7 @@ TOOL_ICONS = {"select": _select, "nodes": _nodes, "polyline": _polyline, "line":
               "circle": _circle, "ellipse": _ellipse, "polygon": _polygon, "star": _star, "arc": _arc,
               "text": _text, "measure": _measure, "trim": _trim, "start": _start, "zoom": _zoom,
               "new": _new, "open": _open, "save": _save, "undo": _undo, "redo": _redo, "fit": _fit, "nest": _nest,
-              "toolpath": _toolpath, "recalculate": _recalc, "simulate": _simulate, "gcode": _gcode}
+              "toolpath": _toolpath, "cutorder": _cutorder, "recalculate": _recalc, "simulate": _simulate, "gcode": _gcode}
 
 
 def icon(name: str) -> QIcon:

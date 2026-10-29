@@ -30,6 +30,7 @@ from ..core import clip
 from ..core.geom import BBox, Contour, Pt, dist, point_in_polygon, polygon_area
 
 STRATEGIES: list[tuple[str, str]] = [
+    ("smart", "Smart: shortest route (optimised)"),
     ("nearest", "Shortest travel (nearest next)"),
     ("rows_bl", "Rows: bottom left → top right"),
     ("rows_br", "Rows: bottom right → top left"),
@@ -271,6 +272,57 @@ def _nearest(items: list[SeqItem], pos: Pt) -> list[SeqItem]:
     return out
 
 
+def route_length(items: list[SeqItem], pos: Pt) -> float:
+    """How far the tool travels between the cuts when ``items`` are cut in this order, starting from ``pos``
+    (every item is entered where it is nearest to the tool, as the cut does)."""
+    total = 0.0
+    for it in items:
+        q, out = it.entry(pos)
+        total += dist(pos, q)
+        pos = out
+    return total
+
+
+SMART_LIMIT = 400     # more items than this: the smart strategy stays with the nearest-next order (it is O(n^2))
+
+
+def _two_opt(pts: np.ndarray, start: np.ndarray, passes: int = 60) -> list[int]:
+    """A short path through ``pts`` from ``start`` (2-opt: reverse stretches of the path while that shortens it)."""
+    n = len(pts)
+    P = np.vstack([start[None, :], pts])
+    D = np.hypot(P[:, None, 0] - P[None, :, 0], P[:, None, 1] - P[None, :, 1])
+    tour = list(range(n + 1))                 # (0 is the start: it stays first)
+    for _ in range(passes):
+        improved = False
+        for i in range(1, n):
+            a = tour[i - 1]
+            ti = tour[i]
+            js = np.arange(i + 1, n + 1)
+            tj = np.array([tour[j] for j in js])
+            nxt = np.array([tour[j + 1] if j + 1 <= n else -1 for j in js])
+            old = D[a, ti] + np.where(nxt >= 0, D[tj, np.maximum(nxt, 0)], 0.0)
+            new = D[a, tj] + np.where(nxt >= 0, D[ti, np.maximum(nxt, 0)], 0.0)
+            gain = old - new
+            k = int(np.argmax(gain))
+            if gain[k] > 1e-9:
+                j = int(js[k])
+                tour[i:j + 1] = tour[i:j + 1][::-1]
+                improved = True
+        if not improved:
+            break
+    return [k - 1 for k in tour[1:]]
+
+
+def _smart(items: list[SeqItem], pos: Pt) -> list[SeqItem]:
+    """Nearest-next, then the route shortened by 2-opt; never longer than nearest-next."""
+    greedy = _nearest(items, pos)
+    if len(greedy) < 4 or len(greedy) > SMART_LIMIT:
+        return greedy
+    pts = np.array([it.center for it in greedy], float)
+    better = [greedy[i] for i in _two_opt(pts, np.asarray(pos, float))]
+    return better if route_length(better, pos) < route_length(greedy, pos) - 1e-9 else greedy
+
+
 def _rows(ys: np.ndarray, sizes: list[float], band: float) -> np.ndarray:
     """Row number (0, 1, 2, ... without gaps) of every item along ``ys``.
 
@@ -295,6 +347,8 @@ def rank(items: list[SeqItem], strategy: str, pos: Pt, band: float = 0.0,
          sheet: BBox | None = None) -> list[SeqItem]:
     """Order ``items`` (which do not contain each other) by ``strategy``."""
     items = list(items)
+    if len(items) > 1 and strategy == "smart":
+        return _smart(items, pos)
     if len(items) <= 1 or strategy == "nearest":
         return _nearest(items, pos)
     cx = np.array([it.center[0] for it in items])

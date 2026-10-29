@@ -4,15 +4,70 @@ Profile and engraving toolpaths cut vector by vector. Two independent systems
 decide **in which order** the vectors are cut and **where** each closed cut
 starts. Each one can work automatically or be run once on demand.
 
+Everything is in one place, the **Cut Order panel** (**Toolpaths ▸ Cut Order...**,
+Ctrl+Alt+O; the tab next to *Toolpaths* on the right), and everything it does is
+shown on the drawing as it happens.
+
+## Seeing it on the drawing
+
+The panel's **Show on the drawing** options (also in the View menu) draw, for every
+cut of the toolpath:
+
+| | |
+|---|---|
+| **Numbers** | the place in the order, at the point where the tool goes down; blue for the first cut, through green and yellow to red for the last |
+| **Route** | the rapid moves between the cuts as arrows, so you can see the sweep (or the zig-zag) |
+| **Direction arrows** | arrow heads along every cut pointing the way the tool goes: **orange = clockwise, green = counter-clockwise** (open vectors: blue, along the line) |
+| **Start points** | where every cut closes: **green circle** a good start point, **violet square** set by hand, **orange triangle** too close to a corner or to a cut area, **grey circle** simply where the vector was drawn (smart start points are off) |
+
+Select a row of the list and that cut is lit up on the drawing (and its vector is
+selected); click a vector on the drawing and the list points at its cut. The text below the
+list says why the start point is where it is: which side of the part the cut closes on,
+how firmly the last stretch is held, how far it is from the nearest corner and how much
+material is left between the plunge and the areas cut before.
+
+## Preview before applying
+
+Changing the strategy, the inner pieces grouping, the row size or the cutting direction
+does not change the toolpath at first (**Preview a change first**, on by default and
+remembered). The toolpath is calculated with the new settings and drawn in **pink**, the
+list shows the new order, and the preview bar says what it changes:
+
+* how many cuts would be cut at another place of the order,
+* how far the tool travels between the cuts now and with the preview (`2169 mm → 3681 mm (+70 %)`),
+* how many cuts would be cut the other way round,
+* how many start points would move (a dotted line runs from every start point to the place
+  it would go to).
+
+**Apply** makes it so (undoable), **Cancel** drops it. **Preview** next to *Re-order now*
+and next to *Optimise now* show what those one-time actions would do. Any change of the
+drawing or closing the panel drops a preview. Switch *Preview a change first* off to apply
+changes at once.
+
 | | Cut order (G-code sequence) | Start points (vector editing) |
 |---|---|---|
-| Menu | **Toolpaths ▸ Cut Order...** (Ctrl+Shift+O) | **Vectors ▸ Start Points ▸ Smart Start Points...** |
-| Automatic | *Re-order automatically on every calculation* | *Move the vectors' start points automatically* |
-| Once | **Re-order now** | **Optimise now** (undoable) |
-| By hand | **Pick order on the drawing** from any position, or move a row up / down | **Set Start Point** tool (**B**): click anywhere on a vector |
+| Automatic | **Smart order**: re-order automatically on every calculation | **Smart start points**: move the vectors' start points automatically |
+| Once | **Re-order now** (preview: **Preview**) | **Optimise now** (preview: **Preview**; undoable) |
+| By hand | move a row **Up / Down** or drag it; **Pick...** the cuts on the drawing from any position | the **Start point of the selected cut** box, or the **Start Point tool** (**B**) |
 
-Both are also in the context menu of the toolpath list. **View ▸ Show Cut
-Order** numbers the cuts on the drawing at the point where the tool goes down.
+Both are also in the context menu of the toolpath list.
+
+## Changing where a cut starts without changing its place in the order
+
+Select the cut in the list; the **Start point of the selected cut** box moves *that* start
+point and nothing else (the order is kept by vector, not by place):
+
+* **◀ ▶** move it along the cut by the step next to them (▶ goes the way the tool goes),
+* the eight **arrows** put it at a corner (↖ ↗ ↙ ↘: the extreme point of the vector that
+  way) or the middle of a side (↑ ← → ↓),
+* **Pick...** lets you click on the vector, or drag the marker along it, on the drawing,
+* **Smart** lets smart start points choose it, **Release** gives a hand-set start back.
+
+A start point set by hand is kept by smart start points; it shows as a violet square.
+Other ways to the same: the **Start Point tool (B)** (click on a vector, or drag the
+marker of a start point along its vector; right click a marker to release it), the
+**Start Point** menu of the right-click menu of a vector (here, a corner, smart, release),
+and **Set as start point** / **Set start point here** of the node tool's right-click menu.
 
 ## Rules that always hold
 
@@ -36,6 +91,7 @@ Whatever strategy or manual order is chosen:
 
 | Strategy | |
 |---|---|
+| **Smart: shortest route** | the nearest vector next, then the route is shortened by 2-opt (reverse stretches of the route while that makes it shorter); never longer than nearest next, inner pieces first as always. The preview says what it saves |
 | Shortest travel | the nearest vector next |
 | Rows (4 corners) | rows from the chosen corner, every row in the same direction |
 | Bottom → top / Top → bottom | zig-zag rows |
