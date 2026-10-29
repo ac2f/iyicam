@@ -8,7 +8,7 @@ from pathlib import Path
 from PySide6.QtCore import QObject, QTimer, Signal
 
 from ..cam.job import ComputeCancelled, ComputeResult, compute_all, sheet_toolpaths, sheets_for
-from ..core import clip, paths, vectorops
+from ..core import clip, paths, placement, vectorops
 from ..core.commands import Command, CommandContext, CommandError, run_command
 from ..core.document import XY_ORIGINS, Project, Sheet, ToolpathDef, VectorObject
 from ..core.geom import Pt, Transform
@@ -331,6 +331,45 @@ class Controller(QObject):
         with self.edit("Delete"):
             self.project.remove_vectors(ids)
         self.select([])
+
+    MAX_COPIES = 20000    # vectors one transformation may make: more is a mistake that would only hang the program
+
+    def transform_selection(self, T: Transform, copies: int = 0, label: str = "Transform") -> bool:
+        """Apply ``T`` to the selected vectors (one undo step). With ``copies`` > 0 the vectors stay as they are and
+        that many copies are made, the first one moved by ``T``, the second by ``T`` twice, and so on; the last
+        copies are selected, so that applying it again goes on from there. Whether anything was done."""
+        objs = [o for o in self.selected_objects() if self.editable(o)]
+        if not objs:
+            self.message.emit("Select the vectors first")
+            return False
+        if abs(T.det) < 1e-12:
+            self.message.emit("That would flatten the vectors to nothing")
+            return False
+        if placement.is_identity(T):          # (copies on the very spot of the vectors would only be a pile)
+            return False
+        if copies <= 0:
+            with self.edit(label):
+                for o in objs:
+                    o.transform(T)
+            return True
+        if copies * len(objs) > self.MAX_COPIES:
+            self.message.emit(f"That would make {copies * len(objs)} vectors; at most {self.MAX_COPIES} are made at once")
+            return False
+        last: list[VectorObject] = []
+        with self.edit(label):
+            step = Transform.identity()
+            for k in range(copies):
+                step = T @ step                   # (from the original each time: no error builds up)
+                made = []
+                for o in objs:
+                    n = o.copy()
+                    n.transform(step)
+                    if n.prune():
+                        self.sheet.vectors.append(n)
+                        made.append(n)
+                last = made or last
+        self.select([n.id for n in last])
+        return True
 
     def run_command(self, cmd: Command, values: dict | None = None) -> bool:
         ctx = CommandContext(self.project, self.sheet, [o.id for o in self.selected_objects()

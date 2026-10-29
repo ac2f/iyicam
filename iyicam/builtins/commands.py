@@ -360,6 +360,21 @@ def _mirror(ctx, v):
     _apply(ctx, Transform.mirror(v["axis"] == "horizontal", _pivot(ctx, v)), v["copy"])
 
 
+def _slant(ctx, v):
+    try:
+        T = Transform.skew(math.radians(v["angle_x"]), math.radians(v["angle_y"]), _pivot(ctx, v))
+    except ValueError as exc:
+        raise CommandError(str(exc)) from None
+    _apply(ctx, T, v["copy"])
+
+
+def _about_centre(make):
+    """A command with nothing to ask: ``make(centre of the selection)`` is the transformation."""
+    def run(ctx, v):
+        _apply(ctx, make(_sel_bbox(ctx).center))
+    return run
+
+
 def _align(ctx, v):
     sel = ctx.selected
     ref = BBox(0, 0, ctx.sheet.width, ctx.sheet.height) if v["relative"] == "sheet" else _sel_bbox(ctx)
@@ -647,6 +662,19 @@ def commands() -> list[Command]:
             Param("axis", "Mirror", "choice", "horizontal",
                   choices=[("horizontal", "Left / right"), ("vertical", "Top / bottom")])] + about + copy,
                 min_selection=1),
+        Command("xform.slant", "Slant...", _slant, XFORM, [
+            Param("angle_x", "Horizontal slant", "angle", 15.0, min=-80.0, max=80.0),
+            Param("angle_y", "Vertical slant", "angle", 0.0, min=-80.0, max=80.0)] + about + copy, min_selection=1),
+        Command("xform.rot90l", "Rotate 90° Left", _about_centre(lambda c: Transform.rotate(math.pi / 2, c)), XFORM,
+                min_selection=1, tooltip="Turn the selection a quarter turn counter-clockwise about its centre"),
+        Command("xform.rot90r", "Rotate 90° Right", _about_centre(lambda c: Transform.rotate(-math.pi / 2, c)), XFORM,
+                min_selection=1, tooltip="Turn the selection a quarter turn clockwise about its centre"),
+        Command("xform.rot180", "Rotate 180°", _about_centre(lambda c: Transform.rotate(math.pi, c)), XFORM,
+                min_selection=1),
+        Command("xform.flip_h", "Flip Left / Right", _about_centre(lambda c: Transform.mirror(True, c)), XFORM,
+                min_selection=1, tooltip="Mirror the selection about its own centre line"),
+        Command("xform.flip_v", "Flip Top / Bottom", _about_centre(lambda c: Transform.mirror(False, c)), XFORM,
+                min_selection=1, tooltip="Mirror the selection about its own centre line"),
         Command("arrange.align", "Align...", _align, ARRANGE, [
             Param("mode", "Align", "choice", "left", choices=[
                 ("left", "Left"), ("hcenter", "Centre horizontally"), ("right", "Right"), ("bottom", "Bottom"),

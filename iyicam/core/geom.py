@@ -272,6 +272,17 @@ class Transform:
         """Mirror left/right (``horizontal=True``, flips X) or top/bottom (flips Y)."""
         return cls.scale(-1.0, 1.0, about) if horizontal else cls.scale(1.0, -1.0, about)
 
+    @classmethod
+    def skew(cls, angle_x: float, angle_y: float = 0.0, about: Pt = (0.0, 0.0)) -> "Transform":
+        """Slant (radians): ``angle_x`` moves points sideways in proportion to their height above ``about`` (vertical
+        lines lean by that angle, horizontal ones stay put), ``angle_y`` moves them up and down in proportion to
+        their distance to its right. Angles of 90 degrees and more are refused."""
+        if abs(angle_x) >= math.radians(89.9) or abs(angle_y) >= math.radians(89.9):
+            raise ValueError("a slant of 90 degrees or more flattens the vectors")
+        tx, ty = math.tan(angle_x), math.tan(angle_y)
+        cx, cy = about
+        return cls(1.0, ty, tx, 1.0, -tx * cy, -ty * cx)
+
     def __matmul__(self, o: "Transform") -> "Transform":
         """``self @ o`` applies ``o`` first, then ``self``."""
         return Transform(

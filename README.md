@@ -35,6 +35,15 @@ with Python plugins.
 **Design**
 - Vectors made of lines, arcs and cubic beziers; open or closed; compound vectors (text, groups)
 - Vector layers (colour, show/hide, lock, active layer) and multiple **sheets** per project
+- **Transform panel** (next to *Selection*; Alt+F7 position, Alt+F8 rotate, Alt+F9 scale and mirror, Alt+F10 size,
+  Alt+F11 slant): type the numbers, pick the reference point of the selection (corners, sides, centre) and press
+  Apply. Turn by any angle about the reference point, the sheet corner or a point, quarter and half turns, flip,
+  scale %, set a size (keeping the proportions), slant, move to a place or by an amount, and **make copies**
+  (the first one moved by the transformation, the next one by it twice, ...: a row of five copies is one go).
+  What was typed is remembered
+- **Ctrl+drag** copies a vector while moving it, **Ctrl+X / Ctrl+C / Ctrl+V** cut, copy and paste (also between
+  tabs) and **right-clicking a vector** offers cut, copy, paste, duplicate, delete, Transform, Arrange, node
+  editing, geometry commands and new toolpaths
 - Drawing tools: polyline / bezier (click or drag), line, rectangle, circle, ellipse, polygon,
   star, 3-point arc, text (any installed font), measure, **trim** (cut away the piece of a vector
   between crossings)

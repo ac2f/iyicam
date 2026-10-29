@@ -30,6 +30,7 @@ from .forms import ParamForm
 from .icons import icon
 from .panels import LayersPanel, PropertiesPanel, SheetsPanel, ToolpathsPanel
 from .tabs import DocumentTabs
+from .transform_panel import PAGES as TRANSFORM_PAGES, TransformPanel
 from .tools import TOOLS
 
 TOOL_KEYS = {"select": "S", "nodes": "N", "polyline": "P", "line": "L", "rectangle": "R", "circle": "C",
@@ -173,7 +174,8 @@ class MainWindow(QMainWindow):
     def _show_document(self, *_) -> None:
         """The tab that is open changed: the panels, the tool and the title follow it."""
         c, cv = self.ctrl, self.canvas
-        for panel in (self.layers_panel, self.sheets_panel, self.props_panel, self.toolpaths_panel, self.console):
+        for panel in (self.layers_panel, self.sheets_panel, self.props_panel, self.transform_panel, self.toolpaths_panel,
+                      self.console):
             panel.bind(c)
         cv._tp_cache = None                    # (settings may have changed while another tab was open)
         cv.update()
@@ -320,6 +322,10 @@ class MainWindow(QMainWindow):
         self.project_dock = self._dock("Project", tabs, Qt.LeftDockWidgetArea)
         self.props_panel = PropertiesPanel(c)
         self.props_dock = self._dock("Selection", self.props_panel, Qt.LeftDockWidgetArea)
+        self.transform_panel = TransformPanel(c)
+        self.transform_dock = self._dock("Transform", self.transform_panel, Qt.LeftDockWidgetArea)
+        self.tabifyDockWidget(self.props_dock, self.transform_dock)
+        self.transform_dock.raise_()
         self.toolpaths_panel = ToolpathsPanel(c, self)
         self.toolpaths_dock = self._dock("Toolpaths", self.toolpaths_panel, Qt.RightDockWidgetArea)
         self.console = Console(c, self)
@@ -457,6 +463,7 @@ class MainWindow(QMainWindow):
         m.addSeparator()
         self._act(m, "&Delete", self.delete, QKeySequence.Delete)
         self._act(m, "D&uplicate", self.duplicate, "Ctrl+D")
+        self._act(m, "Cu&t", self.cut, QKeySequence.Cut)
         self._act(m, "&Copy", self.copy, QKeySequence.Copy)
         self._act(m, "&Paste", self.paste, QKeySequence.Paste)
         m.addSeparator()
@@ -479,7 +486,7 @@ class MainWindow(QMainWindow):
         self._act(m, "Snap to &Grid", lambda v: self._toggle("snap_grid", v), "F7", True, s.snap_grid)
         self._act(m, "Snap to &Vectors", lambda v: self._toggle("snap_objects", v), "F8", True, s.snap_objects)
         m.addSeparator()
-        for d in (self.project_dock, self.props_dock, self.toolpaths_dock, self.console_dock):
+        for d in (self.project_dock, self.props_dock, self.transform_dock, self.toolpaths_dock, self.console_dock):
             m.addAction(d.toggleViewAction())
 
         tm = m.addMenu("&Appearance")
@@ -502,7 +509,9 @@ class MainWindow(QMainWindow):
         sp.addAction(self.tool_actions["start"])
         self._act(sp, "&Release Start Points of the Selection", self.release_starts)
         m.addSeparator()
-        self._command_menus(m, "Vectors")
+        subs = self._command_menus(m, "Vectors")
+        if "/Transform" in subs:
+            self._transform_panel_actions(subs["/Transform"])
 
         m = mb.addMenu("&Toolpaths")
         new = m.addMenu("&New Toolpath")
@@ -576,7 +585,26 @@ class MainWindow(QMainWindow):
             a.setCheckable(True)
             a.setChecked(i == self.tabs.currentIndex())
 
-    def _command_menus(self, menu: QMenu, top: str) -> None:
+    PAGE_KEYS = ("Alt+F7", "Alt+F8", "Alt+F9", "Alt+F10", "Alt+F11")
+
+    def _transform_panel_actions(self, menu: QMenu) -> None:
+        """The pages of the transform panel at the top of the menu (Alt+F7 ... Alt+F11 open them)."""
+        first = menu.actions()[0] if menu.actions() else None
+        for (key, title), shortcut in zip(TRANSFORM_PAGES, self.PAGE_KEYS):
+            a = QAction(f"{title} Panel", menu)
+            a.setShortcut(QKeySequence(shortcut))
+            a.triggered.connect(lambda checked=False, k=key: self._safe(self.show_transform, k))
+            menu.insertAction(first, a)
+        menu.insertSeparator(first)
+
+    def show_transform(self, page: str = "position") -> None:
+        """Open the transform panel (on a page)."""
+        self.transform_dock.show()
+        self.transform_dock.raise_()
+        self.transform_panel.show_page(page)
+
+    def _command_menus(self, menu: QMenu, top: str) -> dict[str, QMenu]:
+        """Add the commands of the menu ``top`` (in sub menus as they say); the sub menus by path."""
         subs: dict[str, QMenu] = {}
         for cmd in self.ctrl.registry.commands.values():
             parts = cmd.menu.split("/")
@@ -591,6 +619,7 @@ class MainWindow(QMainWindow):
                 target = subs[path]
             a = self._act(target, cmd.label, lambda c_=cmd: self.run_command(c_), cmd.shortcut)
             a.setToolTip(cmd.tooltip)
+        return subs
 
     def rebuild_plugin_ui(self) -> None:
         self.build_menus()
@@ -618,27 +647,61 @@ class MainWindow(QMainWindow):
         for f in self.ctrl.settings.recent_files:
             self._act(self.recent_menu, f, lambda f_=f: self.open_project(f_))
 
-    def _canvas_menu(self, gpos) -> None:
+    def _item(self, menu: QMenu, text: str, hint: str, slot, enabled: bool = True) -> QAction:
+        """A menu entry that shows the key of the action it repeats (the key itself is set on the menus above)."""
+        a = self._act(menu, f"{text}\t{hint}" if hint else text, slot)
+        a.setEnabled(enabled)
+        return a
+
+    def _command_item(self, menu: QMenu, cid: str, selected: int) -> None:
+        cmd = self.ctrl.registry.commands.get(cid)
+        if cmd is not None:
+            self._item(menu, cmd.label, cmd.shortcut or "", lambda c_=cmd: self.run_command(c_),
+                       selected >= cmd.min_selection)
+
+    def _canvas_menu(self, gpos, on_selection: bool = True) -> None:
         m = QMenu(self)
         c = self.ctrl
-        if c.selection:
-            self._act(m, "Edit Nodes", lambda: self.set_tool("nodes"))
-            self._act(m, "Duplicate", self.duplicate)
-            self._act(m, "Delete", self.delete)
+        n = len(c.selected_objects())
+        if n and on_selection:
+            self._item(m, "Cut", "Ctrl+X", self.cut)
+            self._item(m, "Copy", "Ctrl+C", self.copy)
+            self._item(m, "Paste", "Ctrl+V", self.paste, self._clipboard_has_vectors())
+            self._item(m, "Duplicate", "Ctrl+D", self.duplicate)
+            self._item(m, "Delete", "Del", self.delete)
             m.addSeparator()
-            for cid in ("edit.offset", "edit.join", "edit.weld", "corner.fillet", "corner.dogbone",
-                        "edit.reverse", "arrange.align", "xform.mirror", "xform.rotate"):
-                cmd = c.registry.commands.get(cid)
-                if cmd is not None:
-                    self._act(m, cmd.label, lambda c_=cmd: self.run_command(c_))
+            tm = m.addMenu("Transform")
+            for cid in ("xform.move", "xform.rotate", "xform.scale", "xform.size", "xform.mirror", "xform.slant"):
+                self._command_item(tm, cid, n)
+            tm.addSeparator()
+            for cid in ("xform.rot90l", "xform.rot90r", "xform.rot180", "xform.flip_h", "xform.flip_v"):
+                self._command_item(tm, cid, n)
+            tm.addSeparator()
+            for (key, title), shortcut in zip(TRANSFORM_PAGES, self.PAGE_KEYS):
+                self._item(tm, f"{title} Panel", shortcut, lambda k=key: self.show_transform(k))
+            am = m.addMenu("Arrange")
+            for cid in ("arrange.align", "arrange.center", "arrange.distribute", "arrange.array", "arrange.circular",
+                        "arrange.along"):
+                self._command_item(am, cid, n)
+            m.addSeparator()
+            self._act(m, "Edit Nodes", lambda: self.set_tool("nodes"))
+            for cid in ("edit.offset", "edit.join", "edit.weld", "edit.subtract", "corner.fillet", "corner.dogbone",
+                        "edit.reverse", "edit.group", "edit.ungroup"):
+                self._command_item(m, cid, n)
+            m.addSeparator()
+            self._command_item(m, "select.all", n)
+            self._command_item(m, "select.invert", n)
             m.addSeparator()
             tp = m.addMenu("New Toolpath")
             for op in c.registry.operations.values():
                 self._act(tp, op.label + "...", lambda o=op.id: self.new_toolpath(o))
         else:
-            self._act(m, "Paste", self.paste)
+            self._item(m, "Paste", "Ctrl+V", self.paste, self._clipboard_has_vectors())
+            self._command_item(m, "select.all", n)
+            m.addSeparator()
             self._act(m, "Zoom Extents", self.canvas.zoom_extents)
         menus.show_menu(m, gpos)
+        m.deleteLater()
 
     # -- helpers ------------------------------------------------------------------------------------
     def _safe(self, fn, *args):
@@ -946,10 +1009,29 @@ class MainWindow(QMainWindow):
             self.ctrl.add_vectors(copies, "Duplicate")
 
     def copy(self) -> None:
+        self._to_clipboard(self.ctrl.selected_objects())
+
+    def cut(self) -> None:
+        """Ctrl+X: the selected vectors go to the clipboard and out of the drawing (the ones on a locked or hidden
+        layer stay: they cannot be changed)."""
+        objs = [o for o in self.ctrl.selected_objects() if self.ctrl.editable(o)]
+        if not objs:
+            if self.ctrl.selection:
+                self.statusBar().showMessage("The selected vectors are on a locked or hidden layer", 5000)
+            return
+        self._to_clipboard(objs)
+        self.ctrl.delete_selection()
+        self.canvas.update()
+
+    @staticmethod
+    def _to_clipboard(objs) -> None:
         from ..core.document import vector_to_dict
-        objs = self.ctrl.selected_objects()
         if objs:
             QApplication.clipboard().setText(json.dumps({"iyicam-vectors": [vector_to_dict(o) for o in objs]}))
+
+    @staticmethod
+    def _clipboard_has_vectors() -> bool:
+        return QApplication.clipboard().text().startswith('{"iyicam-vectors"')
 
     def paste(self) -> None:
         from ..core.document import vector_from_dict
@@ -1235,7 +1317,12 @@ class MainWindow(QMainWindow):
                  ("Ctrl+N / Ctrl+O", "New project / open project (each in a tab)"),
                  ("Ctrl+W", "Close tab"), ("Ctrl+Shift+T", "Reopen closed tab"),
                  ("Ctrl+PgUp / Ctrl+PgDown", "Previous / next tab"), ("Middle-click a tab", "Close it"),
-                 ("Ctrl+Shift+O", "Offset"), ("Ctrl+G / Ctrl+Shift+G", "Group / ungroup")]
+                 ("Ctrl+Shift+O", "Offset"), ("Ctrl+G / Ctrl+Shift+G", "Group / ungroup"),
+                 ("Ctrl+X / Ctrl+C / Ctrl+V", "Cut / copy / paste vectors (also between tabs)"),
+                 ("Ctrl+drag a vector", "Copy it while moving (Ctrl+click toggles the selection)"),
+                 ("Right-click a vector", "Cut, copy, paste, transform, arrange, edit nodes, new toolpath"),
+                 ("Alt+F7 / F8 / F9 / F10 / F11", "Transform panel: position / rotate / scale and mirror / size / slant"),
+                 ("Ctrl+M / Ctrl+R", "Move... / Rotate... by numbers")]
         rows += [f"<tr><td><b>{k}</b></td><td>{v}</td></tr>" for k, v in extra]
         QMessageBox.information(self, "Keyboard shortcuts", "<table>" + "".join(rows) + "</table>")
 

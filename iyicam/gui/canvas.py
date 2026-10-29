@@ -691,12 +691,27 @@ class Canvas(QWidget):
             return
         super().keyReleaseEvent(ev)
 
+    def over_selection(self, w: Pt) -> bool:
+        """Whether ``w`` is on a selected vector or inside the box around the selection."""
+        objs = self.ctrl.selected_objects()
+        if not objs:
+            return False
+        bb = BBox()
+        for o in objs:
+            bb = bb.union(self.obj_bbox(o))
+        return bb.inflated(self.px(self.PICK_PX)).contains(w)
+
     def contextMenuEvent(self, ev) -> None:
         pos = QPointF(ev.pos())
-        if self.tool.context_menu(pos, self.screen_to_world(pos)):
+        w = self.screen_to_world(pos)
+        if self.tool.context_menu(pos, w):
             return
+        if self.tool.name == "select":     # (a vector that is right-clicked is the one the menu is about)
+            obj = self.hit(w)
+            if obj is not None and obj.id not in self.ctrl.selection:
+                self.ctrl.select([obj.id])
         if self.context_menu_hook is not None:
-            self.context_menu_hook(ev.globalPos())
+            self.context_menu_hook(ev.globalPos(), self.over_selection(w))
 
     def leaveEvent(self, ev) -> None:
         self.hover_id = None

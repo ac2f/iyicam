@@ -78,8 +78,8 @@ def _sel_bbox(objs) -> BBox:
 
 class SelectTool(CanvasTool):
     name = "select"
-    prompt = ("Click to select (Shift: add, Ctrl: toggle). Drag to move, handles to scale/rotate, "
-              "double-click to edit nodes. Arrows nudge.")
+    prompt = ("Click to select (Shift: add, Ctrl: toggle). Drag to move (Ctrl+drag: copy), handles to "
+              "scale/rotate, double-click to edit nodes. Arrows nudge. Transform panel: Alt+F7..F11.")
     cursor = Qt.ArrowCursor
     HANDLE = 5.0
 
@@ -91,10 +91,14 @@ class SelectTool(CanvasTool):
         self.anchor: Pt | None = None
         self.preview: Transform | None = None
         self.press_screen: QPointF | None = None
+        self.copying = False                  # Ctrl was down when the drag began: it makes a copy
+        self.unselect_on_click: str | None = None   # Ctrl+click on a selected vector takes it out when it is only a click
 
     def cancel(self) -> None:
         self.mode = None
         self.preview = None
+        self.copying = False
+        self.unselect_on_click = None
 
     def _handles(self) -> dict[str, QPointF]:
         objs = [o for o in self.ctrl.selected_objects() if self.ctrl.editable(o)]
@@ -121,6 +125,8 @@ class SelectTool(CanvasTool):
         self.press_screen = ev.position()
         self.start = w
         self.cur = w
+        self.copying = False
+        self.unselect_on_click = None
         h = self._handle_at(ev.position())
         if h is not None:
             self.mode = "rotate" if h == "rot" else "scale:" + h
@@ -132,9 +138,12 @@ class SelectTool(CanvasTool):
             if mods & Qt.ShiftModifier:
                 self.ctrl.select([obj.id], "add")
             elif mods & Qt.ControlModifier:
-                self.ctrl.select([obj.id], "toggle")
-                self.mode = None
-                return
+                # Ctrl+click toggles, Ctrl+drag copies: which of the two it is shows when the mouse moves
+                self.copying = True
+                if obj.id in self.ctrl.selection:
+                    self.unselect_on_click = obj.id
+                else:
+                    self.ctrl.select([obj.id], "add")
             elif obj.id not in self.ctrl.selection:
                 self.ctrl.select([obj.id])
             self.mode = "move"
@@ -174,7 +183,10 @@ class SelectTool(CanvasTool):
                 dx, dy = t[0] - self.anchor[0], t[1] - self.anchor[1]
                 t = (t[0], self.anchor[1]) if abs(dx) >= abs(dy) else (self.anchor[0], t[1])
             self.preview = Transform.translate(t[0] - self.anchor[0], t[1] - self.anchor[1])
-            self.say(f"Move dX {self.ctrl.units.fmt(t[0] - self.anchor[0])}  dY {self.ctrl.units.fmt(t[1] - self.anchor[1])}")
+            copy = self.copying or bool(ev.modifiers() & Qt.ControlModifier)
+            cv.setCursor(Qt.DragCopyCursor if copy else Qt.SizeAllCursor)
+            self.say(f"{'Copy' if copy else 'Move'} dX {self.ctrl.units.fmt(t[0] - self.anchor[0])}  "
+                     f"dY {self.ctrl.units.fmt(t[1] - self.anchor[1])}")
         elif self.mode == "rotate":
             c = self.bb.center
             a = math.atan2(w[1] - c[1], w[0] - c[0]) - math.atan2(self.start[1] - c[1], self.start[0] - c[0])
@@ -212,9 +224,18 @@ class SelectTool(CanvasTool):
 
     def release(self, ev, w: Pt) -> None:
         mode, T = self.mode, self.preview
+        copy = mode == "move" and (self.copying or bool(ev.modifiers() & Qt.ControlModifier))
+        unselect = self.unselect_on_click
         self.mode = None
         self.preview = None
+        self.copying = False
+        self.unselect_on_click = None
+        self.canvas.setCursor(self.cursor)
         if ev.button() != Qt.LeftButton:
+            return
+        if mode == "move" and T is None and unselect is not None:       # (only a Ctrl+click)
+            self.ctrl.select([unselect], "remove")
+            self.say(self.prompt)
             return
         if mode == "band":
             a, b = self.start, w
@@ -228,7 +249,9 @@ class SelectTool(CanvasTool):
             elif not (ev.modifiers() & (Qt.ShiftModifier | Qt.ControlModifier)):
                 self.ctrl.select([])
             return
-        if T is not None:
+        if T is not None and copy:
+            self.ctrl.transform_selection(T, 1, "Copy")      # (the copies are selected, the originals stay)
+        elif T is not None:
             label = {"move": "Move"}.get(mode, "Rotate" if mode == "rotate" else "Scale")
             objs = [o for o in self.ctrl.selected_objects() if self.ctrl.editable(o)]
             with self.ctrl.edit(label):
