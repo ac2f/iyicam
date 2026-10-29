@@ -190,6 +190,7 @@ middle button or Space+drag to pan, `Esc` back to selection, `F5` recalculate, `
 ```bash
 python -m iyicam posts                                    # list post-processors
 python -m iyicam import drawing.dxf -o job.icam --thickness 18
+python -m iyicam export job.icam -o parts.dxf --dxf-version 2000   # layers and their colours are kept
 python -m iyicam nest job.icam -o nested.icam --width 2800 --height 2100 --spacing 8
 python -m iyicam info nested.icam                         # sheets, times, warnings
 python -m iyicam gcode nested.icam --post ncstudio --sheet all -o out/job.nc

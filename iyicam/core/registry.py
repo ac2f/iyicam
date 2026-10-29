@@ -21,8 +21,9 @@ class Importer:
 class Exporter:
     extension: str
     label: str
-    func: Callable  # func(path, project, sheet, objects) -> None
+    func: Callable  # func(path, project, sheet, objects, **options) -> None
     source: str = "builtin"
+    params: list = field(default_factory=list)     # the options (Param) asked for before the file is written
 
 
 @dataclass

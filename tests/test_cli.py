@@ -124,3 +124,45 @@ def test_help_lists_the_commands_without_opening_a_window(capsys, monkeypatch):
     assert exit_.value.code == 0
     out = capsys.readouterr().out
     assert "nest" in out and "gcode" in out
+
+
+def test_export_dxf_with_layers_and_every_version(capsys, job, tmp_path):
+    from iyicam.core.document import Project
+    p = Project.load(job)
+    p.add_layer("Pocket", "#00aa00")
+    p.sheets[0].vectors[0].layer_id = p.layers[-1].id
+    p.save(job)
+    code, out, err = run(capsys, "export", str(job))
+    f = job.with_suffix(".dxf")
+    assert code == 0 and "3 vectors" in out and f.exists() and err == ""
+    doc = ezdxf.readfile(str(f))
+    assert doc.acad_release == "R2010" and "Pocket" in doc.layers and doc.layers.get("Pocket").rgb == (0, 170, 0)
+    for given, release in (("2018", "R2018"), ("R2013", "R2013"), ("2000", "R2000"), ("12", "R12"), ("r2004", "R2004")):
+        out_file = tmp_path / f"v{given}.dxf"
+        assert run(capsys, "export", str(job), "-o", str(out_file), "--dxf-version", given)[0] == 0
+        assert ezdxf.readfile(str(out_file)).acad_release == release
+    code, _, _ = run(capsys, "export", str(job), "-o", str(tmp_path / "s.svg"))
+    assert code == 0 and (tmp_path / "s.svg").read_text(encoding="utf-8").startswith("<svg")
+
+
+def test_export_mistakes_are_messages(capsys, job, tmp_path):
+    for argv, text in ((("export", str(job), "--dxf-version", "1999"), "unknown DXF version"),
+                       (("export", str(job), "-o", str(tmp_path / "a.svg"), "--dxf-version", "2000"), "for .dxf"),
+                       (("export", str(job), "-o", str(tmp_path / "a.xyz")), "no exporter"),
+                       (("export", str(job), "--sheet", "9"), "--sheet"),
+                       (("export", str(tmp_path / "missing.icam")), "was not found")):
+        code, _, err = run(capsys, *argv)
+        assert code != 0 and text in err and "Traceback" not in err, argv
+
+
+def test_export_all_sheets_one_file_each(capsys, job, tmp_path):
+    from iyicam.core import shapes
+    from iyicam.core.document import Project, VectorObject
+    p = Project.load(job)
+    second = p.add_sheet("Second")
+    second.vectors.append(VectorObject([shapes.circle((50, 50), 20)], p.layers[0].id, "c"))
+    p.save(job)
+    code, out, _ = run(capsys, "export", str(job), "--sheet", "all", "-o", str(tmp_path / "all.dxf"))
+    assert code == 0
+    counts = [len(list(ezdxf.readfile(str(tmp_path / f"all_{i}.dxf")).modelspace())) for i in (1, 2)]
+    assert counts == [4, 1]                                   # (the first vector holds two outlines)

@@ -21,8 +21,8 @@ from . import menus, theme
 from .canvas import Canvas
 from .console import Console
 from .controller import Controller
-from .dialogs import (CommandDialog, ExportDialog, ImportDialog, LeftoverDialog, MaterialDialog, NestingDialog,
-                      PluginsDialog, PostEditorDialog, PreferencesDialog, StockDialog, ToolDatabaseDialog,
+from .dialogs import (CommandDialog, ExportDialog, ExportOptionsDialog, ImportDialog, LeftoverDialog, MaterialDialog,
+                      NestingDialog, PluginsDialog, PostEditorDialog, PreferencesDialog, StockDialog, ToolDatabaseDialog,
                       ToolpathDialog, buttons)
 from ..nesting.parts import find_duplicates, squeeze_lines
 from .files import open_file, save_file
@@ -889,10 +889,11 @@ class MainWindow(QMainWindow):
         self.ctrl.add_vectors([obj], "Text on curve")
         return obj
 
-    def export_vectors(self) -> None:
+    def export_vectors(self, path: str | None = None, options: dict | None = None) -> None:
         reg = self.ctrl.registry
         filt = ";;".join(f"{e.label} (*.{e.extension})" for e in reg.exporters.values())
-        fn, chosen = save_file(self, self.ctrl.settings, "export", "Export vectors", self.ctrl.project.name, filt)
+        fn, chosen = (path, "") if path else save_file(self, self.ctrl.settings, "export", "Export vectors",
+                                                       self.ctrl.project.name, filt)
         if not fn:
             return
         ext = Path(fn).suffix.lower().lstrip(".")
@@ -902,8 +903,19 @@ class MainWindow(QMainWindow):
             if exp is None:
                 return
             fn += "." + exp.extension
+        if options is None:
+            options = {}
+            if exp.params:
+                dlg = ExportOptionsDialog(self.ctrl, exp, self)
+                if not dlg.exec():
+                    return
+                options = dlg.values()
         objs = self.ctrl.selected_objects() or None
-        exp.func(fn, self.ctrl.project, self.ctrl.sheet, objs)
+        try:
+            exp.func(fn, self.ctrl.project, self.ctrl.sheet, objs, **options)
+        except Exception as exc:  # noqa: BLE001  (a folder that cannot be written to, a plugin's exporter)
+            QMessageBox.warning(self, "Export", f"{Path(fn).name} could not be written:\n\n{type(exc).__name__}: {exc}")
+            return
         self.statusBar().showMessage(f"Exported {fn}", 5000)
 
     # -- editing ------------------------------------------------------------------------------------

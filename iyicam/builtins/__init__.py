@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from ..core import paths
+from ..core.params import Param
 from ..core.registry import REGISTRY, Registry
 from ..plugins.api import PluginAPI
 
@@ -27,7 +28,10 @@ def register(api: PluginAPI) -> None:
     api.add_importer(("dxf",), "AutoCAD DXF", dxf.import_dxf)
     api.add_importer(("svg",), "Scalable Vector Graphics", svg.import_svg)
     api.add_importer(("plt", "hpgl", "hpg"), "HPGL plotter file", hpgl.import_hpgl)
-    api.add_exporter("dxf", "AutoCAD DXF", dxf.export_dxf)
+    api.add_exporter("dxf", "AutoCAD DXF", dxf.export_dxf, [
+        Param("version", "AutoCAD version", "choice", dxf.DEFAULT_DXF_VERSION, choices=list(dxf.DXF_VERSIONS),
+              help="The release other programs are told the file is from. Try an older one (2000, or R12) when "
+                   "a program does not take the file or does not show its layers.")])
     api.add_exporter("svg", "Scalable Vector Graphics", svg.export_svg)
 
 

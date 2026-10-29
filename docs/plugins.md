@@ -47,7 +47,7 @@ The built-in features of iyiCAM are registered through this same API in
 | `api.add_command(id, label, run, menu=..., params=[...], min_selection=0, shortcut=None, tooltip="")` | add a command to the menus; `run(ctx, values)` |
 | `api.add_postprocessor(post)` | a `PostProcessor` instance, a definition `dict` or the path of a `.toml` file |
 | `api.add_importer(("ext",), label, func)` | `func(path, project, sheet, layer_id=None, **options) -> [VectorObject]` |
-| `api.add_exporter("ext", label, func)` | `func(path, project, sheet, objects_or_None)` |
+| `api.add_exporter("ext", label, func, params=None)` | `func(path, project, sheet, objects_or_None, **options)`; the `params` (a list of `Param`) are asked for in a dialog before the file is written (remembered), and passed on as the options |
 | `api.add_gcode_filter(func)` | `func(text, job, post) -> text`, runs on every generated file |
 | `api.on(hook, func)` | event hooks, see below |
 | `api.add_gui_extension(func)` | `func(main_window)` once the GUI is ready (add menus, docks, ...) |

@@ -5,6 +5,7 @@ import pytest
 from conftest import make_project
 
 from iyicam.core import shapes
+from iyicam.core.document import VectorObject
 from iyicam.core.geom import Arc, Bezier
 from iyicam.formats.dxf import export_dxf, import_dxf
 from iyicam.formats.svg import export_svg, import_svg
@@ -108,3 +109,116 @@ def test_hpgl_import(tmp_path):
     assert closed[1].area() == pytest.approx(100 * 100)
     opened = [c for o in objs for c in o.contours if not c.closed]
     assert len(opened) == 1 and opened[0].length() == pytest.approx(20)
+
+
+# -- DXF export: layers, their colours, AutoCAD versions --------------------------------------------------------
+ALL_VERSIONS = ["R12", "R2000", "R2004", "R2007", "R2010", "R2013", "R2018"]
+
+
+def _layered(names_colors):
+    """A project with one vector on a layer for each ``(name, colour)`` and the ids of the layers."""
+    p, s, _ = make_project([])
+    ids = []
+    for i, (name, color) in enumerate(names_colors):
+        layer = p.add_layer(name, color)
+        ids.append(layer.id)
+        s.vectors.append(VectorObject([shapes.rectangle(30 * i, 0, 20, 20)], layer.id, f"v{i}"))
+    return p, s, ids
+
+
+@pytest.mark.parametrize("version", ALL_VERSIONS)
+def test_dxf_export_every_version_keeps_layers_colours_and_shapes(tmp_path, version):
+    p, s, _ = _layered([("Cut", "#ff0000"), ("Engrave", "#0000ff"), ("Pocket", "#00aa00")])
+    s.vectors.append(VectorObject([shapes.rectangle(0, 50, 60, 30, corner_radius=6)], p.layer_by_name("Cut").id,
+                                  "round"))
+    f = tmp_path / f"v_{version}.dxf"
+    export_dxf(f, p, s, version=version)
+    doc = ezdxf.readfile(str(f))
+    assert doc.acad_release == version
+    names = {layer.dxf.name.lower(): layer for layer in doc.layers}
+    assert {"cut", "engrave", "pocket"} <= set(names)
+    assert names["cut"].color == 1 and names["engrave"].color == 5 and names["pocket"].color in range(2, 256)
+    if version not in ("R12", "R2000"):
+        assert names["cut"].rgb == (255, 0, 0) and names["engrave"].rgb == (0, 0, 255)
+    on = {e.dxf.layer.lower() for e in doc.modelspace()}
+    assert on == {"cut", "engrave", "pocket"}
+    # and back: the shapes, the layers and the arcs of the rounded corners
+    p2, s2, _ = make_project([])
+    created = import_dxf(f, p2, s2)
+    assert len(created) == 4
+    assert {p2.layer(o.layer_id).name.lower() for o in created} == {"cut", "engrave", "pocket"}
+    assert sum(isinstance(sg, Arc) for o in created for c in o.contours for sg in c.segs) == 4
+
+
+def test_dxf_export_layer_names_that_dxf_does_not_allow(tmp_path):
+    names = ['a/b', 'x:y', 'what?', '<in>', 'q"uote', 'a|b', '', '  ', 'Kes ğşı İç']
+    p, s, _ = _layered([(n, "#123456") for n in names])
+    for version in ALL_VERSIONS:
+        f = tmp_path / f"n_{version}.dxf"
+        export_dxf(f, p, s, version=version)                  # (it used to stop with DXFValueError)
+        got = {layer.dxf.name for layer in ezdxf.readfile(str(f)).layers}
+        assert len(got) >= len(names)                          # every layer has a name of its own
+        assert not any(set('<>/\\":;?*|=') & set(n) for n in got)
+        p2, s2, _ = make_project([])
+        assert len(import_dxf(f, p2, s2)) == len(names)
+
+
+def test_dxf_export_layer_names_never_merge(tmp_path):
+    """"Cut" and "cut" are one layer in AutoCAD, "a/b" and "a:b" would both become "a_b": all stay apart."""
+    from iyicam.formats.dxf import layer_names
+    p, s, ids = _layered([("Cut", "#ff0000"), ("cut", "#00ff00"), ("a/b", "#0000ff"), ("a:b", "#ffff00"),
+                          ("x" * 40, "#000000"), ("x" * 45, "#111111")])
+    for version in ALL_VERSIONS:
+        names = layer_names(p, ids, version)
+        assert len({n.lower() for n in names.values()}) == len(ids)
+        if version == "R12":
+            assert all(len(n) <= 31 and n == n.upper() and n.isascii() for n in names.values())
+        if version in ("R2000", "R2004"):
+            assert all(n.isascii() for n in names.values())
+
+
+def test_dxf_export_keeps_turkish_letters_where_the_version_can_hold_them(tmp_path):
+    p, s, _ = _layered([("Kesim ğüşiöçı", "#ff0000")])
+    f = tmp_path / "t.dxf"
+    export_dxf(f, p, s, version="R2018")
+    assert any(layer.dxf.name == "Kesim ğüşiöçı" for layer in ezdxf.readfile(str(f)).layers)
+    export_dxf(f, p, s, version="R2000")                       # (these cannot: plain letters, still one layer)
+    assert any(layer.dxf.name == "Kesim gusioci" for layer in ezdxf.readfile(str(f)).layers)
+
+
+def test_dxf_export_selected_objects_only_and_empty(tmp_path):
+    p, s, ids = _layered([("A", "#ff0000"), ("B", "#00ff00")])
+    f = tmp_path / "sel.dxf"
+    export_dxf(f, p, s, [s.vectors[1]])
+    doc = ezdxf.readfile(str(f))
+    assert {e.dxf.layer for e in doc.modelspace()} == {"B"}
+    assert "A" not in doc.layers
+    export_dxf(f, p, s, [])                                     # nothing selected is a valid, empty file
+    assert len(list(ezdxf.readfile(str(f)).modelspace())) == 0
+
+
+def test_dxf_export_unknown_version_and_bad_colours(tmp_path):
+    p, s, _ = _layered([("A", "not a colour"), ("B", "#12")])
+    with pytest.raises(ValueError, match="R2010"):
+        export_dxf(tmp_path / "x.dxf", p, s, version="R9999")
+    export_dxf(tmp_path / "ok.dxf", p, s)                       # (a colour that cannot be read is left out)
+    assert len(list(ezdxf.readfile(str(tmp_path / "ok.dxf")).modelspace())) == 2
+
+
+def test_dxf_export_default_units_are_millimetres(tmp_path):
+    p, s, _ = _layered([("A", "#ff0000")])
+    f = tmp_path / "u.dxf"
+    export_dxf(f, p, s)
+    doc = ezdxf.readfile(str(f))
+    assert doc.header["$INSUNITS"] == 4 and doc.header["$MEASUREMENT"] == 1
+
+
+def test_svg_export_is_valid_xml_whatever_the_layer_is_called(tmp_path):
+    import xml.dom.minidom
+    p, s, _ = _layered([('Kes "iç" <1> & \'2\'', "#ff0000")])
+    f = tmp_path / "q.svg"
+    export_svg(f, p, s)
+    xml.dom.minidom.parse(str(f))
+    p2, s2, _ = make_project([])
+    assert len(import_svg(f, p2, s2)) == 1
+    assert p2.layer_by_name('Kes "iç" <1> & \'2\'') is not None       # (and the name comes back as it was)

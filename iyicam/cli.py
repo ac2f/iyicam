@@ -4,6 +4,7 @@
     python -m iyicam info job.icam
     python -m iyicam gcode job.icam --post mach3 --sheet all -o out/job.tap
     python -m iyicam import drawing.dxf -o job.icam --thickness 18
+    python -m iyicam export job.icam -o parts.dxf --dxf-version 2000
     python -m iyicam nest job.icam --width 2800 --height 2100 --spacing 8 -o nested.icam
     python -m iyicam nest job.icam --leftover 900x600:2 --stock leftovers.json -o nested.icam
     python -m iyicam nest job.icam --angles 0,22.5,90 --rotate-layer Grain=none -o nested.icam
@@ -24,7 +25,7 @@ from .core.registry import REGISTRY
 from .formats.report import ImportReport, run_importer
 from .plugins.manager import PluginManager
 
-COMMANDS = ("posts", "info", "gcode", "import", "nest", "plugins", "selftest")
+COMMANDS = ("posts", "info", "gcode", "import", "export", "nest", "plugins", "selftest")
 
 
 def _setup(plugins: bool = True) -> None:
@@ -122,6 +123,38 @@ def cmd_import(a) -> int:
     return 0
 
 
+def cmd_export(a) -> int:
+    from .formats.dxf import DXF_VERSIONS
+    p = Project.load(a.project)
+    out = Path(a.output) if a.output else Path(a.project).with_suffix("." + a.format)
+    exp = REGISTRY.exporters.get(out.suffix.lower().lstrip("."))
+    if exp is None:
+        print(f"error: no exporter for '{out.suffix}' (known: {', '.join(sorted(REGISTRY.exporters))})",
+              file=sys.stderr)
+        return 2
+    if a.sheet != "all" and not (a.sheet.isdigit() and 1 <= int(a.sheet) <= len(p.sheets)):
+        print(f"error: --sheet must be 'all' or a number from 1 to {len(p.sheets)}", file=sys.stderr)
+        return 2
+    options = {}
+    if a.dxf_version:
+        if exp.extension != "dxf":
+            print("error: --dxf-version is for .dxf files", file=sys.stderr)
+            return 2
+        v = a.dxf_version.upper()
+        v = v if v.startswith("R") else "R" + v
+        if v not in dict(DXF_VERSIONS):
+            print(f"error: unknown DXF version '{a.dxf_version}' (use {', '.join(k for k, _ in DXF_VERSIONS)})",
+                  file=sys.stderr)
+            return 2
+        options["version"] = v
+    sheets = p.sheets if a.sheet == "all" else [p.sheets[int(a.sheet) - 1]]
+    for i, s in enumerate(sheets, 1):
+        path = out if len(sheets) == 1 else out.with_name(f"{out.stem}_{i}{out.suffix}")
+        exp.func(str(path), p, s, None, **options)
+        print(f"{len(s.vectors)} vectors -> {path}")
+    return 0
+
+
 def cmd_nest(a) -> int:
     from .core.stock import StockItem, load_stock
     from .nesting.nest import NestSettings
@@ -201,6 +234,14 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("file")
     s.add_argument("-o", "--output", required=True)
     s.add_argument("--thickness", type=float, default=18.0)
+    s = sub.add_parser("export", help="write the vectors of a project as DXF (layers and their colours kept) or SVG")
+    s.add_argument("project")
+    s.add_argument("-o", "--output", help="the file (its extension decides the format; default: next to the project)")
+    s.add_argument("--format", default="dxf", choices=["dxf", "svg"], help="format when -o is not given")
+    s.add_argument("--sheet", default="1", help="sheet number or 'all'")
+    s.add_argument("--dxf-version", metavar="VERSION",
+                   help="AutoCAD release of the DXF: 2018, 2013, 2010 (default), 2007, 2004, 2000 or 12; "
+                        "an older one when a program does not take the file or its layers")
     s = sub.add_parser("nest", help="nest every vector of a project")
     s.add_argument("project")
     s.add_argument("-o", "--output", required=True)
@@ -242,7 +283,7 @@ def main(argv: list[str] | None = None) -> int:
     _setup(not a.no_plugins)
     try:
         return {"posts": cmd_posts, "plugins": cmd_plugins, "info": cmd_info, "gcode": cmd_gcode,
-                "import": cmd_import, "nest": cmd_nest, "selftest": cmd_selftest}[a.cmd](a)
+                "import": cmd_import, "export": cmd_export, "nest": cmd_nest, "selftest": cmd_selftest}[a.cmd](a)
     except FileNotFoundError as exc:
         print(f"error: {exc.filename or exc} was not found", file=sys.stderr)
     except (OSError, ValueError, KeyError, TypeError, IndexError) as exc:   # a bad file or a bad number

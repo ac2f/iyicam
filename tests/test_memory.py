@@ -316,6 +316,45 @@ def test_import_options_and_the_last_folder_are_remembered(sess, tmp_path):
     assert Settings.load().last_dir("import") == str(d2)
 
 
+def test_dxf_export_asks_for_the_autocad_version_and_remembers_it(sess, tmp_path):
+    import ezdxf
+
+    from iyicam.core import shapes
+    from iyicam.core.document import VectorObject
+    win, robot = sess.win, sess.robot
+    layer = sess.ctrl.project.add_layer("Cut/Out", "#ff0000")
+    sess.ctrl.add_vectors([VectorObject([shapes.rectangle(0, 0, 40, 30)], layer.id, "r")], "r")
+    robot.hook = lambda dlg: set_form(dlg, version="R2000") if dlg.windowTitle().startswith("Export") else None
+    robot.files.append(str(tmp_path / "a.dxf"))
+    win.export_vectors()
+    assert robot.problems() == []
+    doc = ezdxf.readfile(str(tmp_path / "a.dxf"))
+    assert doc.acad_release == "R2000"
+    assert [layer.dxf.name for layer in doc.layers if layer.dxf.name != "0"][-1] == "Cut_Out"
+    assert any(t.startswith("Export AutoCAD DXF") for t in robot.dialogs)
+    win = sess.restart()
+    robot = sess.robot
+    seen = {}
+    robot.hook = lambda dlg: seen.update(dlg.form.values()) if dlg.windowTitle().startswith("Export") else None
+    robot.files.append(str(tmp_path / "b.dxf"))
+    win.export_vectors()
+    assert seen["version"] == "R2000"                         # what it was set to last time
+    robot.files.append(str(tmp_path / "c.dxf"))
+    robot.refuse = True                                       # a dialog that is cancelled writes nothing
+    win.export_vectors()
+    assert not (tmp_path / "c.dxf").exists()
+
+
+def test_export_that_cannot_be_written_says_so_instead_of_crashing(sess, tmp_path):
+    win, robot = sess.win, sess.robot
+    win.export_vectors(str(tmp_path / "no" / "such" / "folder" / "a.dxf"), {"version": "R2010"})
+    assert robot.errors == []
+    assert any(kind == "warning" and "could not be written" in text for kind, text in robot.messages)
+    robot.messages.clear()
+    win.export_vectors(str(tmp_path / "a.svg"))              # (svg has no options: no dialog)
+    assert (tmp_path / "a.svg").exists() and robot.problems() == [] and robot.dialogs == []
+
+
 def test_every_kind_of_file_has_its_own_last_folder(sess, tmp_path):
     from iyicam.gui.files import open_file, save_file
     win, robot, s = sess.win, sess.robot, sess.ctrl.settings

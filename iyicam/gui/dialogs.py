@@ -1788,6 +1788,25 @@ class ImportDialog(QDialog):
         return v
 
 
+class ExportOptionsDialog(QDialog):
+    """The options of a file format (``Exporter.params``), remembered for the next export."""
+
+    def __init__(self, ctrl, exporter, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"Export {exporter.label}")
+        self.ctrl, self.params = ctrl, exporter.params
+        self.key = f"export:{exporter.extension}"
+        lay = QVBoxLayout(self)
+        self.form = ParamForm(self.params, ctrl.settings.recall(self.key, self.params), ctrl.units)
+        lay.addWidget(self.form)
+        lay.addWidget(buttons(self, "Export"))
+
+    def values(self) -> dict:
+        v = self.form.values()
+        self.ctrl.settings.remember(self.key, v, self.params)
+        return v
+
+
 class PreferencesDialog(QDialog):
     def __init__(self, ctrl, parent=None):
         super().__init__(parent)

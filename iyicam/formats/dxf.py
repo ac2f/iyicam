@@ -347,20 +347,105 @@ def _contour_points(c: Contour, tol: float = 0.01) -> list[tuple[float, float, f
     return pts
 
 
+#: The AutoCAD releases a DXF can be written for, newest first (what other programs ask for as "version").
+DXF_VERSIONS = [("R2018", "AutoCAD 2018 and newer"), ("R2013", "AutoCAD 2013"), ("R2010", "AutoCAD 2010"),
+                ("R2007", "AutoCAD 2007"), ("R2004", "AutoCAD 2004"), ("R2000", "AutoCAD 2000"),
+                ("R12", "AutoCAD R12 (oldest, plain ASCII)")]
+DEFAULT_DXF_VERSION = "R2010"
+_BAD_LAYER_CHARS = set('<>/\\":;?*|=`\'')
+
+
+def _ascii(text: str) -> str:
+    """``text`` with letters like ğ, ş and ı written as g, s and i (old DXF releases do not hold them)."""
+    import unicodedata
+    text = text.replace("ı", "i").replace("İ", "I").replace("ß", "ss")
+    return "".join(ch for ch in unicodedata.normalize("NFKD", text) if ord(ch) < 128)
+
+
+def layer_names(project: Project, layer_ids, version: str = DEFAULT_DXF_VERSION) -> dict[str, str]:
+    """``{layer id: name in the DXF}``. A DXF layer name cannot hold ``/ : < > ? * | = " ;`` (AutoCAD and the
+    programs that read DXF refuse the file), is not told apart by upper / lower case and is at most 31 letters of
+    the plain alphabet in R12. Different layers always get different names."""
+    old = version in ("R12", "R2000", "R2004")
+    taken: dict[str, str] = {}                  # lower case name -> layer id
+    out: dict[str, str] = {}
+    for lid in layer_ids:
+        layer = project.layer(lid)
+        name = "".join("_" if ch in _BAD_LAYER_CHARS or ord(ch) < 32 else ch for ch in (layer.name if layer else "0"))
+        if old:
+            name = _ascii(name)
+        name = name.strip() or "0"
+        if version == "R12":
+            name = name.upper()
+        limit = 31 if version == "R12" else 255
+        base, n = name[:limit], 1
+        name = base
+        while taken.get(name.lower(), lid) != lid:
+            n += 1
+            tail = f" {n}"
+            name = base[:limit - len(tail)] + tail
+        taken[name.lower()] = lid
+        out[lid] = name
+    return out
+
+
+def _nearest_aci(rgb: tuple[int, int, int]) -> int:
+    """The AutoCAD colour number (1..255) that looks most like ``rgb``."""
+    best, best_d = 7, 1 << 30
+    for i in range(1, 256):
+        r, g, b = dxf_colors.aci2rgb(i)
+        d = (r - rgb[0]) ** 2 + (g - rgb[1]) ** 2 + (b - rgb[2]) ** 2
+        if d < best_d:
+            best, best_d = i, d
+    return best
+
+
+def _hex_rgb(color: str) -> tuple[int, int, int] | None:
+    try:
+        c = color.lstrip("#")
+        return int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16)
+    except (ValueError, AttributeError, IndexError):
+        return None
+
+
 def export_dxf(path: str | Path, project: Project, sheet: Sheet,
-               objects: list[VectorObject] | None = None) -> None:
-    doc = ezdxf.new("R2010", setup=True)
-    doc.header["$INSUNITS"] = 4
+               objects: list[VectorObject] | None = None, version: str = DEFAULT_DXF_VERSION) -> None:
+    """Write the vectors of ``sheet`` (or ``objects``) as a DXF, in millimetres, one DXF layer per layer.
+
+    ``version`` is the AutoCAD release (see :data:`DXF_VERSIONS`). The colour of every layer is written, so the
+    layers keep their colours in the program that opens the file (the vectors themselves are "by layer")."""
+    if version not in dict(DXF_VERSIONS):
+        raise ValueError(f"unknown DXF version {version!r}; use one of: {', '.join(v for v, _ in DXF_VERSIONS)}")
+    objs = list(objects if objects is not None else sheet.vectors)
+    doc = ezdxf.new(version, setup=True)
+    if version != "R12":                          # (R12 has no drawing units)
+        doc.header["$INSUNITS"] = 4
+        doc.header["$MEASUREMENT"] = 1
     msp = doc.modelspace()
-    for obj in objects if objects is not None else sheet.vectors:
-        layer = project.layer(obj.layer_id)
-        lname = layer.name if layer else "0"
-        if lname not in doc.layers:
-            doc.layers.add(lname)
+    order = {layer.id: i for i, layer in enumerate(project.layers)}
+    used = sorted({o.layer_id for o in objs}, key=lambda lid: (order.get(lid, len(order)), lid))
+    names = layer_names(project, used, version)
+    for lid in used:
+        name = names[lid]
+        if name in doc.layers:                    # "0" exists from the start
+            continue
+        entry = doc.layers.add(name)
+        layer = project.layer(lid)
+        rgb = _hex_rgb(layer.color) if layer else None
+        if rgb is not None:
+            entry.color = _nearest_aci(rgb)
+            if version != "R12" and version != "R2000":   # (a true colour needs R2004)
+                entry.rgb = rgb
+    for obj in objs:
+        lname = names[obj.layer_id]
         for c in obj.contours:
             if not c.segs:
                 continue
             pts = _contour_points(c)
-            msp.add_lwpolyline([(x, y, 0, 0, b) for x, y, b in pts], format="xyseb",
-                               close=c.closed, dxfattribs={"layer": lname})
+            if version == "R12":                  # (no LWPOLYLINE: the old POLYLINE, a vertex after the other)
+                msp.add_polyline2d([(x, y, b) for x, y, b in pts], format="xyb", close=c.closed,
+                                   dxfattribs={"layer": lname})
+            else:
+                msp.add_lwpolyline([(x, y, 0, 0, b) for x, y, b in pts], format="xyseb",
+                                   close=c.closed, dxfattribs={"layer": lname})
     doc.saveas(str(path))

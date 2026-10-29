@@ -176,7 +176,7 @@ def export_svg(path: str | Path, project: Project, sheet: Sheet,
         mine = [o for o in objs if o.layer_id == layer.id]
         if not mine:
             continue
-        parts.append(f'<g inkscape:groupmode="layer" inkscape:label="{escape(layer.name)}">')
+        parts.append(f'<g inkscape:groupmode="layer" inkscape:label="{escape(layer.name, {chr(34): "&quot;"})}">')
         for o in mine:
             d = " ".join(contour_path_data(c, H) for c in o.contours)
             parts.append(f'<path d="{d}" fill="none" stroke="{layer.color}" stroke-width="0.2"/>')

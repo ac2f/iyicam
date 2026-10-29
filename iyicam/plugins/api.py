@@ -102,9 +102,11 @@ class PluginAPI:
         self.registry.importers[key] = Importer(exts, label, func, self.source)
         self._track("importers", key)
 
-    def add_exporter(self, extension: str, label: str, func: Callable) -> None:
+    def add_exporter(self, extension: str, label: str, func: Callable, params: list | None = None) -> None:
+        """``func(path, project, sheet, objects, **options)``; ``params`` (a list of :class:`Param`) are the
+        options the program asks for before it writes the file and passes on as keyword arguments."""
         ext = extension.lower().lstrip(".")
-        self.registry.exporters[ext] = Exporter(ext, label, func, self.source)
+        self.registry.exporters[ext] = Exporter(ext, label, func, self.source, list(params or []))
         self._track("exporters", ext)
 
     # -- hooks ------------------------------------------------------------------------------
