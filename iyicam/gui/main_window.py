@@ -113,6 +113,7 @@ class MainWindow(QMainWindow):
         canvas.tool_changed.connect(lambda name, cv=canvas: cv is self.canvas and self._tool_changed(name))
         canvas.prompt.connect(lambda text, cv=canvas: cv is self.canvas and self.prompt.setText(text))
         canvas.cursor_moved.connect(lambda x, y, cv=canvas: cv is self.canvas and self._coords(x, y))
+        canvas.snap_info.connect(lambda text, cv=canvas: cv is self.canvas and self.snap_label.setText(text))
         i = self.tabs.addTab(canvas, "")
         self._label(i)
         self.tabs.setCurrentIndex(i)
@@ -406,12 +407,57 @@ class MainWindow(QMainWindow):
                 tb.addSeparator()
         self.tool_actions["select"].setChecked(True)
 
+    # (setting, menu text, key, what it does)
+    SNAP_OPTIONS = (
+        ("snap_grid", "Snap to &Grid", "F7", "Snap to the grid (F7): coordinates are exactly on it"),
+        ("snap_objects", "Snap to &Vectors", "F8", "Snap to nodes, middles, centres, crossings and the sheet (F8)"),
+        ("snap_align", "Snap to &Alignments", "Shift+F8",
+         "Snap level with a node, same X or same Y, with a dotted line (Shift+F8)"),
+        ("snap_edges", "Snap to &Edges", "Shift+F7", "Snap to any point on a vector, not only to its special points "
+                                                    "(Shift+F7)"),
+    )
+    SNAP_BUTTONS = {"snap_grid": "Grid", "snap_objects": "Vectors", "snap_align": "Level", "snap_edges": "Edges"}
+
     def _build_status(self) -> None:
         self.coords = QLabel()
         self.coords.setMinimumWidth(220)
         self.prompt = QLabel()
+        self.snap_label = QLabel()
+        self.snap_label.setMinimumWidth(190)
         self.statusBar().addWidget(self.prompt, 1)
+        self.statusBar().addPermanentWidget(self.snap_label)
+        self.snap_buttons = {}
+        s = self.ctrl.settings
+        for key, _label, _shortcut, tip in self.SNAP_OPTIONS:
+            b = QToolButton()
+            b.setText(self.SNAP_BUTTONS[key])
+            b.setCheckable(True)
+            b.setChecked(bool(getattr(s, key)))
+            b.setAutoRaise(True)
+            b.setToolTip(tip + f". Reach: {s.snap_radius:g} pixels (Edit > Preferences); Alt while dragging: no snapping")
+            b.toggled.connect(lambda v, k=key: self.set_snap(k, v))
+            self.statusBar().addPermanentWidget(b)
+            self.snap_buttons[key] = b
         self.statusBar().addPermanentWidget(self.coords)
+
+    def set_snap(self, key: str, value: bool) -> None:
+        """One of the snap options (the View menu, the buttons of the status bar and the preferences keep to each
+        other)."""
+        self._toggle(key, bool(value))
+        self.sync_snap()
+
+    def sync_snap(self) -> None:
+        s = self.ctrl.settings
+        for key, a in getattr(self, "snap_actions", {}).items():
+            if a.isChecked() != bool(getattr(s, key)):
+                a.setChecked(bool(getattr(s, key)))
+        for key, b in getattr(self, "snap_buttons", {}).items():
+            if b.isChecked() != bool(getattr(s, key)):
+                b.blockSignals(True)
+                b.setChecked(bool(getattr(s, key)))
+                b.blockSignals(False)
+            b.setToolTip(b.toolTip().split(". Reach:")[0] + f". Reach: {s.snap_radius:g} pixels (Edit > Preferences); "
+                         "Alt while dragging: no snapping")
 
     def _coords(self, x: float, y: float) -> None:
         u = self.ctrl.units
@@ -493,8 +539,10 @@ class MainWindow(QMainWindow):
         m.addSeparator()
         self._act(m, "Clear &Guides", lambda: self.canvas.clear_guides())
         m.addSeparator()
-        self._act(m, "Snap to &Grid", lambda v: self._toggle("snap_grid", v), "F7", True, s.snap_grid)
-        self._act(m, "Snap to &Vectors", lambda v: self._toggle("snap_objects", v), "F8", True, s.snap_objects)
+        self.snap_actions = {}
+        for key, label, shortcut, _tip in self.SNAP_OPTIONS:
+            self.snap_actions[key] = self._act(m, label, lambda v, k=key: self.set_snap(k, v), shortcut, True,
+                                               getattr(s, key))
         m.addSeparator()
         for d in (self.project_dock, self.props_dock, self.transform_dock, self.toolpaths_dock, self.cutorder_dock,
                   self.console_dock):
@@ -1391,7 +1439,8 @@ class MainWindow(QMainWindow):
         extra = [("F", "Zoom extents"), ("Shift+F", "Zoom selection"), ("Mouse wheel", "Zoom at cursor"),
                  ("Middle drag / Space+drag", "Pan"), ("Esc", "Back to the select tool"), ("Del", "Delete"),
                  ("Arrows", "Nudge (Shift x10, Ctrl x0.1)"), ("F5", "Recalculate toolpaths"), ("F6", "Simulate"),
-                 ("F7 / F8", "Snap to grid / vectors"), ("Ctrl+D", "Duplicate"), ("Ctrl+J", "Join vectors"),
+                 ("F7 / F8", "Snap to grid / vectors"), ("Shift+F8 / Shift+F7", "Snap to alignments / edges"),
+                 ("Alt (while dragging)", "No snapping"), ("Ctrl+D", "Duplicate"), ("Ctrl+J", "Join vectors"),
                  ("Ctrl+N / Ctrl+O", "New project / open project (each in a tab)"),
                  ("Ctrl+W", "Close tab"), ("Ctrl+Shift+T", "Reopen closed tab"),
                  ("Ctrl+PgUp / Ctrl+PgDown", "Previous / next tab"), ("Middle-click a tab", "Close it"),

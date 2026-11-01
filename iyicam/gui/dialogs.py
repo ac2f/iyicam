@@ -1912,7 +1912,12 @@ class PreferencesDialog(QDialog):
                   choices=[("system", "Follow the system"), ("light", "Light"), ("dark", "Dark")]),
             Param("grid", "Grid spacing (mm)", "float", s.grid, min=0.0),
             Param("snap_grid", "Snap to grid", "bool", s.snap_grid),
-            Param("snap_objects", "Snap to vectors", "bool", s.snap_objects),
+            Param("snap_objects", "Snap to vectors (nodes, middles, centres, crossings, sheet)", "bool",
+                  s.snap_objects),
+            Param("snap_align", "Snap level with a node (same X or Y)", "bool", s.snap_align),
+            Param("snap_edges", "Snap to any point on a vector", "bool", s.snap_edges),
+            Param("snap_radius", "Snap reach (pixels)", "float", s.snap_radius, min=2.0, max=60.0,
+                  help="How near the pointer has to be for something to catch it; the same at every zoom"),
             Param("auto_recalculate", "Recalculate toolpaths automatically", "bool", s.auto_recalculate),
             Param("show_directions", "Show direction arrows", "bool", s.show_directions),
             Param("sim_resolution", "Simulation resolution (mm, 0 = auto)", "float", s.sim_resolution, min=0.0),
@@ -1930,6 +1935,8 @@ class PreferencesDialog(QDialog):
                 setattr(s, k, val)
         self.ctrl.set_units(v["units"])
         window = self.parent()
+        if hasattr(window, "sync_snap"):
+            window.sync_snap()
         if hasattr(window, "set_theme"):
             window.set_theme(v["theme"])
         else:

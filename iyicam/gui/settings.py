@@ -16,6 +16,9 @@ class Settings:
     grid: float = 10.0
     snap_grid: bool = False
     snap_objects: bool = True
+    snap_align: bool = True           # level with a node (same X or same Y) when no point is near, with a dotted line
+    snap_edges: bool = False          # any point on a vector (not only nodes, middles, centres and crossings)
+    snap_radius: float = 10.0         # how near (screen pixels) the pointer has to be for something to catch it
     show_toolpaths: bool = True
     show_tool_width: bool = False
     show_directions: bool = False
@@ -126,6 +129,8 @@ class Settings:
             if fld.name == "units" and v not in ("mm", "inch"):
                 continue
             if fld.name == "theme" and v not in ("system", "light", "dark"):
+                continue
+            if fld.name == "snap_radius" and not 2.0 <= v <= 60.0:
                 continue
             out[fld.name] = v
         return cls(**out)

@@ -35,6 +35,14 @@ with Python plugins.
 **Design**
 - Vectors made of lines, arcs and cubic beziers; open or closed; compound vectors (text, groups)
 - Vector layers (colour, show/hide, lock, active layer) and multiple **sheets** per project
+- **Snapping** that is rigid and exact: when a selection is dragged, its *features* (the corners, the middles of the
+  sides and the centre of its box, a few vectors down to their nodes) click onto nodes, middles, centres and
+  quadrant points of arcs, crossings of vectors, the sheet, guides and the grid, to the coordinates themselves, not
+  where the mouse happens to be; the pointer of the drawing tools does the same, and clings level with a node
+  (same X or same Y, with a dotted line) when no point is near. The reach is in screen pixels (Preferences), what
+  caught the pointer lets go a little later, a marker and its name show what it is (also in the status bar), the
+  grid is rigid at every zoom, Shift keeps the axis, **Alt** switches snapping off while dragging; the status bar has
+  buttons for grid / vectors / level / edges (F7, F8, Shift+F8, Shift+F7)
 - **Transform panel** (next to *Selection*; Alt+F7 position, Alt+F8 rotate, Alt+F9 scale and mirror, Alt+F10 size,
   Alt+F11 slant): type the numbers, pick the reference point of the selection (corners, sides, centre) and press
   Apply. Turn by any angle about the reference point, the sheet corner or a point, quarter and half turns, flip,

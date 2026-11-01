@@ -10,7 +10,7 @@ from PySide6.QtWidgets import QWidget
 from ..core import clip
 from ..core.document import VectorObject
 from ..core.geom import Arc, BBox, Pt, dist
-from . import cutview, theme
+from . import cutview, snap as snapping, theme
 from .qtgeom import contours_path, toolpath_paths
 
 TP_COLORS = ["#e6550d", "#3182bd", "#31a354", "#756bb1", "#de2d26", "#636363", "#fd8d3c", "#6baed6"]
@@ -20,9 +20,9 @@ class Canvas(QWidget):
     cursor_moved = Signal(float, float)
     prompt = Signal(str)
     tool_changed = Signal(str)
+    snap_info = Signal(str)       # what the pointer has clung to, in words ("" when nothing)
 
     PICK_PX = 6.0
-    SNAP_PX = 9.0
 
     def __init__(self, ctrl, parent=None):
         super().__init__(parent)
@@ -38,7 +38,9 @@ class Canvas(QWidget):
         self._pan_from: QPointF | None = None
         self._space = False
         self.mouse_world: Pt = (0.0, 0.0)
-        self.snap_marker: tuple[Pt, str] | None = None
+        self.snap_marker: tuple[Pt, str] | None = None     # where the pointer (or what is dragged) has clung, and to what
+        self.snap_extra: snapping.Snap | None = None       # the rest of it: the feature that clings, dotted lines
+        self._snapper = snapping.Snapper(self)
         self.hover_id: str | None = None
         self.sim_image: QImage | None = None
         self.sim_rect: QRectF | None = None
@@ -108,6 +110,7 @@ class Canvas(QWidget):
     def _doc_changed(self) -> None:
         self._paths.clear()
         self._bboxes.clear()
+        self._snapper.invalidate()
         self.update()
 
     def _tp_changed(self) -> None:
@@ -117,11 +120,13 @@ class Canvas(QWidget):
     def _sheet_changed(self) -> None:
         self._paths.clear()
         self._bboxes.clear()
+        self._snapper.invalidate()
         self._tp_cache = None
         self.sim_image = None
         self.update()
 
     def invalidate(self, obj: VectorObject | None = None) -> None:
+        self._snapper.invalidate()
         if obj is None:
             self._paths.clear()
             self._bboxes.clear()
@@ -205,48 +210,39 @@ class Canvas(QWidget):
         return out
 
     def snap(self, p: Pt, exclude: set[str] | frozenset = frozenset(), raw: bool = False) -> Pt:
-        """Snap to nodes / midpoints / centres / grid; updates the snap marker."""
-        self.snap_marker = None
-        if raw:
-            return p
-        s = self.ctrl.settings
-        tol = self.px(self.SNAP_PX)
-        best, bd, kind = None, tol, ""
-        if s.snap_objects:
-            for o in self.visible_objects():
-                if o.id in exclude or not self.obj_bbox(o).inflated(tol).contains(p):
-                    continue
-                for c in o.contours:
-                    for seg in c.segs:
-                        for q, k in ((seg.a, "node"), (seg.b, "node")):
-                            d = dist(p, q)
-                            if d < bd:
-                                best, bd, kind = q, d, k
-                        m = seg.point_at(0.5)
-                        d = dist(p, m)
-                        if d < bd * 0.8:
-                            best, bd, kind = m, d, "mid"
-                        if isinstance(seg, Arc):
-                            cc = seg.center
-                            d = dist(p, cc)
-                            if d < bd:
-                                best, bd, kind = cc, d, "centre"
-            sh = self.ctrl.sheet
-            for q in BBox(0, 0, sh.width, sh.height).corners() + [(sh.width / 2, sh.height / 2)]:
-                d = dist(p, q)
-                if d < bd:
-                    best, bd, kind = q, d, "sheet"
-        if best is None:
-            best, kind = self._snap_guides(p, tol)
-        if best is not None:
-            self.snap_marker = (best, kind)
-            return best
-        if s.snap_grid and s.grid > 0:
-            g = s.grid
-            q = (round(p[0] / g) * g, round(p[1] / g) * g)
-            self.snap_marker = (q, "grid")
-            return q
-        return p
+        """The pointer at ``p`` clung to what is near (nodes, middles, centres, crossings, sheet, guides, alignments,
+        the grid; Alt: free). The marker shows what it clung to."""
+        res = self._snapper.point(p, exclude, raw)
+        self._show_snap(res)
+        return res.point
+
+    def move_sources(self, objs, grab: Pt):
+        """``(points, grab index)`` of a selection that is about to be dragged: the features that cling."""
+        return self._snapper.sources(objs, grab)
+
+    def snap_move(self, sources, grab: int, delta: Pt, exclude=frozenset(), axes=(True, True)) -> Pt:
+        """The move of a selection by ``delta``, clung to what is near: a feature of it exactly on a point of the
+        drawing, else level with one, else on the grid. ``axes`` says which of X and Y may change."""
+        res = self._snapper.move(sources, grab, delta, exclude, axes)
+        self._show_snap(res)
+        return res.delta
+
+    def snap_done(self) -> None:
+        """A press or a release: whatever held the pointer lets go, and the marker goes."""
+        self._snapper.release()
+        self._show_snap(snapping.Snap())
+
+    def _show_snap(self, res: snapping.Snap) -> None:
+        self.snap_marker = (res.target, res.kind) if res.caught and res.target is not None else None
+        self.snap_extra = res if self.snap_marker else None
+        text = ""
+        if self.snap_marker:
+            u = self.ctrl.units
+            (x, y), kind = self.snap_marker
+            text = f"{snapping.label(kind)}  ({u.fmt(x)}, {u.fmt(y)})"
+        if text != getattr(self, "_snap_text", ""):
+            self._snap_text = text
+            self.snap_info.emit(text)
 
     # -- guides ----------------------------------------------------------------------------------------
     RULER = 18
@@ -379,21 +375,61 @@ class Canvas(QWidget):
         if self.tool is not None:
             self.tool.paint(p)
         if self.snap_marker is not None:
-            (x, y), kind = self.snap_marker
-            q = self.world_to_screen(x, y)
-            p.setPen(QPen(QColor("#ff00aa"), 1.5))
-            p.setBrush(Qt.NoBrush)
-            if kind == "grid":
-                p.drawLine(q + QPointF(-5, 0), q + QPointF(5, 0))
-                p.drawLine(q + QPointF(0, -5), q + QPointF(0, 5))
-            elif kind == "centre":
-                p.drawEllipse(q, 5, 5)
-            elif kind == "mid":
-                p.drawPolygon([q + QPointF(0, -6), q + QPointF(6, 4), q + QPointF(-6, 4)])
-            else:
-                p.drawRect(QRectF(q.x() - 5, q.y() - 5, 10, 10))
+            self._paint_snap(p)
         self._paint_rulers(p)
         p.end()
+
+    def _paint_snap(self, p: QPainter) -> None:
+        """What the pointer has clung to: a marker of the kind of point, dotted lines to what it is level with, a ring
+        on the feature of a dragged selection that clings, and the name of the kind."""
+        (x, y), kind = self.snap_marker
+        extra = self.snap_extra
+        q = self.world_to_screen(x, y)
+        col = QColor("#ff00aa")
+        if extra is not None:
+            for a, b in extra.lines:
+                pen = QPen(col, 1.0, Qt.DotLine)
+                p.setPen(pen)
+                p.drawLine(self.world_to_screen(*a), self.world_to_screen(*b))
+            if extra.source is not None and extra.target is not None and extra.source != extra.target:
+                p.setPen(QPen(col, 1.2))
+                p.setBrush(Qt.NoBrush)
+                p.drawEllipse(self.world_to_screen(*extra.source), 4, 4)
+        p.setPen(QPen(col, 1.8))
+        p.setBrush(Qt.NoBrush)
+        if kind in ("grid", "align"):
+            p.drawLine(q + QPointF(-6, 0), q + QPointF(6, 0))
+            p.drawLine(q + QPointF(0, -6), q + QPointF(0, 6))
+        elif kind == "centre":
+            p.drawEllipse(q, 6, 6)
+            p.drawPoint(q)
+        elif kind == "quadrant":
+            p.drawPolygon([q + QPointF(0, -7), q + QPointF(7, 0), q + QPointF(0, 7), q + QPointF(-7, 0)])
+        elif kind == "mid":
+            p.drawPolygon([q + QPointF(0, -7), q + QPointF(7, 5), q + QPointF(-7, 5)])
+        elif kind == "intersection":
+            p.drawLine(q + QPointF(-6, -6), q + QPointF(6, 6))
+            p.drawLine(q + QPointF(-6, 6), q + QPointF(6, -6))
+        elif kind == "edge":
+            p.drawLine(q + QPointF(-6, 3), q + QPointF(6, 3))
+            p.drawLine(q + QPointF(-6, -3), q + QPointF(6, -3))
+        elif kind == "guide":
+            p.drawEllipse(q, 4, 4)
+        else:                                                  # node, sheet
+            p.drawRect(QRectF(q.x() - 6, q.y() - 6, 12, 12))
+        font = p.font()
+        font.setPixelSize(10)
+        p.setFont(font)
+        text = snapping.label(kind)
+        w = 6.2 * len(text) + 8
+        box = QRectF(q.x() + 10, q.y() + 8, w, 14)
+        p.setPen(QPen(col, 1))
+        bg = QColor(theme.get().panel)
+        bg.setAlpha(225)
+        p.setBrush(bg)
+        p.drawRoundedRect(box, 3, 3)
+        p.setPen(QColor(theme.get().text))
+        p.drawText(box, Qt.AlignCenter, text)
 
     def _paint_guides(self, p: QPainter) -> None:
         items = [(k, v, False) for k, v in self.guides()]
@@ -689,5 +725,5 @@ class Canvas(QWidget):
 
     def leaveEvent(self, ev) -> None:
         self.hover_id = None
-        self.snap_marker = None
+        self.snap_done()
         self.update()

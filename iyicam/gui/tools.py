@@ -91,6 +91,8 @@ class SelectTool(CanvasTool):
         self.anchor: Pt | None = None
         self.preview: Transform | None = None
         self.press_screen: QPointF | None = None
+        self.src = None                       # the features of the dragged selection that cling, and the one the grid takes
+        self.grab = 0
         self.copying = False                  # Ctrl was down when the drag began: it makes a copy
         self.unselect_on_click: str | None = None   # Ctrl+click on a selected vector takes it out when it is only a click
 
@@ -147,7 +149,9 @@ class SelectTool(CanvasTool):
             elif obj.id not in self.ctrl.selection:
                 self.ctrl.select([obj.id])
             self.mode = "move"
-            self.anchor = self.canvas.snap(w)
+            self.anchor = w                      # (where it was taken: the pointer moves it, what clings is a feature)
+            self.src, self.grab = self.canvas.move_sources(
+                [o for o in self.ctrl.selected_objects() if self.ctrl.editable(o)], w)
             return
         self.mode = "band"
 
@@ -171,22 +175,27 @@ class SelectTool(CanvasTool):
                 cv.setCursor(Qt.SizeAllCursor)
             else:
                 cv.setCursor(Qt.ArrowCursor)
-            cv.snap_marker = None
+            cv.snap_done()
             return
         self.cur = w
         moved = self.press_screen is not None and (ev.position() - self.press_screen).manhattanLength() > 3
         if not moved:
             return
         if self.mode == "move":
-            t = cv.snap(w, exclude=set(self.ctrl.selection))
+            dx, dy = w[0] - self.anchor[0], w[1] - self.anchor[1]
+            axes = (True, True)
             if ev.modifiers() & Qt.ShiftModifier:  # constrain to horizontal / vertical
-                dx, dy = t[0] - self.anchor[0], t[1] - self.anchor[1]
-                t = (t[0], self.anchor[1]) if abs(dx) >= abs(dy) else (self.anchor[0], t[1])
-            self.preview = Transform.translate(t[0] - self.anchor[0], t[1] - self.anchor[1])
+                axes = (True, False) if abs(dx) >= abs(dy) else (False, True)
+                dx, dy = (dx, 0.0) if axes[0] else (0.0, dy)
             copy = self.copying or bool(ev.modifiers() & Qt.ControlModifier)
+            # a feature of what is dragged (a corner, a middle, a node) clings to the drawing, exactly; a copy may
+            # cling to the vectors it is a copy of
+            dx, dy = cv.snap_move(self.src, self.grab, (dx, dy), frozenset() if copy else set(self.ctrl.selection),
+                                  axes)
+            self.preview = Transform.translate(dx, dy)
             cv.setCursor(Qt.DragCopyCursor if copy else Qt.SizeAllCursor)
-            self.say(f"{'Copy' if copy else 'Move'} dX {self.ctrl.units.fmt(t[0] - self.anchor[0])}  "
-                     f"dY {self.ctrl.units.fmt(t[1] - self.anchor[1])}")
+            self.say(f"{'Copy' if copy else 'Move'} dX {self.ctrl.units.fmt(dx)}  dY {self.ctrl.units.fmt(dy)}"
+                     "  (Alt: no snapping)")
         elif self.mode == "rotate":
             c = self.bb.center
             a = math.atan2(w[1] - c[1], w[0] - c[0]) - math.atan2(self.start[1] - c[1], self.start[0] - c[0])
@@ -198,7 +207,7 @@ class SelectTool(CanvasTool):
         elif self.mode and self.mode.startswith("scale:"):
             self.preview = self._scale_transform(self.mode[6:], cv.snap(w), ev.modifiers())
         elif self.mode == "band":
-            cv.snap_marker = None
+            cv.snap_done()
 
     def _scale_transform(self, h: str, w: Pt, mods) -> Transform:
         bb = self.bb
@@ -230,6 +239,7 @@ class SelectTool(CanvasTool):
         self.preview = None
         self.copying = False
         self.unselect_on_click = None
+        self.canvas.snap_done()
         self.canvas.setCursor(self.cursor)
         if ev.button() != Qt.LeftButton:
             return
@@ -741,8 +751,9 @@ class TwoPointTool(DrawTool):
 
     def move(self, ev, w: Pt) -> None:
         self.mods = ev.modifiers()
+        p = self.canvas.snap(w)               # (also before the first click: the marker shows where it would land)
         if self.a is not None:
-            self.b = self.canvas.snap(w)
+            self.b = p
             c = self.make(self.a, self.b, self.mods)
             if c is not None:
                 bb = c.bbox()
@@ -915,6 +926,9 @@ class TextTool(DrawTool):
     shape_name = "Text"
     prompt = "Text: click where the text baseline should start."
 
+    def move(self, ev, w):
+        self.canvas.snap(w)
+
     def press(self, ev, w):
         if ev.button() != Qt.LeftButton:
             return
@@ -942,8 +956,9 @@ class MeasureTool(CanvasTool):
             self.dragging = True
 
     def move(self, ev, w):
+        p = self.canvas.snap(w)               # (the marker shows where the first point would be)
         if self.dragging:
-            self.b = self.canvas.snap(w)
+            self.b = p
             u = self.ctrl.units
             dx, dy = self.b[0] - self.a[0], self.b[1] - self.a[1]
             self.say(f"Distance {u.fmt(math.hypot(dx, dy))}   dX {u.fmt(dx)}   dY {u.fmt(dy)}   "
