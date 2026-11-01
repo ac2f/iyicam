@@ -168,6 +168,16 @@ def _toolpath(p):
     p.drawRoundedRect(QRectF(7, 9, 10, 6), 1.5, 1.5)
 
 
+def _material(p):
+    """A slab seen from the side with the safe Z line and the tool above it."""
+    p.drawRect(QRectF(3.5, 14, 17, 6))
+    p.setPen(QPen(QColor(theme.get().accent), 1.6, Qt.DashLine, Qt.RoundCap, Qt.RoundJoin))
+    p.drawLine(QPointF(3.5, 6), QPointF(20.5, 6))
+    p.setPen(QPen(_ink(), 1.7, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+    p.drawLine(QPointF(12, 6), QPointF(12, 12))
+    p.drawPolyline(QPolygonF([QPointF(9.5, 9.5), QPointF(12, 12.5), QPointF(14.5, 9.5)]))
+
+
 def _cutorder(p):
     """Three cuts in a row with the route between them and the arrow of the direction."""
     for x in (3.5, 10.5, 17.5):
@@ -205,7 +215,7 @@ TOOL_ICONS = {"select": _select, "nodes": _nodes, "polyline": _polyline, "line":
               "circle": _circle, "ellipse": _ellipse, "polygon": _polygon, "star": _star, "arc": _arc,
               "text": _text, "measure": _measure, "trim": _trim, "start": _start, "zoom": _zoom,
               "new": _new, "open": _open, "save": _save, "undo": _undo, "redo": _redo, "fit": _fit, "nest": _nest,
-              "toolpath": _toolpath, "cutorder": _cutorder, "recalculate": _recalc, "simulate": _simulate, "gcode": _gcode}
+              "toolpath": _toolpath, "material": _material, "cutorder": _cutorder, "recalculate": _recalc, "simulate": _simulate, "gcode": _gcode}
 
 
 def icon(name: str) -> QIcon:

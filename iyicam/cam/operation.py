@@ -43,11 +43,15 @@ class OpContext:
 
     @property
     def safe_z(self) -> float:
-        return self.material.safe_z
+        """Height above the surface the tool travels at: the toolpath's own, else the project's."""
+        z = self.tdef.safe_z
+        return self.material.safe_z if z is None else z
 
     @property
     def clearance(self) -> float:
-        return self.material.clearance
+        """Height above the surface the tool rapids down to before it plunges."""
+        c = self.tdef.clearance
+        return self.material.clearance if c is None else c
 
     def warn(self, text: str) -> None:
         if text not in self.warnings:

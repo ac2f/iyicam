@@ -320,7 +320,8 @@ class PostProcessor:
             "program_number": job.program_number, "post_name": self.name,
             "material_thickness": self.fmt(job.project.sheet_thickness(job.sheet) * self._k),
             "sheet_width": self.fmt(job.sheet.width * self._k), "sheet_height": self.fmt(job.sheet.height * self._k),
-            "safe_z": self.fmt(self.tz(m.safe_z)),
+            # (the highest the toolpaths travel at: the end of the program must not go lower than they did)
+            "safe_z": self.fmt(self.tz(max([m.safe_z] + [tp.safe_z for tp in toolpaths]))),
             "home_x": self.fmt(self.tx(m.home[0])), "home_y": self.fmt(self.ty(m.home[1])),
             "home_z": self.fmt(self.tz(m.home[2])),
             "toolpath_count": len(toolpaths), "total_time": format_time(stats.time_s), "N": "",

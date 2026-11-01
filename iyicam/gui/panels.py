@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QColorDialog, QComboBox, QDoub
 from ..cam.moves import PathStats, format_time
 from ..core.geom import BBox, Transform
 from . import menus
+from .material_info import material_summary
 
 
 def swatch(color: str, size: int = 12) -> QIcon:
@@ -306,6 +307,17 @@ class ToolpathsPanel(DocPanel):
         self.status.setWordWrap(True)
         lay.addWidget(self.status)
         row = QHBoxLayout()
+        self.material = QLabel()
+        self.material.setWordWrap(True)
+        self.material.setToolTip("The material and the heights of the project: the tool travels at the safe Z and "
+                                 "rapids down to the clearance before it plunges")
+        row.addWidget(self.material, 1)
+        b = QPushButton("Material Setup...")
+        b.setToolTip("Thickness, Z zero, safe Z, rapid-down clearance, home position (Ctrl+Shift+M)")
+        b.clicked.connect(window.material_setup)
+        row.addWidget(b)
+        lay.addLayout(row)
+        row = QHBoxLayout()
         self.new_btn = QPushButton("New ▾")
         self.new_btn.setToolTip("Create a toolpath")
         self.new_btn.clicked.connect(self._new_menu)
@@ -329,6 +341,21 @@ class ToolpathsPanel(DocPanel):
         self._changing = False
         self._connect(ctrl)
         self.refresh()
+
+    def _connect(self, ctrl) -> None:
+        super()._connect(ctrl)
+        ctrl.changed.connect(self._update_material)
+
+    def bind(self, ctrl) -> None:
+        if ctrl is not self.ctrl:
+            try:
+                self.ctrl.changed.disconnect(self._update_material)
+            except (RuntimeError, TypeError):
+                pass
+        super().bind(ctrl)
+
+    def _update_material(self) -> None:
+        self.material.setText(material_summary(self.ctrl))
 
     def selected_ids(self) -> list[str]:
         return [it.data(0, Qt.UserRole) for it in self.tree.selectedItems()]
@@ -373,6 +400,7 @@ class ToolpathsPanel(DocPanel):
         if problems:
             txt += f"  —  {problems} with warnings (hover for details)"
         self.status.setText(txt)
+        self._update_material()
         self._updating = False
 
     def _item_changed(self, it, col) -> None:

@@ -54,6 +54,9 @@ def compute_toolpath(project: Project, tdef: ToolpathDef, sheet: Sheet,
         res.warnings.append(f"{cls.label} is not meant for a {tdef.tool.type.replace('_', ' ')} tool")
     ctx = OpContext(project, sheet, tdef, objects, tolerance, previous=list(previous or []),
                     force_smart=force_smart)
+    if ctx.clearance > ctx.safe_z + 1e-9:
+        res.warnings.append(f"The rapid-down clearance ({ctx.clearance:g} mm) is higher than the safe Z "
+                            f"({ctx.safe_z:g} mm): set them in Toolpaths > Material Setup")
     try:
         res.toolpaths = cls(tdef.params).compute(ctx)
         res.order, res.start_updates = ctx.order, dict(ctx.start_updates or {})

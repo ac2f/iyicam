@@ -96,6 +96,11 @@ with Python plugins.
 - **Fluting**: follow vectors with linear or S-curve depth ramps at both ends
 - **Rotary axis wrapping**: draw on the unrolled cylinder, get A-axis G-code with inverse time
   (G93) or corrected feed rates
+- **Heights**: the project's **safe Z** (the height the tool travels at between cuts), the rapid-down clearance,
+  Z zero, thickness and the home position are in **Toolpaths ▸ Material Setup** (Ctrl+Shift+M, also a button on
+  the tool bar) and shown at the foot of the Toolpaths panel and in the Save G-code window; every toolpath has a
+  **Heights** box at the top of its Settings tab to give it a safe Z and clearance of its own (clamps, say); the
+  end of the program never goes lower than the toolpaths traveled
 - **Cut Order panel** (Ctrl+Alt+O): the order, the cutting direction and the start points of every cut shown
   on the drawing (numbers from blue to red, the route between the cuts, arrows along the cuts: orange clockwise,
   green counter-clockwise, start points marked good / by hand / to check), with a **preview** (pink) of any change

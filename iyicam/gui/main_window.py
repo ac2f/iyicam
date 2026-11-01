@@ -375,6 +375,7 @@ class MainWindow(QMainWindow):
         tp = quick("toolpath", "New toolpath", lambda: None)
         self._toolpath_menu = QMenu(self)
         tp.setMenu(self._toolpath_menu)
+        quick("material", "Material and heights: thickness, Z zero, safe Z, home", self.material_setup, "Ctrl+Shift+M")
         quick("cutorder", "Cut order, directions and start points", self.cut_order, "Ctrl+Alt+O")
         quick("recalculate", "Recalculate toolpaths", self.recalculate, "F5")
         quick("simulate", "Simulate", self.simulate, "F6")
@@ -534,7 +535,7 @@ class MainWindow(QMainWindow):
         self.inner_first_action.setToolTip("Cut the holes and inner pieces of all parts first, then the outlines, "
                                            "each in the order of the cut order strategy")
         m.addSeparator()
-        self._act(m, "&Material Setup...", lambda: MaterialDialog(self.ctrl, self).exec(), "Ctrl+Shift+M")
+        self._act(m, "&Material Setup...", self.material_setup, "Ctrl+Shift+M")
         self._act(m, "&Tool Database...", lambda: ToolDatabaseDialog(self.ctrl, self).exec())
         m.addSeparator()
         self._act(m, "&Simulate", self.simulate, "F6")
@@ -1175,6 +1176,10 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             ("Inner pieces (göbek) are cut first" if on else "Cut part by part")
             + (f" on {n} toolpath(s)" if n else ""), 5000)
+
+    def material_setup(self) -> None:
+        """Thickness, Z zero, safe Z, rapid-down clearance and the home position of the project."""
+        MaterialDialog(self.ctrl, self).exec()
 
     def start_points(self, tid: str | None = None) -> None:
         self.cut_order(tid)

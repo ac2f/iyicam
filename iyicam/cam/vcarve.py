@@ -296,7 +296,8 @@ class VCarveOp(Operation):
             ctx.warn(f"Some flat areas are narrower than {tool.name}; ridges are left there")
         objs = [VectorObject([Contour.polyline(p, True) for p in flats], "")]
         tdef = ToolpathDef(ctx.tdef.name + " (flats)", "pocket", tool,
-                           {"start_depth": start, "cut_depth": start + flat, "strategy": "offset"})
+                           {"start_depth": start, "cut_depth": start + flat, "strategy": "offset"},
+                           safe_z=ctx.tdef.safe_z, clearance=ctx.tdef.clearance)
         sub = OpContext(ctx.project, ctx.sheet, tdef, objs, ctx.tolerance, ctx.warnings)
         op = PocketOp(tdef.params)
         res = op.compute(sub)

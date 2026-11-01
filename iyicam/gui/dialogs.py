@@ -12,7 +12,7 @@ from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices, QFont, QFontDatabase, QGuiApplication
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog,
                                QDialogButtonBox, QDoubleSpinBox, QFontComboBox, QFormLayout,
-                               QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QListWidget,
+                               QGroupBox, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QListWidget,
                                QListWidgetItem, QMessageBox, QPlainTextEdit, QProgressDialog, QPushButton,
                                QRadioButton, QScrollArea, QSpinBox, QSplitter, QTableWidget, QTableWidgetItem,
                                QTabWidget, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
@@ -27,6 +27,7 @@ from ..nesting.parts import (ROTATION_MODES, RULE_USES_VALUE, apply_nesting, par
                              run_nesting, squeeze_lines)
 from ..nesting.stock import leftover_of_sheet, stock_from_vectors, use_up
 from .files import open_file, save_file
+from .material_info import material_summary
 from .forms import ParamForm
 
 
@@ -201,7 +202,9 @@ class MaterialDialog(RemembersSize, QDialog):
                   group="Material"),
             Param("xy_origin", "XY origin", "choice", m.xy_origin, choices=list(origin_labels.items()),
                   group="Material"),
-            Param("safe_z", "Safe Z (above surface)", "length", m.safe_z, min=0.1, group="Heights"),
+            Param("safe_z", "Safe Z (above surface)", "length", m.safe_z, min=0.1, group="Heights",
+                  help="The height above the material surface the tool retracts to and travels at between cuts. "
+                       "A toolpath can have a safe Z of its own (on its Settings tab)."),
             Param("clearance", "Rapid-down clearance", "length", m.clearance, min=0.0, group="Heights",
                   help="The tool rapids down to this height above the material and then plunges"),
             Param("home_x", "Home X", "length", m.home[0], group="Home position"),
@@ -222,6 +225,10 @@ class MaterialDialog(RemembersSize, QDialog):
 
     def accept(self) -> None:
         v = self.form.values()
+        if v["clearance"] > v["safe_z"] + 1e-9:
+            QMessageBox.warning(self, "Material Setup", "The rapid-down clearance cannot be higher than the safe Z: "
+                                "the tool would rapid down from a height it never travels at.")
+            return
         with self.ctrl.edit("Material setup"):
             m = self.ctrl.project.material
             m.thickness, m.z_zero, m.xy_origin = v["thickness"], v["z_zero"], v["xy_origin"]
@@ -566,13 +573,79 @@ class ToolpathDialog(RemembersSize, QDialog):
         self.params = [p for p in params if not (p.name == "cut_depth" and self.op.id == "profile")]
         values = dict(self.tdef.params) if self.tdef else ctrl.settings.recall(self.memory_key + ":params", self.params)
         self.form = ParamForm(params, values, ctrl.units, ctrl.tools)
-        tabs.addTab(scroll(self.form), "Settings")
+        settings_tab = QWidget()
+        sl = QVBoxLayout(settings_tab)
+        sl.setContentsMargins(0, 0, 0, 0)
+        sl.addWidget(self._heights_box())
+        sl.addWidget(self.form, 1)
+        tabs.addTab(scroll(settings_tab), "Settings")
         tabs.addTab(tool_tab, "Tool")
         tabs.addTab(vec_tab, "Vectors")
         lay.addWidget(buttons(self, "Calculate"))
         self._update_tool_label()
         self.tool_editor.form.changed.connect(self._update_tool_label)
         self.keep_size(ctrl, f"toolpath:{op_id}", 460, 680)
+
+    def _heights_box(self) -> QGroupBox:
+        """Safe Z and the rapid-down clearance: the project's (set in Material Setup) or this toolpath's own."""
+        u = self.ctrl.units
+        m = self.ctrl.project.material
+        t = self.tdef
+        own = t is not None and (t.safe_z is not None or t.clearance is not None)
+        box = QGroupBox("Heights above the material surface")
+        form = QFormLayout(box)
+        self.heights_note = QLabel()
+        self.heights_note.setWordWrap(True)
+        row = QHBoxLayout()
+        row.addWidget(self.heights_note, 1)
+        setup = QPushButton("Material Setup...")
+        setup.setToolTip("Safe Z, rapid-down clearance, Z zero, thickness and the home position of the project")
+        setup.clicked.connect(self._material_setup)
+        row.addWidget(setup)
+        form.addRow(row)
+        self.own_heights = QCheckBox("This toolpath has heights of its own")
+        self.own_heights.setToolTip("Off: the toolpath travels at the safe Z of the project. On: it travels at the "
+                                    "safe Z below (to clear clamps, say) and rapids down to its own clearance.")
+        self.own_heights.setChecked(own)
+        form.addRow(self.own_heights)
+        self.safe_z = QDoubleSpinBox()
+        self.clearance = QDoubleSpinBox()
+        for w, v, lo in ((self.safe_z, m.safe_z if t is None or t.safe_z is None else t.safe_z, 0.1),
+                         (self.clearance, m.clearance if t is None or t.clearance is None else t.clearance, 0.0)):
+            w.setRange(u.to_display(lo), u.to_display(1e5))
+            w.setDecimals(u.decimals)
+            w.setSuffix(u.suffix)
+            w.setValue(u.to_display(v))
+        self.safe_z.setToolTip("The tool retracts to this height and travels at it between cuts")
+        self.clearance.setToolTip("The tool rapids down to this height above the material and then plunges")
+        form.addRow("Safe Z", self.safe_z)
+        form.addRow("Rapid-down clearance", self.clearance)
+        self.own_heights.toggled.connect(self._heights_changed)
+        self._heights_changed()
+        return box
+
+    def _heights_changed(self, *_) -> None:
+        u = self.ctrl.units
+        m = self.ctrl.project.material
+        own = self.own_heights.isChecked()
+        self.safe_z.setEnabled(own)
+        self.clearance.setEnabled(own)
+        if not own:     # (shows what the toolpath will use)
+            self.safe_z.setValue(u.to_display(m.safe_z))
+            self.clearance.setValue(u.to_display(m.clearance))
+        self.heights_note.setText(f"Project: safe Z <b>{u.fmt(m.safe_z)}</b>, rapid-down clearance "
+                                  f"<b>{u.fmt(m.clearance)}</b>")
+
+    def _material_setup(self) -> None:
+        MaterialDialog(self.ctrl, self).exec()
+        self._heights_changed()
+
+    def heights(self) -> tuple[float | None, float | None]:
+        """``(safe Z, clearance)`` of the toolpath in millimetres; ``None`` for the project's."""
+        if not self.own_heights.isChecked():
+            return None, None
+        u = self.ctrl.units
+        return u.from_display(self.safe_z.value()), u.from_display(self.clearance.value())
 
     def _remembered_tool(self, d) -> Tool | None:
         """The tool of the last toolpath of this kind (when it still fits the toolpath)."""
@@ -624,12 +697,15 @@ class ToolpathDialog(RemembersSize, QDialog):
             sel = Selection("vectors", list(self.vector_ids), [])
         sheets = None if self.all_sheets.isChecked() else [self.ctrl.sheet_id]
         params = {k: v for k, v in self.form.values().items()}
+        safe_z, clearance = self.heights()
         if self.tdef:
             t = self.tdef
             t.name, t.tool, t.params, t.selection, t.sheet_ids = self.name.text(), self.tool_editor.tool(), \
                 params, sel, sheets
+            t.safe_z, t.clearance = safe_z, clearance
             return t
-        return ToolpathDef(self.name.text(), self.op.id, self.tool_editor.tool(), params, sel, True, sheets)
+        return ToolpathDef(self.name.text(), self.op.id, self.tool_editor.tool(), params, sel, True, sheets,
+                           safe_z=safe_z, clearance=clearance)
 
     def accept(self) -> None:
         if self.rb_sel.isChecked() and not self.vector_ids:
@@ -1293,6 +1369,15 @@ class ExportDialog(RemembersSize, QDialog):
         for sig in (self.tile.toggled, self.tile_axis.currentIndexChanged, self.tile_len.valueChanged):
             sig.connect(self.preview)
         form.addRow("Tiling", tiling)
+        self.heights = QLabel()
+        self.heights.setWordWrap(True)
+        row = QHBoxLayout()
+        row.addWidget(self.heights, 1)
+        setup = QPushButton("Material Setup...")
+        setup.setToolTip("Change the safe Z, the home position and the other heights, then see the G-code again")
+        setup.clicked.connect(self._material_setup)
+        row.addWidget(setup)
+        form.addRow("Material", row)
         lay.addLayout(form)
         mem = ctrl.settings.recall("export_gcode")   # the options of the last export
         for w in (self.sheets, self.tile, self.tile_axis, self.tile_len):
@@ -1336,6 +1421,10 @@ class ExportDialog(RemembersSize, QDialog):
         self.keep_size(ctrl, "export", 640, 720)
         self.preview()
 
+    def _material_setup(self) -> None:
+        MaterialDialog(self.ctrl, self).exec()
+        self.preview()
+
     def current_post(self):
         return self.ctrl.registry.posts[self.post.currentData()]
 
@@ -1362,6 +1451,10 @@ class ExportDialog(RemembersSize, QDialog):
         from ..post.export import post_toolpaths
         post = self.current_post()
         self.desc.setText(f"{post.description}  (*.{post.extension})")
+        m = self.ctrl.project.material
+        u = self.ctrl.units
+        self.heights.setText(f"{material_summary(self.ctrl)} \u00b7 home {u.fmt(m.home[0])}, {u.fmt(m.home[1])}, "
+                             f"{u.fmt(m.home[2])}")
         jobs = self.jobs(self.ctrl.sheet)
         if not jobs:
             self.text.setPlainText("(no calculated toolpaths on this sheet)")

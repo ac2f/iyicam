@@ -142,6 +142,8 @@ class ToolpathDef:
     sheet_ids: list[str] | None = None  # None = every sheet
     id: str = field(default_factory=new_id)
     sequence: dict = field(default_factory=dict)  # cut order and start point settings (cam.sequence)
+    safe_z: float | None = None      # the heights of this toolpath when they are not the project's (Material Setup):
+    clearance: float | None = None   # None = the project's safe Z / rapid-down clearance
 
 
 class Project:
@@ -336,7 +338,8 @@ def toolpath_to_dict(t: ToolpathDef) -> dict:
     return {"id": t.id, "name": t.name, "op": t.op, "tool": t.tool.to_dict(),
             "params": _jsonable(t.params), "enabled": t.enabled, "sheets": t.sheet_ids,
             "selection": {"mode": t.selection.mode, "vectors": list(t.selection.vector_ids),
-                          "layers": list(t.selection.layer_ids)}, "sequence": _jsonable(t.sequence)}
+                          "layers": list(t.selection.layer_ids)}, "sequence": _jsonable(t.sequence),
+            "safe_z": t.safe_z, "clearance": t.clearance}
 
 
 def _jsonable(v):
@@ -364,7 +367,13 @@ def toolpath_from_dict(d: dict) -> ToolpathDef:
     return ToolpathDef(d["name"], d["op"], Tool.from_dict(d["tool"]), _unjson(d.get("params", {})),
                        Selection(sel.get("mode", "vectors"), list(sel.get("vectors", [])),
                                  list(sel.get("layers", []))),
-                       d.get("enabled", True), d.get("sheets"), d["id"], dict(d.get("sequence") or {}))
+                       d.get("enabled", True), d.get("sheets"), d["id"], dict(d.get("sequence") or {}),
+                       _height(d.get("safe_z")), _height(d.get("clearance")))
+
+
+def _height(v):
+    """A height from a project file: a number, or None (the project's) for anything else."""
+    return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) and v == v else None
 
 
 def project_to_dict(p: Project) -> dict:
