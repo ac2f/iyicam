@@ -436,6 +436,65 @@ def set_start_point(c: Contour, p: Pt) -> Contour:
     return set_start_node(c2, i + 1)
 
 
+_FEATURE_WEIGHT = {"node": 1.0, "quadrant": 1.1, "mid": 1.1}      # (the nearer wins; a corner before a middle)
+
+
+def start_features(c: Contour, mids: bool = True) -> list[tuple[Pt, str, float]]:
+    """The places a start point sits on exactly, in the order along the contour: ``(point, kind, distance along)``.
+    The kinds are ``node`` (a corner or a joint), ``quadrant`` (where an arc is at its leftmost, topmost ... point:
+    the north and south of a circle) and, with ``mids``, ``mid`` (the middle of a segment). For a closed contour
+    the first one is its start."""
+    out: list[tuple[Pt, str, float]] = []
+    pos = 0.0
+    for seg in c.segs:
+        length = seg.length()
+        out.append((seg.a, "node", pos))
+        if isinstance(seg, Arc):
+            try:
+                centre, r, sa, sw = seg.center, seg.radius, seg.start_angle, seg.sweep
+            except (ValueError, ZeroDivisionError):
+                centre = None
+            if centre is not None and abs(sw) > 1e-12:
+                for q in range(4):
+                    ang = q * math.pi / 2
+                    rel = (ang - sa) % math.tau if sw >= 0 else (sa - ang) % math.tau
+                    if 1e-9 < rel < abs(sw) - 1e-9:
+                        out.append(((centre[0] + r * math.cos(ang), centre[1] + r * math.sin(ang)), "quadrant",
+                                    pos + length * rel / abs(sw)))
+        if mids:
+            out.append((seg.point_at(0.5), "mid", pos + length * 0.5))
+        pos += length
+    out.sort(key=lambda f: f[2])
+    return out
+
+
+def snap_on_contour(c: Contour, p: Pt, reach: float, features: list | None = None) -> tuple[Pt, str]:
+    """Where a start point goes for a pointer at ``p``: the feature of the contour (a node, an arc's extreme point,
+    the middle of a segment) that is within ``reach`` of the point of the line nearest to ``p`` (so a pointer that
+    slides along the vector and wanders off it still clings; a node counts as a little nearer than the others), else
+    that nearest point itself (``"edge"``). ``features`` are those of :func:`start_features`, if they are at hand."""
+    q = c.nearest(p)[2]
+    best = None
+    for pt, kind, _ in (features if features is not None else start_features(c)):
+        d = dist(pt, q) * _FEATURE_WEIGHT.get(kind, 1.0)
+        if d <= reach and (best is None or d < best[0]):
+            best = (d, pt, kind)
+    if best is not None:
+        return best[1], best[2]
+    return q, "edge"
+
+
+def step_start(c: Contour, direction: int = 1) -> Pt | None:
+    """The next (``direction`` 1) or the previous (-1) corner or arc extreme of a closed contour from where it starts
+    now (``None``: there is no other). It is where the start point goes one step along or back."""
+    if not c.closed or not c.segs:
+        return None
+    stops = [f[0] for f in start_features(c, mids=False)]
+    if len(stops) < 2:
+        return None
+    return stops[1] if direction > 0 else stops[-1]
+
+
 def break_at(c: Contour, seg: int, t: float) -> list[Contour]:
     """Cut the contour at ``(seg, t)``; a closed contour becomes one open contour."""
     segs = list(c.segs)

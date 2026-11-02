@@ -64,10 +64,37 @@ point and nothing else (the order is kept by vector, not by place):
 * **Smart** lets smart start points choose it, **Release** gives a hand-set start back.
 
 A start point set by hand is kept by smart start points; it shows as a violet square.
-Other ways to the same: the **Start Point tool (B)** (click on a vector, or drag the
-marker of a start point along its vector; right click a marker to release it), the
-**Start Point** menu of the right-click menu of a vector (here, a corner, smart, release),
-and **Set as start point** / **Set start point here** of the node tool's right-click menu.
+
+### Setting start points by hand, on the drawing
+
+Press **B** (or *Draw ▸ Set Start Point*) and every closed vector shows its start point.
+Then:
+
+* **Click on a vector, or inside it**, and its cut starts there: where the line is
+  nearest to the click, and for a click inside a closed vector the nearest point of the
+  smallest vector around the click (so a click in a hole is about the hole).
+* **Corners and middles cling.** Near a corner, the middle of a side or the extreme point
+  of an arc (the north and south of a circle) the start goes exactly there, and no extra
+  node is made. A ring and its name (*Corner*, *Middle*, *Quadrant*, *On the vector*)
+  show **before the click** where it will go, and small marks show the places that cling
+  on the vector under the pointer. The reach is the one of the snap settings (*Edit ▸
+  Preferences*, in pixels); **Alt** or switching *Vectors* snapping off (F8) sets it
+  free: the point of the line nearest to the pointer, with a node made there.
+* **Press and keep the button down** and the start slides along the vector, wherever the
+  pointer goes; let go where it should stay (**Esc** lets go of it without a change).
+  Grabbing the marker of a start point does not move it until you move the pointer.
+* **`]` and `[`** (or the arrow keys, in the tool) put the start at the **next / previous
+  corner**: of the vector under the pointer, else of the one changed last; with another
+  tool, of the selected vectors. Four steps go all the way round.
+* **Right click** a start point to give it back to smart start points.
+
+For many vectors at once select them and use *Vectors ▸ Start Points* or the **Start Point**
+menu of the right-click menu: a corner (↙ ↘ ↖ ↗ of every vector), the middle of a side,
+the next / previous corner (`]` `[`), the opposite point (half way round), smart, release.
+All of them are **one undo step and one calculation**, however many vectors there are.
+
+Also: the **Start Point** menu entry *Here* (the corner or point nearest to the click) and
+**Set as start point** / **Set start point here** of the node tool's right-click menu.
 
 ## Rules that always hold
 

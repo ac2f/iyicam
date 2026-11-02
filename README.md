@@ -114,7 +114,9 @@ with Python plugins.
   green counter-clockwise, start points marked good / by hand / to check), with a **preview** (pink) of any change
   and what it saves or moves before it is applied, a list of the cuts to reorder (buttons, dragging, picking), and
   a box that changes the start point of one cut (along the cut, at a corner, picked or dragged on the drawing)
-  without changing its place in the order
+  without changing its place in the order. **Start points by hand** (B): click or slide on a vector and the start
+  clings to corners, middles and arc extremes (a ring names it before the click), `]` / `[` step to the next /
+  previous corner, and a corner / side / opposite point for any number of selected vectors is one undo step
 - **Cut order**: **smart (shortest route, optimised)**, shortest travel, rows / columns / diagonals from any corner, zig-zag sweeps,
   smallest parts first, centre out or edges in; automatic or frozen, picked on the drawing from any
   position; every strategy with its own cutting direction (climb, conventional, clockwise,

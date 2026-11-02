@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (QApplication, QDialog, QDockWidget, QLabel, QMain
 
 from .. import __version__
 from ..cam.moves import PathStats, format_time
+from ..core import vectorops
 from ..core.document import VectorObject, new_id, toolpath_from_dict, toolpath_to_dict
 from ..core.geom import BBox, Transform
 from ..core.params import Param
@@ -564,9 +565,11 @@ class MainWindow(QMainWindow):
         self._act(m, "Trace &Bitmap...", self.trace_bitmap)
         self._act(m, "Text on &Curve...", self.text_on_curve)
         sp = m.addMenu("&Start Points")
-        self._act(sp, "Smart &Start Points...", self.start_points)
         sp.addAction(self.tool_actions["start"])
-        self._act(sp, "&Release Start Points of the Selection", self.release_starts)
+        sp.addSeparator()
+        self._start_items(sp, keys=True)
+        sp.addSeparator()
+        self._act(sp, "Smart &Start Points...", self.start_points)
         m.addSeparator()
         subs = self._command_menus(m, "Vectors")
         if "/Transform" in subs:
@@ -731,24 +734,51 @@ class MainWindow(QMainWindow):
         return [f"{o.id}:{i}" for o in self.ctrl.selected_objects() if self.ctrl.editable(o)
                 for i, c in enumerate(o.contours) if c.closed and c.segs]
 
+    def _started(self, moved: int, keys=None) -> None:
+        """Tell what a start point command did (the status bar), so that doing nothing is not silent."""
+        if keys is not None and not keys:
+            self.statusBar().showMessage("Select closed vectors first: only they have a start point", 5000)
+        elif moved:
+            self.statusBar().showMessage(f"{moved} start point(s) set by hand: smart start points keep them "
+                                         "(undo: Ctrl+Z)", 4000)
+        else:
+            self.statusBar().showMessage("There is no other corner to start at", 3000)
+
     def start_at(self, place: str) -> None:
-        """Start the selected vectors at a corner (``sw`` ...) or the middle of a side (``s`` ...)."""
-        for key in self.selected_cut_keys():
-            self.ctrl.start_at_place(key, place)
+        """Start the selected vectors at a corner (``sw`` ...) or the middle of a side (``s`` ...): one change."""
+        keys = self.selected_cut_keys()
+        self._started(self.ctrl.starts_at_place(keys, place), keys)
+
+    def step_start(self, direction: int) -> None:
+        """Start at the next (1) or previous (-1) corner: the vector under the pointer when the start point tool is
+        on, else the selected vectors."""
+        tool = self.canvas.tool
+        if getattr(tool, "name", "") == "start" and tool.step(direction):
+            return
+        keys = self.selected_cut_keys()
+        self._started(self.ctrl.step_starts(keys, direction), keys)
+
+    def start_opposite(self) -> None:
+        keys = self.selected_cut_keys()
+        self._started(self.ctrl.start_opposite(keys), keys)
 
     def start_here(self, point) -> None:
-        """Start the selected vector that is nearest to ``point`` at its nearest point."""
+        """Start the selected vector that is nearest to ``point`` at its nearest point (a corner or a middle when
+        one is near, with snapping to vectors on)."""
         best = None
         for o in self.ctrl.selected_objects():
             if not self.ctrl.editable(o):
                 continue
             for i, c in enumerate(o.contours):
                 if c.closed and c.segs:
-                    q, d = c.nearest(point)[2:]
+                    d = c.nearest(point)[3]
                     if best is None or d < best[0]:
-                        best = (d, o, i, q)
+                        best = (d, o, i, c)
         if best is not None:
-            self.ctrl.edit_start(best[1].id, best[2], best[3])
+            q = best[3].nearest(point)[2]
+            if self.ctrl.settings.snap_objects:
+                q = vectorops.snap_on_contour(best[3], point, self.canvas.px(self.ctrl.settings.snap_radius))[0]
+            self.ctrl.edit_start(best[1].id, best[2], q)
 
     def smart_start_selected(self) -> None:
         from .cutorder_panel import default_toolpath
@@ -763,17 +793,33 @@ class MainWindow(QMainWindow):
         for key in self.selected_cut_keys():
             self.ctrl.unlock_start(key)
 
-    def _start_menu(self, menu: QMenu, world=None) -> None:
-        keys = self.selected_cut_keys()
-        sm = menu.addMenu("Start Point")
-        sm.setEnabled(bool(keys))
+    START_PLACES = (("sw", "Bottom Left Corner"), ("se", "Bottom Right Corner"), ("nw", "Top Left Corner"),
+                    ("ne", "Top Right Corner"))
+    START_SIDES = (("n", "Top Side"), ("s", "Bottom Side"), ("w", "Left Side"), ("e", "Right Side"))
+
+    def _start_items(self, menu: QMenu, world=None, keys: bool = False) -> None:
+        """What can be done with the start points of the selected vectors (``keys``: the menu bar, which sets the keys)."""
         if world is not None:
-            self._act(sm, "Here (nearest point of the vector)", lambda: self.start_here(world))
-        for place, label in (("sw", "Bottom Left"), ("se", "Bottom Right"), ("nw", "Top Left"), ("ne", "Top Right")):
-            self._act(sm, label + " Corner", lambda p=place: self.start_at(p))
-        sm.addSeparator()
-        self._act(sm, "Smart (best place)", self.smart_start_selected)
-        self._act(sm, "Release (to smart start points)", self.release_selected_starts)
+            self._act(menu, "Here (nearest corner or point)", lambda: self.start_here(world))
+        for place, label in self.START_PLACES:
+            self._act(menu, label, lambda p=place: self.start_at(p))
+        sides = menu.addMenu("Middle of a Side")
+        for place, label in self.START_SIDES:
+            self._act(sides, label, lambda p=place: self.start_at(p))
+        menu.addSeparator()
+        self._act(menu, "Next Corner\t]" if not keys else "Next Corner", lambda: self.step_start(1),
+                  "]" if keys else None)
+        self._act(menu, "Previous Corner\t[" if not keys else "Previous Corner", lambda: self.step_start(-1),
+                  "[" if keys else None)
+        self._act(menu, "Opposite Point", self.start_opposite)
+        menu.addSeparator()
+        self._act(menu, "Smart (best place)", self.smart_start_selected)
+        self._act(menu, "Release (to smart start points)", self.release_selected_starts)
+
+    def _start_menu(self, menu: QMenu, world=None) -> None:
+        sm = menu.addMenu("Start Point")
+        sm.setEnabled(bool(self.selected_cut_keys()))
+        self._start_items(sm, world)
         sm.addSeparator()
         self._act(sm, "Draw on the Drawing (B)", lambda: self.set_tool("start"))
         self._act(sm, "Cut Order Panel", self.cut_order)
@@ -1451,7 +1497,8 @@ class MainWindow(QMainWindow):
                  ("Alt+F7 / F8 / F9 / F10 / F11", "Transform panel: position / rotate / scale and mirror / size / slant"),
                  ("Ctrl+M / Ctrl+R", "Move... / Rotate... by numbers"),
                  ("Ctrl+Alt+O", "Cut order panel: order, directions and start points on the drawing"),
-                 ("B", "Start point tool: drag a start point along its vector")]
+                 ("B", "Start point tool: click or drag on a vector to start its cut there"),
+                 ("] / [", "Start point at the next / previous corner (of the selected vectors)")]
         rows += [f"<tr><td><b>{k}</b></td><td>{v}</td></tr>" for k, v in extra]
         QMessageBox.information(self, "Keyboard shortcuts", "<table>" + "".join(rows) + "</table>")
 

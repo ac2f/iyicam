@@ -675,6 +675,7 @@ def test_start_points_panel_and_tool(win):
     # the start point tool puts a start (and a node) where you click and keeps it there
     win.set_tool("start")
     cv = win.canvas
+    ctrl.settings.snap_objects = False                      # (no clinging to the corners and middles)
     o = ctrl.sheet.vectors[0]
     QTest.mouseClick(cv, Qt.LeftButton, Qt.NoModifier, at(cv, 50, 150))
     assert o.contours[0].start == pytest.approx((50, 150), abs=0.5) and o.locked_starts == [0]

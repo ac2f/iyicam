@@ -54,6 +54,28 @@ class CutPreview:
         return "; ".join(parts) if parts else "nothing would change"
 
 
+PLACES = {"sw": "bottom left corner", "se": "bottom right corner", "nw": "top left corner", "ne": "top right corner",
+          "s": "bottom", "n": "top", "w": "left", "e": "right"}
+
+
+def place_name(place: str) -> str:
+    return PLACES.get(place, place)
+
+
+def place_point(c: Contour, place: str) -> Pt | None:
+    """The point of a closed contour for a place: its extreme point towards a corner (``sw``, ``se``, ``nw``, ``ne``) or
+    the point of a side's middle (``s``, ``n``, ``w``, ``e``)."""
+    bb = c.bbox()
+    dirs = {"sw": (-1, -1), "se": (1, -1), "nw": (-1, 1), "ne": (1, 1)}
+    if place in dirs:
+        dx, dy = dirs[place]
+        pts = c.nodes() + c.flatten(0.05)
+        return max(pts, key=lambda p: (dx * p[0] + dy * p[1], -dist(p, bb.center) * 1e-9))
+    mid = {"s": (bb.center[0], bb.ymin), "n": (bb.center[0], bb.ymax),
+           "w": (bb.xmin, bb.center[1]), "e": (bb.xmax, bb.center[1])}.get(place)
+    return None if mid is None else c.nearest(mid)[2]
+
+
 class CutControl:
     """Mixin of the controller: previews of cut order settings, the cut that is looked at and start point edits."""
 
@@ -158,6 +180,29 @@ class CutControl:
             return None
         return o, int(ci), o.contours[int(ci)]
 
+    def set_start_points(self, items, lock: bool = True, label: str = "Set start point") -> int:
+        """Start several contours at once, ``items`` being ``(vector id, contour index, point)``: one undo step and one
+        calculation for all of them (nothing is done, and no undo step made, for starts that are there already and
+        kept). How many contours now start where they were asked to."""
+        from ..core import vectorops
+        valid, todo = 0, []
+        for vid, ci, point in items:
+            o = self.find_vector(vid)
+            if o is None or not 0 <= ci < len(o.contours) or not o.contours[ci].closed or not o.contours[ci].segs:
+                continue
+            valid += 1
+            if dist(o.contours[ci].start, point) > 1e-6 or (lock and ci not in o.locked_starts):
+                todo.append((o, ci, point))
+        if todo:
+            with self.edit(label):
+                for o, ci, point in todo:
+                    o.contours[ci] = vectorops.set_start_point(o.contours[ci], point)
+                    if lock and ci not in o.locked_starts:
+                        o.locked_starts.append(ci)
+            if self.stale:
+                self.recalculate()
+        return valid
+
     def move_start(self, key: str, delta: float) -> bool:
         """Move the start point of a closed vector ``delta`` mm along it (negative: backwards) and keep it there.
         The cut order does not change: it is kept by vector, not by place."""
@@ -171,27 +216,44 @@ class CutControl:
         self.edit_start(o.id, ci, c.point_at_length(delta % L))
         return True
 
+    def _closed_keys(self, keys) -> list[tuple[object, int, Contour]]:
+        out = []
+        for key in keys:
+            got = self.contour_of(key)
+            if got is not None and got[2].closed and got[2].segs:
+                out.append(got)
+        return out
+
     def start_at_place(self, key: str, place: str) -> bool:
         """Start a closed vector at one of the corners (``sw``, ``se``, ``nw``, ``ne``: its extreme point that way) or
         sides (``s``, ``e``, ``n``, ``w``: the middle of that side) and keep it there."""
-        got = self.contour_of(key)
-        if got is None or not got[2].closed:
-            return False
-        o, ci, c = got
-        bb = c.bbox()
-        dirs = {"sw": (-1, -1), "se": (1, -1), "nw": (-1, 1), "ne": (1, 1)}
-        if place in dirs:
-            dx, dy = dirs[place]
-            pts = c.nodes() + c.flatten(0.05)
-            q = max(pts, key=lambda p: (dx * p[0] + dy * p[1], -dist(p, bb.center) * 1e-9))
-        else:
-            mid = {"s": (bb.center[0], bb.ymin), "n": (bb.center[0], bb.ymax),
-                   "w": (bb.xmin, bb.center[1]), "e": (bb.xmax, bb.center[1])}.get(place)
-            if mid is None:
-                return False
-            q = c.nearest(mid)[2]
-        self.edit_start(o.id, ci, q)
-        return True
+        return bool(self.starts_at_place([key], place))
+
+    def starts_at_place(self, keys, place: str) -> int:
+        """:meth:`start_at_place` for many contours as one change (one undo step, one calculation)."""
+        items = []
+        for o, ci, c in self._closed_keys(keys):
+            q = place_point(c, place)
+            if q is not None:
+                items.append((o.id, ci, q))
+        return self.set_start_points(items, label="Start point at the " + place_name(place))
+
+    def step_starts(self, keys, direction: int = 1) -> int:
+        """Start the contours at their next (``direction`` 1) or previous (-1) corner or arc extreme: one step along
+        or back, as one change."""
+        from ..core import vectorops
+        items = []
+        for o, ci, c in self._closed_keys(keys):
+            q = vectorops.step_start(c, direction)
+            if q is not None:
+                items.append((o.id, ci, q))
+        return self.set_start_points(items, label="Start point at the " + ("next" if direction > 0 else "previous") + " node")
+
+    def start_opposite(self, keys) -> int:
+        """Start the contours half way round from where they start now."""
+        items = [(o.id, ci, c.point_at_length(c.length() / 2)) for o, ci, c in self._closed_keys(keys)
+                 if c.length() > 1e-9]
+        return self.set_start_points(items, label="Start point on the opposite side")
 
     def edit_start(self, vid: str, ci: int, point: Pt, lock: bool = True) -> None:
         """Start a contour at ``point`` and calculate the toolpaths again at once (what the drawing shows)."""

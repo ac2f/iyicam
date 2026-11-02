@@ -536,9 +536,9 @@ class Canvas(QWidget):
 
     def _paint_start(self, p: QPainter, c, arrow: bool) -> None:
         q = self.world_to_screen(*c.start)
-        p.setPen(QPen(QColor("#1a9641"), 1))
+        p.setPen(QPen(QColor("#ffffff"), 1.2))                 # (a white rim: it shows on the vector's own line)
         p.setBrush(QBrush(QColor("#1a9641")))
-        p.drawEllipse(q, 3.5, 3.5)
+        p.drawEllipse(q, 4, 4)
         if not arrow:
             return
         seg = c.segs[0]
@@ -725,5 +725,7 @@ class Canvas(QWidget):
 
     def leaveEvent(self, ev) -> None:
         self.hover_id = None
+        if self.tool is not None:
+            self.tool.leave()
         self.snap_done()
         self.update()

@@ -597,7 +597,7 @@ def test_the_right_click_menu_of_a_vector_sets_its_start_point(rwin, monkeypatch
     assert c.find_vector(objs[0].id).contours[0].start == pytest.approx((150, 180), abs=1e-6)
     click(60, 140, "Bottom Left Corner")
     assert c.find_vector(objs[0].id).contours[0].start == pytest.approx((50, 100), abs=1e-6)
-    click(150, 140, "Here (nearest point of the vector)")                       # the right edge: the point under it
+    click(150, 140, "Here (nearest corner or point)")                       # the right edge: the point under it
     assert c.find_vector(objs[0].id).contours[0].start == pytest.approx((150, 140), abs=1.5)
     click(150, 140, "Smart (best place)")
     assert c.find_vector(objs[0].id).locked_starts == []

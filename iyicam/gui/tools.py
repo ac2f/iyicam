@@ -10,7 +10,7 @@ from PySide6.QtWidgets import QMenu
 from ..core import shapes, vectorops
 from ..core.document import VectorObject
 from ..core.geom import Arc, BBox, Bezier, Contour, Line, Pt, Transform, add, dist, sub
-from . import menus
+from . import menus, snap as snapping, theme
 from .qtgeom import contours_path
 
 
@@ -35,6 +35,9 @@ class CanvasTool:
 
     def cancel(self) -> None:
         pass
+
+    def leave(self) -> None:
+        """The pointer left the drawing."""
 
     def press(self, ev, w: Pt) -> None:
         pass
@@ -79,7 +82,7 @@ def _sel_bbox(objs) -> BBox:
 class SelectTool(CanvasTool):
     name = "select"
     prompt = ("Click to select (Shift: add, Ctrl: toggle). Drag to move (Ctrl+drag: copy), handles to "
-              "scale/rotate, double-click to edit nodes. Arrows nudge. Transform panel: Alt+F7..F11.")
+              "scale/rotate, double-click to edit nodes. Arrows nudge. B: start points. Transform panel: Alt+F7..F11.")
     cursor = Qt.ArrowCursor
     HANDLE = 5.0
 
@@ -1086,26 +1089,38 @@ class TabTool(CanvasTool):
 
 
 class StartPointTool(CanvasTool):
-    """Where the cuts of the vectors start (and close). Click on a vector to start its cut there (a node is made
-    there), or drag the marker of a start point along its vector. A start set this way is kept as it is by smart
-    start points. Right click a marker to give it back to smart start points. With ``only`` (a cut key) the tool
-    is about that one vector contour and is done after one change."""
+    """Where the cuts of the vectors start (and close). Press on a vector and the start goes to that place of it: a
+    corner, a middle, the extreme point of an arc when the pointer is near one (a ring and its name show it before
+    the click), else where the line is nearest. Keep the button down and the start slides along the vector, to
+    let go where it should stay. A click inside a closed vector picks its line nearest to the click. A start set this
+    way is kept as it is by smart start points. Right click a start point to give it back to smart start points;
+    ``]`` and ``[`` (or the arrows) step it to the next and the previous corner. Alt: no clinging to corners. With
+    ``only`` (a cut key) the tool is about that one contour and is done after one change."""
 
     name = "start"
-    prompt = ("Start point: click on a vector where its cut should start, or drag a marker along its vector "
-              "(a node is added there). Right click a marker to release it to smart start points. Esc when done.")
+    prompt = ("Start point: click on a vector, or inside it, to start its cut there; drag to slide it along the vector "
+              "(corners and middles cling, Alt: free). ] and [ step to the next / previous corner, right click "
+              "releases it to smart start points, Esc when done.")
     cursor = Qt.CrossCursor
     GRAB_PX = 9.0
+    KIND_NAMES = {"node": "Corner", "quadrant": "Quadrant", "mid": "Middle", "edge": "On the vector",
+                  "start": "Start point"}
 
     def __init__(self, canvas, only: str | None = None):
         super().__init__(canvas)
         self.only = only
         self.drag: tuple[VectorObject, int] | None = None
         self.live: Pt | None = None
+        self.live_kind = ""
+        self.hover: tuple | None = None          # (vector, contour index, where the start would go, kind, is the marker)
+        self.last: tuple[str, int] | None = None     # the contour that was changed last (the keys step that one)
+        self.pos: QPointF | None = None
+        self._cache: dict = {}
         if only is not None:
             self.prompt = ("Start point of this cut: click on the vector where it should start, or drag the marker "
-                           "along it. Esc cancels.")
+                           "along it (corners and middles cling, Alt: free). Esc cancels.")
 
+    # -- what there is to pick ------------------------------------------------------------------------
     def _contours(self):
         """``(vector, contour index, contour)`` of the closed contours this tool is about."""
         for o in self.canvas.visible_objects():
@@ -1113,15 +1128,34 @@ class StartPointTool(CanvasTool):
                 if c.closed and c.segs and (self.only is None or self.only == f"{o.id}:{ci}"):
                     yield o, ci, c
 
-    def _nearest(self, w: Pt):
-        best, bd = None, self.canvas.px(12)
-        for o, ci, c in self._contours():
-            if not o.bbox().inflated(bd).contains(w):
-                continue
-            _, _, q, d = c.nearest(w)
-            if d < bd:
-                best, bd = (o, ci, q), d
-        return best
+    def _features(self, c) -> list:
+        hit = self._cache.get(id(c))
+        if hit is None or hit[0] is not c:
+            if len(self._cache) > 400:
+                self._cache.clear()
+            hit = self._cache[id(c)] = (c, vectorops.start_features(c))
+        return hit[1]
+
+    def _polygon(self, c) -> list:
+        hit = self._cache.get(("poly", id(c)))
+        if hit is None or hit[0] is not c:
+            if len(self._cache) > 400:
+                self._cache.clear()
+            hit = self._cache[("poly", id(c))] = (c, c.flatten(0.1), abs(c.area()))
+        return hit
+
+    def _clings(self) -> bool:
+        return bool(self.ctrl.settings.snap_objects) and not snapping.modifier_free()
+
+    def _reach(self) -> float:
+        return self.canvas.px(max(6.0, self.ctrl.settings.snap_radius))
+
+    def _on(self, o, ci: int, w: Pt) -> tuple[Pt, str]:
+        """Where the start of ``o``'s contour ``ci`` would go for the pointer at ``w``."""
+        c = o.contours[ci]
+        if self._clings():
+            return vectorops.snap_on_contour(c, w, self._reach(), self._features(c))
+        return c.nearest(w)[2], "edge"
 
     def _marker_at(self, pos: QPointF):
         for o, ci, c in self._contours():
@@ -1130,38 +1164,97 @@ class StartPointTool(CanvasTool):
                 return o, ci
         return None
 
+    def _nearest(self, w: Pt):
+        best, bd = None, max(self.canvas.px(12), self._reach())
+        for o, ci, c in self._contours():
+            if not o.bbox().inflated(bd).contains(w):
+                continue
+            d = c.nearest(w)[3]
+            if d < bd:
+                best, bd = (o, ci), d
+        return best
+
+    def _around(self, w: Pt):
+        """The smallest closed contour that has ``w`` inside."""
+        from ..core.geom import point_in_polygon
+        best = None
+        for o, ci, c in self._contours():
+            if c.bbox().contains(w):
+                _, poly, a = self._polygon(c)
+                if (best is None or a < best[0]) and point_in_polygon(w, poly):
+                    best = (a, o, ci)
+        return None if best is None else best[1:]
+
+    def _target(self, pos: QPointF, w: Pt):
+        """``(vector, contour index, point, kind, marker)`` for a pointer: the start point under it (to grab), else the
+        place of the nearest line, else that of the closed vector it is inside of."""
+        m = self._marker_at(pos)
+        if m is not None:
+            return m[0], m[1], m[0].contours[m[1]].start, "start", True
+        hit = self._nearest(w) or self._around(w)
+        if hit is None:
+            return None
+        q, kind = self._on(hit[0], hit[1], w)
+        return hit[0], hit[1], q, kind, False
+
+    # -- doing it -------------------------------------------------------------------------------------
     def _set(self, o, ci: int, q: Pt) -> None:
+        self.last = (o.id, ci)
         self.ctrl.edit_start(o.id, ci, q)
         if self.only is not None:
             self.canvas.cancel_tool()
 
+    def _where(self, q: Pt) -> str:
+        u = self.ctrl.units
+        return f"{u.fmt(q[0])}, {u.fmt(q[1])}"
+
+    def _look(self, pos: QPointF | None, w: Pt | None) -> None:
+        """What the pointer is on: the ring where a click would put the start, the way the cursor and the prompt say."""
+        self.hover = self._target(pos, w) if pos is not None and w is not None else None
+        h = self.hover
+        self.canvas.hover_id = h[0].id if h else None
+        if h is None:
+            self.canvas.setCursor(self.cursor)
+            self.say(self.prompt)
+        elif h[4]:
+            self.canvas.setCursor(Qt.OpenHandCursor)
+            if h[1] in h[0].locked_starts:
+                self.say("Start point set by hand: drag it along the vector, ] and [ step it to the next / previous "
+                         "corner, right click gives it back to smart start points")
+            else:
+                self.say("Start point: click to keep it where it is, or drag it along the vector, ] and [ step it "
+                         "to the next / previous corner")
+        else:
+            self.canvas.setCursor(self.cursor)
+            self.say(f"Click to start the cut at {self._where(h[2])} ({self.KIND_NAMES.get(h[3], '').lower()}); "
+                     "drag to slide it along the vector, Alt: no clinging")
+        self.canvas.update()
+
     def move(self, ev, w):
+        self.pos = ev.position()
         if self.drag is not None:
             o, ci = self.drag
-            self.live = o.contours[ci].nearest(w)[2]
-            self.say(f"Start point at {self.ctrl.units.fmt(self.live[0])}, {self.ctrl.units.fmt(self.live[1])}: "
-                     "let go to start the cut here")
+            self.live, self.live_kind = self._on(o, ci, w)
+            self.say(f"Start point at {self._where(self.live)} ({self.KIND_NAMES.get(self.live_kind, '').lower()}): "
+                     "let go to start the cut here, Esc cancels")
+            self.canvas.update()
             return
-        m = self._marker_at(ev.position())
-        hit = self._nearest(w) if m is None else None
-        self.canvas.hover_id = (m[0].id if m else hit[0].id if hit else None)
-        self.canvas.setCursor(Qt.OpenHandCursor if m else self.cursor)
+        self._look(self.pos, w)
 
     def press(self, ev, w):
         if ev.button() == Qt.LeftButton:
-            m = self._marker_at(ev.position())
-            if m is not None:
-                self.drag = m
-                self.live = m[0].contours[m[1]].start
-                self.canvas.setCursor(Qt.ClosedHandCursor)
+            t = self._target(ev.position(), w)
+            if t is None:
                 return
-            hit = self._nearest(w)
-            if hit is not None:
-                self._set(*hit)
+            self.drag = (t[0], t[1])
+            self.live, self.live_kind = t[2], t[3]
+            self.hover = None
+            self.canvas.setCursor(Qt.ClosedHandCursor)
+            self.canvas.update()
             return
         if ev.button() == Qt.RightButton:
             m = self._marker_at(ev.position())
-            hit = (m[0], m[1]) if m is not None else (self._nearest(w) or (None, None))[:2]
+            hit = (m[0], m[1]) if m is not None else self._nearest(w) or (None, None)
             o, ci = hit
             if o is not None and ci in o.locked_starts:
                 self.ctrl.unlock_start(f"{o.id}:{ci}")
@@ -1172,12 +1265,89 @@ class StartPointTool(CanvasTool):
             q, self.drag, self.live = self.live, None, None
             self.canvas.setCursor(self.cursor)
             self.say(self.prompt)
-            if q is not None and dist(q, o.contours[ci].start) > 1e-6:
+            if q is not None and (dist(q, o.contours[ci].start) > 1e-6 or ci not in o.locked_starts):
                 self._set(o, ci, q)
+            if self.canvas.tool is self:
+                self._look(self.pos, w)
 
     def cancel(self) -> None:
         self.drag = None
         self.live = None
+        self.hover = None
+
+    def leave(self) -> None:
+        self.hover = None
+
+    def key(self, ev) -> bool:
+        k = ev.key()
+        if k == Qt.Key_Escape and self.drag is not None:
+            self.cancel()
+            self.canvas.setCursor(self.cursor)
+            self.say(self.prompt)
+            return True
+        step = {Qt.Key_Right: 1, Qt.Key_BracketRight: 1, Qt.Key_Left: -1, Qt.Key_BracketLeft: -1}.get(k)
+        if step is not None and self.drag is None:
+            return self.step(step)
+        return False
+
+    def step_keys(self) -> list[str]:
+        """The contour the keys are about: the one under the pointer, else the one changed last."""
+        if self.hover is not None:
+            return [f"{self.hover[0].id}:{self.hover[1]}"]
+        if self.last is not None and self.ctrl.contour_of(f"{self.last[0]}:{self.last[1]}") is not None:
+            return [f"{self.last[0]}:{self.last[1]}"]
+        return []
+
+    def step(self, direction: int) -> bool:
+        """Start the contour under the pointer (or the one changed last) at its next / previous corner."""
+        keys = self.step_keys()
+        if not keys:
+            return False
+        got = self.ctrl.contour_of(keys[0])
+        if got is None or not self.ctrl.step_starts(keys, direction):
+            self.say("This vector has no other corner to start at")
+            return False
+        self.last = (got[0].id, got[1])
+        if self.only is not None:
+            self.canvas.cancel_tool()
+            return True
+        if self.pos is not None:
+            self._look(self.pos, self.canvas.mouse_world)
+        else:
+            self.canvas.update()
+        return True
+
+    # -- the drawing --------------------------------------------------------------------------------------
+    def _label(self, p, q: QPointF, text: str) -> None:
+        font = p.font()
+        font.setPixelSize(10)
+        p.setFont(font)
+        w = 6.2 * len(text) + 8
+        box = QRectF(q.x() + 10, q.y() + 8, w, 14)
+        col = QColor("#d6249f")
+        p.setPen(QPen(col, 1))
+        bg = QColor(theme.get().panel)
+        bg.setAlpha(225)
+        p.setBrush(bg)
+        p.drawRoundedRect(box, 3, 3)
+        p.setPen(QColor(theme.get().text))
+        p.drawText(box, Qt.AlignCenter, text)
+
+    def _paint_features(self, p, c) -> None:
+        """The places of a contour a start can cling to: small marks, so that one sees them before it clings."""
+        feats = self._features(c)
+        if len(feats) > 400:
+            return
+        p.setBrush(Qt.NoBrush)
+        p.setPen(QPen(QColor("#4a90d9"), 1))
+        for pt, kind, _ in feats:
+            q = self.s(pt)
+            if kind == "node":
+                p.drawRect(QRectF(q.x() - 2.5, q.y() - 2.5, 5, 5))
+            elif kind == "quadrant":
+                p.drawPolygon([q + QPointF(0, -3.5), q + QPointF(3.5, 0), q + QPointF(0, 3.5), q + QPointF(-3.5, 0)])
+            else:
+                p.drawEllipse(q, 2, 2)
 
     def paint(self, p):
         for o, ci, c in self._contours():
@@ -1192,11 +1362,21 @@ class StartPointTool(CanvasTool):
                 p.drawRect(QRectF(q.x() - 4, q.y() - 4, 8, 8))
             else:
                 p.drawEllipse(q, 3.5, 3.5)
+        shown = self.drag if self.drag is not None else (self.hover[:2] if self.hover is not None else None)
+        if shown is not None and self._clings():
+            self._paint_features(p, shown[0].contours[shown[1]])
         if self.drag is not None and self.live is not None:
             q = self.s(self.live)
             p.setPen(QPen(QColor("#d6249f"), 1.5))
             p.setBrush(QBrush(QColor("#f1b6da")))
             p.drawEllipse(q, 5.5, 5.5)
+            self._label(p, q, self.KIND_NAMES.get(self.live_kind, ""))
+        elif self.hover is not None and not self.hover[4]:
+            q = self.s(self.hover[2])
+            p.setPen(QPen(QColor("#d6249f"), 1.5))
+            p.setBrush(Qt.NoBrush)
+            p.drawEllipse(q, 6.5, 6.5)
+            self._label(p, q, self.KIND_NAMES.get(self.hover[3], ""))
 
 
 class OrderTool(CanvasTool):
