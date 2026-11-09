@@ -163,6 +163,13 @@ importers, exporters, G-code filters, event hooks and GUI extensions. The built-
 features are registered through the very same API. A Python console and a command line
 interface allow scripting and batch work.
 
+## As a service (for the mobile page and for scripts)
+
+`iyicam.service` is the engine behind a plain JSON interface: import, export, vector commands, toolpath calculation,
+G-code, simulation and nesting, with the project passed as data and long work as jobs (progress, cancel). The
+[CNC-Assistant](https://github.com/ac2f/Cnc-Assistant) mobile page uses it to open the drawings on a computer from a
+phone; see [docs/service.md](docs/service.md).
+
 ## Installation
 
 **Without Python:** a packaged program is built by `packaging/build_windows.bat` (or `packaging/build_unix.sh`) or
@@ -272,9 +279,11 @@ iyicam/
   plugins/     plugin API and manager
   builtins/    built-in features, registered like a plugin
   gui/         PySide6 user interface (controller, canvas, tools, panels, dialogs)
+  service/     the engine behind a JSON interface (no window): used by the mobile page, see docs/service.md
   cli.py       command line interface
 examples/plugins/   example plugins (surfacing toolpath, G-code statistics, box maker)
-docs/               plugin and post-processor documentation
+docs/               plugin, post-processor and service documentation
+tools/              make_js_golden.py: the numbers a browser implementation of the editing is tested against
 tests/              pytest suite (geometry, toolpaths, posts, nesting, formats, plugins, GUI)
 ```
 
