@@ -1009,7 +1009,7 @@ class MainWindow(QMainWindow):
         if imp.func is import_cdr:
             # A CorelDRAW file goes through a converter program that may take a while: it is read away from the
             # drawing, in a thread (the window stays alive, with a Cancel button), and put into the project after.
-            kw = {"scale": options.get("scale", 100.0) / 100.0, "text_to_curves": options.get("text_to_curves", True)}
+            kw = {"scale": options.get("scale", 100.0) / 100.0}
             state: dict = {"label": f"Reading {Path(path).name}..."}
             scratch = Project("cdr")
             try:

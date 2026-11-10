@@ -1,7 +1,8 @@
-"""CorelDRAW files: read through a converter program.
+"""CorelDRAW files: the reader built into iyiCAM, and the programs that can be used besides it.
 
-No CorelDRAW (and no converter) is needed here: the converter is a small script of ours (``IYICAM_CDR_CONVERTER``) or a
-fake ``inkscape`` on the PATH. A real drawing is tried when ``IYICAM_CDR_SAMPLE`` names one (and a converter is installed).
+No CorelDRAW is needed here: the converter is a small script of ours (``IYICAM_CDR_CONVERTER``); the built-in reader is
+tried on files made by ``cdr_builder`` (and compared with libcdr's ``cdr2xhtml`` when that is installed). A real drawing
+is tried when ``IYICAM_CDR_SAMPLE`` names one.
 """
 import base64
 import os
@@ -227,7 +228,8 @@ def test_nothing_is_left_behind_and_the_original_is_untouched(fake, cdr_file, tm
     assert not [n for n in set(os.listdir(tempfile.gettempdir())) - before if n.startswith("iyicam-cdr-")]
 
 
-def test_no_converter_says_what_to_install(tmp_path, monkeypatch, cdr_file):
+def test_nothing_has_to_be_installed(tmp_path, monkeypatch):
+    """The built-in reader is always there; programs are extras (and are not looked for in a PATH that is empty)."""
     empty = tmp_path / "emptybin"
     empty.mkdir()
     monkeypatch.setenv("PATH", str(empty))
@@ -236,12 +238,9 @@ def test_no_converter_says_what_to_install(tmp_path, monkeypatch, cdr_file):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setattr(cdr.os.path, "isfile", lambda p: False)
     assert cdr.find_converters() == []
-    with pytest.raises(CdrError) as e:
-        read(cdr_file)
-    assert e.value.code == "cdr_no_converter"
-    assert "Inkscape" in str(e.value) and "DXF" in str(e.value)
     d = cdr.describe()
-    assert d["available"] is False and d["converters"] == [] and "Inkscape" in d["install"]
+    assert d["available"] is True and [c["name"] for c in d["converters"]] == ["builtin"]
+    assert "libcdr" in d["install"] and "Inkscape" not in d["install"] and d["reads"] == "CorelDRAW 5 to X8"
 
 
 def test_a_named_converter_that_is_not_there(fake, cdr_file):
@@ -337,87 +336,6 @@ def test_a_stopped_converter_leaves_no_child_behind(fake, cdr_file, tmp_path, mo
         pytest.fail("the grandchild of the converter is still running")
 
 
-# ---------------------------------------------------------------------------------------------- Inkscape (a fake one on the PATH)
-
-FAKE_INKSCAPE = textwrap.dedent('''\
-    #!{python}
-    import os, sys
-    args = sys.argv[1:]
-    if "--version" in args:
-        print("Inkscape 1.2.2 (fake)"); sys.exit(0)
-    open(os.environ["FAKE_ARGS"], "a").write(" ".join(args) + "\\n")
-    out = [a.split("=", 1)[1] for a in args if a.startswith("--export-filename=")][0]
-    if os.environ.get("FAKE_MODE") == "no-actions" and any(a.startswith("--actions") for a in args):
-        sys.exit(1)               # (an Inkscape that does not know the action: nothing is written)
-    open(out, "w").write(open(os.environ["FAKE_SVG"]).read())
-''')
-
-
-@pytest.fixture
-def fake_inkscape(tmp_path, monkeypatch):
-    if sys.platform == "win32":
-        pytest.skip("shell-script fake")
-    binp = tmp_path / "bin"
-    binp.mkdir()
-    exe = binp / "inkscape"
-    exe.write_text(FAKE_INKSCAPE.format(python=sys.executable))
-    exe.chmod(exe.stat().st_mode | stat.S_IEXEC)
-    svg = tmp_path / "fake.svg"
-    svg.write_text(SVG_100x50)
-    monkeypatch.setenv("PATH", str(binp))
-    monkeypatch.delenv("IYICAM_CDR_CONVERTER", raising=False)
-    monkeypatch.delenv("FAKE_MODE", raising=False)
-    monkeypatch.setenv("FAKE_SVG", str(svg))
-    monkeypatch.setenv("FAKE_ARGS", str(tmp_path / "args.txt"))
-    cdr._version_cache.clear()
-    return tmp_path / "args.txt"
-
-
-def test_inkscape_turns_text_into_curves_by_default(fake_inkscape, cdr_file):
-    found = cdr.find_converters()
-    assert [(c.name, c.version) for c in found] == [("inkscape", "1.2.2")]
-    p, objs, rep = read(cdr_file)
-    assert len(objs) == 2 and rep.via == "CorelDRAW X3 (inkscape)"
-    args = fake_inkscape.read_text().splitlines()
-    assert len(args) == 1 and "--actions=select-all:all;object-to-path" in args[0]
-    assert "--export-plain-svg" in args[0] and "--export-type=svg" in args[0]
-    assert args[0].rstrip().endswith("drawing.cdr")
-
-
-def test_inkscape_without_text_to_curves_and_with_a_fallback(fake_inkscape, cdr_file, monkeypatch):
-    read(cdr_file, text_to_curves=False)
-    assert "--actions" not in fake_inkscape.read_text()
-    fake_inkscape.unlink()
-    monkeypatch.setenv("FAKE_MODE", "no-actions")        # the first way fails, the plain one is tried
-    assert len(read(cdr_file)[1]) == 2
-    lines = fake_inkscape.read_text().splitlines()
-    assert len(lines) == 2 and "--actions" in lines[0] and "--actions" not in lines[1]
-
-
-def test_inkscape_does_not_touch_the_persons_settings(fake_inkscape, cdr_file, monkeypatch, tmp_path):
-    seen = tmp_path / "env.txt"
-    exe = tmp_path / "bin" / "inkscape"
-    exe.write_text(exe.read_text().replace("open(os.environ[\"FAKE_ARGS\"]",
-                                           f"open({str(seen)!r}, 'w').write(os.environ.get('INKSCAPE_PROFILE_DIR', ''))\n"
-                                           "open(os.environ[\"FAKE_ARGS\"]"))
-    read(cdr_file)
-    assert seen.read_text().endswith("inkscape-profile")
-
-
-def test_an_old_inkscape_is_not_used(tmp_path, monkeypatch):
-    if sys.platform == "win32":
-        pytest.skip("shell-script fake")
-    binp = tmp_path / "bin"
-    binp.mkdir()
-    exe = binp / "inkscape"
-    exe.write_text(f"#!{sys.executable}\nprint('Inkscape 0.92.5 (old)')\n")
-    exe.chmod(exe.stat().st_mode | stat.S_IEXEC)
-    monkeypatch.setenv("PATH", str(binp))
-    monkeypatch.delenv("IYICAM_CDR_CONVERTER", raising=False)
-    cdr._version_cache.clear()
-    assert [c.name for c in cdr.find_converters() if c.name == "inkscape"] == []
-
-
 # ---------------------------------------------------------------------------------------------- the service and the command line
 
 def _payload(path, **extra):
@@ -459,7 +377,7 @@ def test_service_import_a_remote_caller_cannot_run_a_program_of_its_own(fake, cd
 def test_schema_tells_whether_corel_files_can_be_read(fake):
     from iyicam.service.ops import op_schema
     sc = op_schema()
-    assert sc["cdr"]["available"] is True and sc["cdr"]["converters"][0]["name"] == "custom"
+    assert sc["cdr"]["available"] is True and [c["name"] for c in sc["cdr"]["converters"]] == ["custom", "builtin"]
     assert any("cdr" in i["extensions"] for i in sc["importers"])
 
 
@@ -485,34 +403,28 @@ SAMPLE = os.environ.get("IYICAM_CDR_SAMPLE")
 
 
 @pytest.mark.skipif(not SAMPLE or not os.path.isfile(SAMPLE or ""), reason="IYICAM_CDR_SAMPLE names no file")
-@pytest.mark.parametrize("name", ["inkscape", "cdr2xhtml", "libreoffice"])
+@pytest.mark.parametrize("name", ["builtin", "cdr2xhtml", "libreoffice"])
 def test_a_real_drawing(name):
-    """The sample the numbers below come from is a 332 x 401 mm drawing saved by CorelDRAW X3: every converter must
+    """The sample the numbers below come from is a 332 x 401 mm drawing saved by CorelDRAW X3: every reader must
     bring it in at that size (the sheet's lower left is where the drawing's is)."""
-    if name not in {c.name for c in cdr.find_converters()}:
+    if name != "builtin" and name not in {c.name for c in cdr.find_converters()}:
         pytest.skip(f"{name} is not installed")
     p, objs, rep = read(SAMPLE, converter=name)
     bb = p.sheets[0].bbox()
     assert (bb.width, bb.height) == pytest.approx((332.4, 401.2), abs=0.5)
     assert len(objs) > 100 and rep.via.endswith(f"({name})")
-    if name == "inkscape":
-        assert not rep.skipped                       # text became curves
-    else:
-        assert rep.skipped.get("TEXT") and any("Text was left out" in n for n in rep.notes)
+    assert rep.skipped.get("TEXT") and any("Text was left out" in n for n in rep.notes)      # (the letters are in a font)
 
 
 @pytest.mark.skipif(not SAMPLE or not os.path.isfile(SAMPLE or ""), reason="IYICAM_CDR_SAMPLE names no file")
 def test_a_real_drawing_in_a_zip_package(tmp_path):
     """CorelDRAW X4 and later keep the drawing in a ZIP package (content/riffData.cdr). The sample is put in one (a real
-    X4+ file is not at hand, so this tests the package handling, not the newer format) and read through every converter."""
+    X4+ file is not at hand, so this tests the package handling, not the newer format) and read by every reader."""
     packed = tmp_path / "packed.cdr"
     with zipfile.ZipFile(packed, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("content/riffData.cdr", open(SAMPLE, "rb").read())
     assert sniff(packed) == {"container": "zip", "version": 13}
-    found = [c.name for c in cdr.find_converters()]
-    if not found:
-        pytest.skip("no converter is installed")
-    for name in found:
+    for name in ["builtin", *[c.name for c in cdr.find_converters()]]:
         p, objs, rep = read(packed, converter=name)
         bb = p.sheets[0].bbox()
         assert (bb.width, bb.height) == pytest.approx((332.4, 401.2), abs=0.5), name

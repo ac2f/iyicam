@@ -1858,12 +1858,7 @@ class ImportDialog(QDialog):
         dxf = path.lower().endswith(".dxf")
         params = [Param("keep_layers", "Use the file's layers", "bool", True)]
         if path.lower().endswith(".cdr"):
-            from ..formats.cdr import find_converters
-            have = {c.name for c in find_converters()}
             params = [Param("scale", "Scale", "percent", 100.0, min=0.001)]
-            if "inkscape" in have:                 # (only Inkscape can turn text into curves)
-                params.append(Param("text_to_curves", "Turn text into curves", "bool", True,
-                                    help="Text is cut as the outline of its letters. Without this it is left out"))
         elif dxf:
             from ..formats.dxf import detect_units
             code, name = detect_units(path)

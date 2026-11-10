@@ -77,10 +77,10 @@ with Python plugins.
 - DXF import (lines, arcs, circles, polylines with bulges, exact cubic and periodic splines,
   ellipses, solids, blocks, planes tilted in space, units, gap joining) and export; SVG import
   (transforms, units exact to the micron, Inkscape layers) and export; HPGL (`.plt`) import from
-  cutting plotters; **CorelDRAW (`.cdr`) import** through Inkscape, LibreOffice or the libcdr tools
-  (text becomes curves with Inkscape; [docs/cdr.md](docs/cdr.md)). **An import says what it could not
-  bring in** (hatches, text, ...) instead of dropping it silently; the shapes are checked against an
-  independent reading of the files
+  cutting plotters; **CorelDRAW (`.cdr`, versions 5 to X8) import with nothing to install** (a port
+  of libcdr's geometry, checked against libcdr itself; [docs/cdr.md](docs/cdr.md)). **An import says
+  what it could not bring in** (hatches, text, ...) instead of dropping it silently; the shapes are
+  checked against an independent reading of the files
 
 **Machining**
 - Material setup: thickness, Z zero top / bottom, XY origin (9 positions), safe Z,
@@ -228,7 +228,7 @@ middle button or Space+drag to pan, `Esc` back to selection, `F5` recalculate, `
 
 ```bash
 python -m iyicam posts                                    # list post-processors
-python -m iyicam import drawing.dxf -o job.icam --thickness 18     # also .svg .plt .cdr (CorelDRAW needs Inkscape or LibreOffice)
+python -m iyicam import drawing.dxf -o job.icam --thickness 18     # also .svg .plt .cdr
 python -m iyicam export job.icam -o parts.dxf --dxf-version 2000   # layers and their colours are kept
 python -m iyicam nest job.icam -o nested.icam --width 2800 --height 2100 --spacing 8
 python -m iyicam info nested.icam                         # sheets, times, warnings
@@ -277,7 +277,7 @@ iyicam/
                ordering, job calculation, simulation
   post/        post-processor engine, TOML loader, built-in posts, G-code export
   nesting/     no-fit polygon nesting on plates of any shape, part grouping, stock of leftovers
-  formats/     DXF, SVG, HPGL and CorelDRAW (through a converter) import, DXF and SVG export
+  formats/     DXF, SVG, HPGL and CorelDRAW import, DXF and SVG export
   plugins/     plugin API and manager
   builtins/    built-in features, registered like a plugin
   gui/         PySide6 user interface (controller, canvas, tools, panels, dialogs)
@@ -316,7 +316,7 @@ How the program is tested besides the usual unit tests (all in `tests/`):
 | `test_chaos.py` | a long random session (vectors, commands, layers, sheets, toolpaths, nesting, saving) after which undoing everything gives the first project and redoing it the last |
 | `test_thin.py`, `test_geom.py` | the fast centre-line thinning against the plain algorithm, shapes with no area and piles of shapes on one spot (refused with a message, never a hang) |
 | `test_import_fidelity.py` | DXF compared with an independent reading, SVG and HPGL with exactly known shapes |
-| `test_cdr.py` | CorelDRAW files through converters of its own: file recognition (RIFF and ZIP, versions), cleaning of what converters write, errors that say what to do, the time limit, Cancel, no process left behind, the service and the command line; a real drawing when `IYICAM_CDR_SAMPLE` names one |
+| `test_cdr.py`, `test_cdr_native.py` | CorelDRAW files: recognition (RIFF and ZIP, versions), the built-in reader on files made by `cdr_builder.py` for every version 5 to X8 and object kind, **compared with libcdr's own output** (`cdr2xhtml`, when installed), damaged files, programs of the person's own (errors that say what to do, time limit, Cancel, no process left behind), the service and the command line; a real drawing when `IYICAM_CDR_SAMPLE` names one |
 | `test_nesting_*.py` | an independent check of every layout (overlap, spacing, border, counts) and fuzzing that nesting and re-nesting never adds or loses a vector |
 
 The fuzz tests run a small, reproducible set of cases. For a long run set

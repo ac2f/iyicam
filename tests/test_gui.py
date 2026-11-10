@@ -827,8 +827,28 @@ def test_the_import_dialog_for_cdr_has_its_own_questions(win, tmp_path, monkeypa
     from iyicam.gui.dialogs import ImportDialog
     f = _fake_converter(tmp_path, monkeypatch)
     names = [p.name for p in ImportDialog(win.ctrl, str(f), win).params]
-    assert names == ["scale", "center"]       # a custom converter is not Inkscape: no "text to curves" question
-    assert "keep_layers" not in names and "units" not in names
-    from iyicam.formats import cdr
-    monkeypatch.setattr(cdr, "find_converters", lambda: [cdr.Converter("inkscape", "/x/inkscape", "1.2.2")])
-    assert [p.name for p in ImportDialog(win.ctrl, str(f), win).params] == ["scale", "text_to_curves", "center"]
+    assert names == ["scale", "center"]       # not "use the file's layers", not units: a CorelDRAW file has neither
+
+
+def test_import_cdr_with_the_built_in_reader_needs_no_program(win, tmp_path, monkeypatch):
+    """No converter on the computer at all: the drawing is read by iyiCAM itself, and ends up on the current layer."""
+    import sys
+    sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent))
+    from cdr_builder import Builder
+    empty = tmp_path / "emptybin"
+    empty.mkdir()
+    monkeypatch.setenv("PATH", str(empty))
+    monkeypatch.delenv("IYICAM_CDR_CONVERTER", raising=False)
+    b = Builder(1300, page=(8.0, 6.0))
+    b.add_page([b.rect(2.0, 1.0, (0, 0, 0, 0), 0, (1, 0, 1.0, 0, 1, 0.5)), b.ellipse(1.0, 1.0, 0, 0, False, (1, 0, -2.0, 0, 1, -1.0)),
+                b.text(0, 0)])
+    f = tmp_path / "plain.cdr"
+    b.save(f)
+    from PySide6.QtWidgets import QMessageBox
+    warned = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: warned.append(a[2]))
+    objs = win.import_vectors(str(f), {"scale": 100.0, "center": False})
+    assert len(objs) == 2 and "CorelDRAW X3 (builtin)" in win.statusBar().currentMessage()
+    assert len(warned) == 1 and "Text was left out" in warned[0]            # the text is said to be left out
+    win.ctrl.undo()
+    assert not win.ctrl.sheet.vectors

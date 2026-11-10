@@ -18,7 +18,7 @@ class ImportReport:
     skipped: Counter = field(default_factory=Counter)   # kind of entity -> how many were left out
     errors: list[str] = field(default_factory=list)     # things that failed (one line each)
     notes: list[str] = field(default_factory=list)      # things worth knowing that are not faults
-    via: str = ""                                       # how a file was read when it took a converter ("CorelDRAW X3, with Inkscape")
+    via: str = ""                                       # how a file was read when it took a converter ("CorelDRAW X3 (builtin)")
 
     @property
     def clean(self) -> bool:

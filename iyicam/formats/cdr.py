@@ -1,19 +1,20 @@
-"""CorelDRAW (``.cdr``) files, read through a converter program.
+"""CorelDRAW (``.cdr``) files.
 
-CorelDRAW's format is closed and changes with every version; reading it is a project of its own (libcdr, the library
-behind LibreOffice's and Inkscape's import, reads CorelDRAW 7 to X8).  iyiCAM does not repeat that work: it asks a
-program that already reads it for an SVG, and imports the SVG with its own, exact SVG importer (millimetres to the
-micron, arcs, beziers).  The programs, tried in this order, the first that gives drawing wins:
+Nothing has to be installed: ``cdr_native`` reads the drawings itself (a port of the geometry part of libcdr, the library
+behind the CorelDRAW import of LibreOffice and of many other programs: CorelDRAW 5 to X8).  Programs that already read the format can be
+used besides it, tried in this order, the first that gives a drawing wins:
 
-``inkscape``    Inkscape 1.x. Text is turned into curves (``object-to-path``): what a CNC job needs.
-``cdr2xhtml``   the libcdr tools (Linux: ``libcdr-tools``). Geometry only, text is left out.
-``libreoffice`` LibreOffice. Geometry only, text is left out; its fill-and-outline duplicates are cleaned away.
+``custom``      your own: ``IYICAM_CDR_CONVERTER`` is a command with ``{input}`` and ``{output}`` in it (a file of SVG is
+                expected at ``{output}``; without ``{output}`` the SVG is read from the program's standard output)
+``builtin``     the reader of iyiCAM (first for the versions it was compared with libcdr's own output on a real file:
+                CorelDRAW X3; for the others the programs below go first, when they are on the computer)
+``cdr2xhtml``   the libcdr tools (Linux: ``libcdr-tools``), the reference
+``libreoffice`` LibreOffice; its fill-and-outline duplicates are cleaned away
 
-``IYICAM_CDR_CONVERTER`` names a program of your own: a command with ``{input}`` and ``{output}`` in it (a file of
-SVG is expected at ``{output}``; without ``{output}`` the SVG is read from the program's standard output).
-``IYICAM_CDR_TIMEOUT`` is how many seconds all of it may take (default 60).
+Text is not read by any of them as outlines (the letters are in the font, not in the file): it is left out and said so.
+``IYICAM_CDR_TIMEOUT`` is how many seconds the programs may take (default 60).
 
-What cannot be read (CorelDRAW 2018 and newer, bitmaps, effects, text without Inkscape) is said, never dropped silently.
+What cannot be read (CorelDRAW 2018 and newer, bitmaps, text) is said, never dropped silently.
 """
 from __future__ import annotations
 
@@ -32,6 +33,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..core.document import Project, Sheet, VectorObject
+from ..core.geom import Arc, Bezier, Contour, Line
+from . import cdr_native
 from .report import ImportReport
 
 SVG_NS = "http://www.w3.org/2000/svg"
@@ -40,13 +43,13 @@ MAX_TIMEOUT = 600.0
 MAX_BYTES = 200 * 1024 * 1024
 LAST_READ_VERSION = 18           # CorelDRAW X8: the newest version libcdr reads
 
-VERSION_NAMES = {7: "7", 8: "8", 9: "9", 10: "10", 11: "11", 12: "12", 13: "X3", 14: "X4", 15: "X5", 16: "X6",
+VERSION_NAMES = {5: "5", 6: "6", 7: "7", 8: "8", 9: "9", 10: "10", 11: "11", 12: "12", 13: "X3", 14: "X4", 15: "X5", 16: "X6",
                  17: "X7", 18: "X8", 19: "2017", 20: "2018", 21: "2019", 22: "2020", 23: "2021", 24: "2022",
                  25: "2023", 26: "2024"}
 
-INSTALL_HINT = ("Install Inkscape (inkscape.org: best, text becomes curves) or LibreOffice (libreoffice.org), or on Linux "
-                "the libcdr tools (apt install libcdr-tools). Or export the drawing from CorelDRAW as DXF or SVG "
-                "(File > Export).")
+INSTALL_HINT = ("Nothing has to be installed for most files. For the others LibreOffice (libreoffice.org) or, on Linux, the "
+                "libcdr tools (apt install libcdr-tools) are used when they are on the computer. Or export the drawing from "
+                "CorelDRAW as DXF or SVG (File > Export).")
 
 
 class CdrError(ValueError):
@@ -127,7 +130,7 @@ def sniff(path: str | Path) -> dict:
 
 @dataclass
 class Converter:
-    name: str                 # inkscape | cdr2xhtml | libreoffice | custom
+    name: str                 # builtin | cdr2xhtml | libreoffice | custom
     exe: str
     version: str = ""
 
@@ -154,39 +157,17 @@ def _find(names: tuple[str, ...], extra: list[str]) -> str | None:
     return next((p for p in extra if p and os.path.isfile(p)), None)
 
 
-_version_cache: dict[str, str] = {}
-
-
-def _inkscape_version(exe: str) -> str:
-    if exe in _version_cache:
-        return _version_cache[exe]
-    try:
-        r = subprocess.run([exe, "--version"], capture_output=True, text=True, timeout=30, stdin=subprocess.DEVNULL,
-                           **_no_window())
-        m = re.search(r"Inkscape\s+(\d+)\.(\d+)(?:\.(\d+))?", r.stdout + r.stderr)
-        _version_cache[exe] = ".".join(g for g in m.groups() if g) if m else ""
-    except (OSError, subprocess.SubprocessError):
-        _version_cache[exe] = ""
-    return _version_cache[exe]
-
-
 def _no_window() -> dict:
     """A window of a console program must not flash up in front of a program with windows (Windows)."""
     return {"creationflags": subprocess.CREATE_NO_WINDOW} if sys.platform == "win32" else {}
 
 
 def find_converters() -> list[Converter]:
-    """The converter programs found on this computer, in the order they are tried."""
+    """The converter programs found on this computer (the reader of iyiCAM itself is not one of them)."""
     out: list[Converter] = []
     custom = os.environ.get("IYICAM_CDR_CONVERTER", "").strip()
     if custom:
         out.append(Converter("custom", custom))
-    ink = _find(("inkscape.com", "inkscape"), [*_program_dirs("Inkscape", "bin", "inkscape.com"),
-                                                "/Applications/Inkscape.app/Contents/MacOS/inkscape"])
-    if ink:
-        v = _inkscape_version(ink)
-        if not v or int(v.split(".")[0]) >= 1:         # 0.92 has other options: not used
-            out.append(Converter("inkscape", ink, v))
     x = _find(("cdr2xhtml",), [])
     if x:
         out.append(Converter("cdr2xhtml", x))
@@ -199,9 +180,12 @@ def find_converters() -> list[Converter]:
 
 def describe() -> dict:
     """For a screen that tells whether CorelDRAW files can be opened here."""
+    builtin = Converter("builtin", "built in", f"CorelDRAW {cdr_native.version_name(cdr_native.FIRST_VERSION)} to "
+                                                 f"{cdr_native.version_name(cdr_native.LAST_VERSION)}")
     found = find_converters()
-    return {"available": bool(found), "converters": [c.describe() for c in found], "install": INSTALL_HINT,
-            "reads": f"CorelDRAW 7 to {VERSION_NAMES[LAST_READ_VERSION]}"}
+    ordered = [c for c in found if c.name == "custom"] + [builtin] + [c for c in found if c.name != "custom"]
+    return {"available": True, "converters": [c.describe() for c in ordered],
+            "install": INSTALL_HINT, "reads": f"CorelDRAW 5 to {VERSION_NAMES[LAST_READ_VERSION]}", "text": False}
 
 
 class _Budget:
@@ -315,29 +299,14 @@ def clean_libreoffice_svg(text: str) -> str:
     return '<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(root, encoding="unicode")
 
 
-def _via_inkscape(conv: Converter, src: Path, tmp: Path, budget: _Budget, text_to_curves: bool) -> str:
-    out = tmp / "inkscape.svg"
-    env = dict(os.environ, INKSCAPE_PROFILE_DIR=str(tmp / "inkscape-profile"))   # (leave the person's settings alone)
-    plain = [conv.exe, "--export-type=svg", "--export-plain-svg", f"--export-filename={out}"]
-    attempts = ([[conv.exe, "--actions=select-all:all;object-to-path", *plain[1:]]] if text_to_curves else []) + [plain]
-    last = "wrote nothing"
-    for args in attempts:
-        out.unlink(missing_ok=True)
-        res = _run([*args, str(src)], budget, tmp, env)
-        if out.is_file() and out.stat().st_size > 0:
-            return _read_text(out)
-        last = _tail(res)
-    raise _Failed(last)
-
-
-def _via_cdr2xhtml(conv: Converter, src: Path, tmp: Path, budget: _Budget, text_to_curves: bool) -> str:
+def _via_cdr2xhtml(conv: Converter, src: Path, tmp: Path, budget: _Budget) -> str:
     res = _run([conv.exe, str(src)], budget, tmp)
     if res.returncode != 0 or not res.stdout.strip():
         raise _Failed(_tail(res))
     return unwrap_xhtml(res.stdout)
 
 
-def _via_libreoffice(conv: Converter, src: Path, tmp: Path, budget: _Budget, text_to_curves: bool) -> str:
+def _via_libreoffice(conv: Converter, src: Path, tmp: Path, budget: _Budget) -> str:
     outdir = tmp / "lo-out"
     outdir.mkdir(exist_ok=True)
     profile = (tmp / "lo-profile").as_uri()                     # its own profile: it does not meet a LibreOffice that is open
@@ -349,7 +318,7 @@ def _via_libreoffice(conv: Converter, src: Path, tmp: Path, budget: _Budget, tex
     return clean_libreoffice_svg(_read_text(out))
 
 
-def _via_custom(conv: Converter, src: Path, tmp: Path, budget: _Budget, text_to_curves: bool) -> str:
+def _via_custom(conv: Converter, src: Path, tmp: Path, budget: _Budget) -> str:
     out = tmp / "custom.svg"
     template = conv.exe
     parts = shlex.split(template, posix=os.name != "nt")
@@ -364,36 +333,77 @@ def _via_custom(conv: Converter, src: Path, tmp: Path, budget: _Budget, text_to_
     return res.stdout.decode("utf-8", "replace")
 
 
-_RUNNERS = {"inkscape": _via_inkscape, "cdr2xhtml": _via_cdr2xhtml, "libreoffice": _via_libreoffice, "custom": _via_custom}
+_RUNNERS = {"cdr2xhtml": _via_cdr2xhtml, "libreoffice": _via_libreoffice, "custom": _via_custom}
 
 
 # ---------------------------------------------------------------------------------------------------------------
 # the importer
 # ---------------------------------------------------------------------------------------------------------------
 
+BUILTIN = Converter("builtin", "built in")
+TEXT_NOTE = ("Text was left out (a text object is the letters of a font, not outlines): in CorelDRAW select it and use "
+             "Arrange > Convert To Curves (Ctrl+Q), then save the drawing again.")
+
+
+def _plan(native_version: int, converter: str | None) -> list[Converter]:
+    """The readers to try, in order: the person's own, then the built-in one first when it has been compared with libcdr
+    on a drawing of this version (and otherwise last, after the programs that are libcdr itself)."""
+    found = find_converters()
+    custom = [c for c in found if c.name == "custom"]
+    others = [c for c in found if c.name != "custom"]
+    verified = native_version in cdr_native.VERIFIED
+    seq = custom + ([BUILTIN, *others] if verified else [*others, BUILTIN])
+    return [c for c in seq if converter in (None, "", c.name)]
+
+
+def _native_objects(drawing, project: Project, sheet: Sheet, layer_id: str | None, scale: float) -> list[VectorObject]:
+    lid = layer_id or project.layers[0].id
+    objs = []
+    for shape in drawing.page.shapes:
+        contours = []
+        for c in shape.contours:
+            segs = []
+            for sg in c.segs:
+                pts = [(x * scale, y * scale) for x, y in sg[1:]]
+                if sg[0] == "L":
+                    segs.append(Line(pts[0], pts[1]))
+                elif sg[0] == "B":
+                    segs.append(Bezier(pts[0], pts[1], pts[2], pts[3]))
+                else:
+                    segs.append(Arc.through(pts[0], pts[1], pts[2]))
+            contours.append(Contour(segs, c.closed))
+        objs.append(VectorObject(contours, lid, ""))
+    sheet.vectors.extend(objs)
+    return objs
+
+
+def _finite(drawing) -> bool:
+    for sh in drawing.page.shapes:
+        for c in sh.contours:
+            for sg in c.segs:
+                for x, y in sg[1:]:
+                    if not (abs(x) < 1e7 and abs(y) < 1e7):          # (false for nan and inf too)
+                        return False
+    return True
+
+
 def import_cdr(path: str | Path, project: Project, sheet: Sheet, layer_id: str | None = None, scale: float = 1.0,
-               text_to_curves: bool = True, converter: str | None = None, timeout: float | None = None,
-               keep_layers: bool = False, cancel: Callable[[], bool] | None = None,
-               report: ImportReport | None = None) -> list[VectorObject]:
-    """Read a CorelDRAW drawing into ``sheet``; returns the vectors made.
+               converter: str | None = None, timeout: float | None = None,
+               cancel: Callable[[], bool] | None = None, report: ImportReport | None = None) -> list[VectorObject]:
+    """Read the first page of a CorelDRAW drawing into ``sheet``; returns the vectors made (all on ``layer_id``).
 
     ``scale``: 1.0 keeps the size the drawing has in CorelDRAW.
-    ``text_to_curves``: turn text into curves (only Inkscape can; without it text is left out and reported).
-    ``converter``: use only this one (``inkscape`` / ``cdr2xhtml`` / ``libreoffice`` / ``custom``).
-    ``timeout``: seconds for all of it. ``cancel``: a function that says True when the person has had enough.
-    ``keep_layers``: put the vectors on layers named after the drawing's (CorelDRAW's layers do not survive the
-    conversion with every program; by default everything goes on ``layer_id``)."""
+    ``converter``: use only this one (``builtin`` / ``cdr2xhtml`` / ``libreoffice`` / ``custom``).
+    ``timeout``: seconds for the programs. ``cancel``: a function that says True when the person has had enough."""
     from .svg import import_svg
     info = sniff(path)
     label = f"CorelDRAW {version_name(info['version'])}" if info["version"] else "CorelDRAW"
     if report is None:
         report = ImportReport()
-    candidates = [c for c in find_converters() if converter in (None, "", c.name)]
+    native_version = (info["version"] or 0) * 100
+    candidates = _plan(native_version, converter)
     if not candidates:
-        raise CdrError("cdr_no_converter",
-                       ("There is no converter named " + converter + " here. " if converter else
-                        "A CorelDRAW file is read through a converter program and none was found on this computer. ")
-                       + INSTALL_HINT)
+        raise CdrError("cdr_no_converter", f"There is no reader named {converter} here. " + INSTALL_HINT)
     try:
         limit = float(timeout if timeout is not None else os.environ.get("IYICAM_CDR_TIMEOUT") or TIMEOUT)
     except (TypeError, ValueError):
@@ -401,17 +411,55 @@ def import_cdr(path: str | Path, project: Project, sheet: Sheet, layer_id: str |
     limit = min(max(limit, 1.0), MAX_TIMEOUT)         # (a remote caller may not ask for hours)
     budget = _Budget(limit, cancel)
     failures: list[str] = []
-    with tempfile.TemporaryDirectory(prefix="iyicam-cdr-") as tmpdir:
-        tmp = Path(tmpdir)
-        src = tmp / "drawing.cdr"            # a plain name: no converter has to cope with odd characters in a path
-        shutil.copyfile(path, src)
+    tmpdir = tempfile.TemporaryDirectory(prefix="iyicam-cdr-")
+    with tmpdir:
+        tmp = Path(tmpdir.name)
+        src = tmp / "drawing.cdr"            # a plain name: no program has to cope with odd characters in a path
         for conv in candidates:
+            budget.check()
+            if conv.name == "builtin":
+                try:
+                    drawing = cdr_native.read(path)
+                except cdr_native.Unsupported as exc:
+                    failures.append(f"builtin: {exc}")
+                    continue
+                if not drawing.page.shapes:
+                    if drawing.skipped.get("TEXT"):
+                        raise CdrError("cdr_text_only", "This drawing has only text, and text is not outlines in the file. "
+                                       "In CorelDRAW select everything, use Arrange > Convert To Curves (Ctrl+Q) and "
+                                       "save the drawing again.", texts=drawing.skipped["TEXT"])
+                    failures.append("builtin: the drawing has no outlines")
+                    continue
+                if not _finite(drawing):
+                    failures.append("builtin: the file holds coordinates that make no sense")
+                    continue
+                objs = _native_objects(drawing, project, sheet, layer_id, scale)
+                report.read["SHAPE"] += len(objs)
+                for kind, n in drawing.skipped.items():
+                    report.skip(kind, n)
+                report.via = f"{label} ({conv.name})"
+                if drawing.skipped.get("TEXT"):
+                    report.notes.append(TEXT_NOTE)
+                if drawing.skipped.get("IMAGE"):
+                    report.notes.append("Bitmaps in the drawing are not imported.")
+                if drawing.page.master:
+                    report.notes.append(f"{drawing.page.master} shape(s) come from the master page of the drawing (they are "
+                                        f"on every page).")
+                if len(drawing.pages) > 1:
+                    report.notes.append(f"The drawing has {len(drawing.pages)} pages: only the first was read.")
+                if drawing.unverified:
+                    report.notes.append(
+                        f"This {label} file was read by the built-in reader, which has been compared with files of "
+                        f"CorelDRAW X3 only: check the size of the result against the drawing in CorelDRAW before cutting.")
+                return objs
             try:
-                svg_text = _RUNNERS[conv.name](conv, src, tmp, budget, text_to_curves)
+                if not src.exists():
+                    shutil.copyfile(path, src)
+                svg_text = _RUNNERS[conv.name](conv, src, tmp, budget)
                 svg_file = tmp / f"{conv.name}-clean.svg"
                 svg_file.write_text(svg_text, encoding="utf-8")
                 sub = ImportReport()
-                objs = import_svg(svg_file, project, sheet, layer_id, keep_layers=keep_layers, scale=scale, report=sub)
+                objs = import_svg(svg_file, project, sheet, layer_id, keep_layers=False, scale=scale, report=sub)
             except _Failed as exc:
                 failures.append(f"{conv.name}: {exc}")
                 continue
@@ -429,8 +477,7 @@ def import_cdr(path: str | Path, project: Project, sheet: Sheet, layer_id: str |
             report.notes.extend(sub.notes)
             report.via = f"{label} ({conv.name})"
             if sub.skipped.get("TEXT"):
-                report.notes.append("Text was left out: in CorelDRAW turn it into curves (Arrange > Convert To Curves, "
-                                    "Ctrl+Q) and save again, or install Inkscape, which converts it while reading.")
+                report.notes.append(TEXT_NOTE)
             if sub.skipped.get("IMAGE"):
                 report.notes.append("Bitmaps in the drawing are not imported.")
             return objs
@@ -438,8 +485,8 @@ def import_cdr(path: str | Path, project: Project, sheet: Sheet, layer_id: str |
     why = "; ".join(failures)
     if newer:
         raise CdrError("cdr_version", f"This file was saved by CorelDRAW {version_name(info['version'])}, newer than "
-                       f"the converters read (CorelDRAW 7 to {VERSION_NAMES[LAST_READ_VERSION]}). In CorelDRAW use File > "
+                       f"the readers know (CorelDRAW 5 to {VERSION_NAMES[LAST_READ_VERSION]}). In CorelDRAW use File > "
                        f"Save As and choose an older version (X8), or export the drawing as DXF or SVG. ({why})",
                        version=info["version"], name=version_name(info["version"]), why=why)
-    raise CdrError("cdr_failed", f"None of the converters could read this CorelDRAW file: {why}. If it is a drawing of a "
-                                 f"newer or an unusual CorelDRAW, export it from CorelDRAW as DXF or SVG.", reasons=failures, why=why)
+    raise CdrError("cdr_failed", f"This CorelDRAW file could not be read: {why}. If it is a drawing of a newer or an unusual "
+                                 f"CorelDRAW, export it from CorelDRAW as DXF or SVG.", reasons=failures, why=why)
