@@ -63,7 +63,7 @@ class SelfTest:
             raise RuntimeError(f"toolpath types missing: {sorted(ops - set(reg.operations))}")
         if len(reg.posts) < 6:     # the post-processors are files that are part of the package
             raise RuntimeError(f"only {len(reg.posts)} post-processors found (the .toml files are missing?)")
-        for ext in ("dxf", "svg", "plt"):
+        for ext in ("dxf", "svg", "plt", "cdr"):
             if reg.importer_for(ext) is None:
                 raise RuntimeError(f"no importer for .{ext}")
         return f"{len(reg.operations)} toolpath types, {len(reg.posts)} post-processors, {len(reg.commands)} commands"

@@ -31,9 +31,9 @@ plugins are read from `~/.iyicam` (`IYICAM_HOME`); `IYICAM_SERVICE_PLUGINS=0` le
 | operation | payload | answer |
 |---|---|---|
 | `ping` | | `{ok, api, iyicam, plugin_errors}` — `api` is the version of this interface (`API_VERSION`) |
-| `schema` | | `operations` (toolpath types with their parameters), `commands`, `posts`, `importers`, `exporters`, `tools`, `tool_types`, `sequence` (cut order options), `origins`, `layer_colors` |
+| `schema` | | `operations` (toolpath types with their parameters), `commands`, `posts`, `importers`, `exporters`, `tools`, `tool_types`, `sequence` (cut order options), `origins`, `layer_colors`, `cdr` (can CorelDRAW files be read here: `{available, converters, install, reads}`) |
 | `validate` | `project` | `{ok, project, counts}` — the project as this program would write it, or `invalid_project` |
-| `import` | `name`, `data_b64`, `thickness?`, `project?`, `sheet?`, `options?` | `{project, report, added}`; with `project` the drawing is added to it |
+| `import` | `name`, `data_b64`, `thickness?`, `project?`, `sheet?`, `options?` | `{project, report, added}`; with `project` the drawing is added to it. `report.via` says how a converted file (`.cdr`) was read, e.g. `CorelDRAW X3 (inkscape)`; its errors keep their own codes (`cdr_no_converter`, `cdr_not_cdr`, `cdr_version`, `cdr_failed`, `cdr_timeout`, ...), see [cdr.md](cdr.md) |
 | `export` | `project`, `format` (`dxf` `svg` `icam`, …), `sheet?` (id or `"all"`), `selection?`, `options?`, `file_name?` | `{files: [{name, mime, data_b64}]}` |
 | `command` | `project`, `command` (an id from `schema`), `sheet?`, `selection?`, `values?`, `active_layer?` | `{ok, project, selection, messages, changed}`; `command_failed` leaves nothing changed |
 | `compute` | `project`, `sheets?`, `toolpaths?`, `optimise_starts?`, `preview?`, `preview_step?` | `{results, patch, totals, seconds}` — see below |

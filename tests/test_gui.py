@@ -11,7 +11,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from iyicam.core import shapes  # noqa: E402
 from iyicam.core.document import VectorObject  # noqa: E402
-from iyicam.core.geom import Bezier  # noqa: E402
+from iyicam.core.geom import BBox, Bezier  # noqa: E402
 
 
 @pytest.fixture
@@ -766,3 +766,69 @@ def test_nesting_dialog_inner_pieces_and_filled_holes(win):
     assert out is not None and out.unplaced == 0
     placed_ids = {o.id for s in ctrl.project.sheets for o in s.vectors}
     assert {plate.id, hole.id, hub.id} <= placed_ids and len(placed_ids) == 7   # nothing added, nothing lost
+
+
+# -- CorelDRAW files (read through a converter program, away from the drawing, then put into it) ---------------
+
+def _fake_converter(tmp_path, monkeypatch, mode="ok"):
+    import sys
+    script = tmp_path / "fake_conv.py"
+    script.write_text(
+        "import os, sys, time\n"
+        "mode = os.environ.get('FAKE_MODE', 'ok')\n"
+        "if mode == 'sleep': time.sleep(60)\n"
+        "if mode == 'fail': print('boom', file=sys.stderr); sys.exit(3)\n"
+        "open(sys.argv[2], 'w').write('<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"100mm\" height=\"50mm\" "
+        "viewBox=\"0 0 100 50\"><rect x=\"10\" y=\"10\" width=\"30\" height=\"20\"/><path d=\"M50 10 L90 10 L90 40 Z\"/></svg>')\n")
+    empty = tmp_path / "emptybin"
+    empty.mkdir()
+    monkeypatch.setenv("PATH", str(empty))
+    monkeypatch.setenv("IYICAM_CDR_CONVERTER", f'"{sys.executable}" "{script}" {{input}} {{output}}')
+    monkeypatch.setenv("FAKE_MODE", mode)
+    f = tmp_path / "drawing.cdr"
+    f.write_bytes(b"RIFF" + (64).to_bytes(4, "little") + b"CDRD" + b"\0" * 64)
+    return f
+
+
+def test_import_cdr_into_the_open_drawing(win, tmp_path, monkeypatch):
+    f = _fake_converter(tmp_path, monkeypatch)
+    ctrl = win.ctrl
+    with ctrl.edit("layer"):
+        cut = ctrl.project.add_layer("Cut")
+    ctrl.layer_id = cut.id
+    before = len(ctrl.sheet.vectors)
+    objs = win.import_vectors(str(f), {"scale": 50.0, "text_to_curves": True, "center": False})
+    assert len(objs) == 2 and len(ctrl.sheet.vectors) == before + 2
+    assert {o.layer_id for o in objs} == {cut.id}                      # on the layer that was current, not the scratch one
+    bb = BBox()
+    for o in objs:
+        bb = bb.union(o.bbox())
+    assert (bb.width, bb.height) == pytest.approx((40.0, 15.0))      # 50 %
+    assert sorted(ctrl.selection) == sorted(o.id for o in objs)
+    assert "CorelDRAW X3" in win.statusBar().currentMessage()
+    ctrl.undo()                                                        # one step takes all of it away
+    assert len(ctrl.sheet.vectors) == before
+
+
+def test_import_cdr_that_cannot_be_read_changes_nothing_and_says_why(win, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    f = _fake_converter(tmp_path, monkeypatch, "fail")
+    warned = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: warned.append(a[2]))
+    ctrl = win.ctrl
+    before, could_undo = len(ctrl.sheet.vectors), ctrl.undo_stack.can_undo
+    assert win.import_vectors(str(f), {"scale": 100.0, "center": False}) == []
+    assert len(ctrl.sheet.vectors) == before
+    assert len(warned) == 1 and "drawing.cdr could not be opened" in warned[0] and "boom" in warned[0]
+    assert ctrl.undo_stack.can_undo == could_undo                      # nothing was recorded for it
+
+
+def test_the_import_dialog_for_cdr_has_its_own_questions(win, tmp_path, monkeypatch):
+    from iyicam.gui.dialogs import ImportDialog
+    f = _fake_converter(tmp_path, monkeypatch)
+    names = [p.name for p in ImportDialog(win.ctrl, str(f), win).params]
+    assert names == ["scale", "center"]       # a custom converter is not Inkscape: no "text to curves" question
+    assert "keep_layers" not in names and "units" not in names
+    from iyicam.formats import cdr
+    monkeypatch.setattr(cdr, "find_converters", lambda: [cdr.Converter("inkscape", "/x/inkscape", "1.2.2")])
+    assert [p.name for p in ImportDialog(win.ctrl, str(f), win).params] == ["scale", "text_to_curves", "center"]

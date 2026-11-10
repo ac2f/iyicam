@@ -31,6 +31,7 @@ from ..core.params import resolve
 from ..core.registry import REGISTRY
 from ..core.stock import StockItem
 from ..core.tooling import ToolLibrary
+from ..formats.cdr import CdrError
 from ..formats.report import ImportReport, run_importer
 from ..plugins.manager import PluginManager
 from .errors import JobCancelled, ServiceError
@@ -88,7 +89,7 @@ def _sheet_of(project: Project, sid) -> "object":
 
 def _report_dict(r: ImportReport) -> dict:
     return {"read": dict(r.read), "skipped": dict(r.skipped), "errors": list(r.errors), "notes": list(r.notes),
-            "summary": r.summary(), "clean": r.clean}
+            "summary": r.summary(), "clean": r.clean, "via": r.via}
 
 
 def _stem(project: Project, given=None) -> str:
@@ -140,6 +141,11 @@ def op_schema(_payload=None) -> dict:
              for p in sorted(REGISTRY.posts.values(), key=lambda p: p.id)]
     importers = [{"extensions": list(i.extensions), "label": i.label} for i in REGISTRY.importers.values()]
     importers.insert(0, {"extensions": ["icam"], "label": "iyiCAM project"})
+    try:
+        from ..formats import cdr as cdr_format
+        cdr_info = cdr_format.describe()
+    except Exception:  # noqa: BLE001  (a broken converter lookup must not take the whole schema down)
+        cdr_info = {"available": False, "converters": [], "install": "", "reads": ""}
     exporters = [{"extension": e.extension, "label": e.label, "params": [param_to_dict(p) for p in e.params]}
                  for e in REGISTRY.exporters.values()]
     exporters.insert(0, {"extension": "icam", "label": "iyiCAM project", "params": []})
@@ -149,7 +155,7 @@ def op_schema(_payload=None) -> dict:
         tools = []
     return {"api": API_VERSION, "iyicam": __version__, "operations": operations, "commands": commands,
             "posts": posts, "importers": importers, "exporters": exporters, "tools": tools,
-            "layer_colors": list(LAYER_COLORS), "origins": sorted(ORIGINS), "dxf_versions": [list(v) for v in DXF_VERSIONS],
+            "cdr": cdr_info, "layer_colors": list(LAYER_COLORS), "origins": sorted(ORIGINS), "dxf_versions": [list(v) for v in DXF_VERSIONS],
             "tool_types": [[k, v] for k, v in TOOL_TYPES.items()],
             "sequence": {"strategies": [list(x) for x in seq.STRATEGIES], "groupings": [list(x) for x in seq.GROUPINGS],
                          "directions": [list(x) for x in seq.DIRECTIONS],
@@ -210,6 +216,8 @@ def op_import(payload: dict) -> dict:
             objs = run_importer(imp.func, str(src), project, sheet, report, **options)
         except ServiceError:
             raise
+        except CdrError as exc:        # (the words are the person's: no "CdrError:" in front of them)
+            raise ServiceError(exc.code, str(exc), name=name, **exc.params) from exc
         except Exception as exc:  # noqa: BLE001  (a damaged file: ezdxf and friends raise their own kinds)
             raise ServiceError("import_failed", f"{name} could not be read: {type(exc).__name__}: {exc}",
                                name=name) from exc

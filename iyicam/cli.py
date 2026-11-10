@@ -22,6 +22,7 @@ from .cam.moves import PathStats, format_time
 from .core import paths
 from .core.document import Project
 from .core.registry import REGISTRY
+from .formats.cdr import CdrError
 from .formats.report import ImportReport, run_importer
 from .plugins.manager import PluginManager
 
@@ -111,7 +112,13 @@ def cmd_import(a) -> int:
         print(f"no importer for {a.file}", file=sys.stderr)
         return 2
     report = ImportReport()
-    objs = run_importer(imp.func, a.file, p, p.sheets[0], report)
+    try:
+        objs = run_importer(imp.func, a.file, p, p.sheets[0], report)
+    except CdrError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    if report.via:
+        print(f"read as {report.via}", file=sys.stderr)
     if report.summary():
         print(report.summary(), file=sys.stderr)
     bb = p.sheets[0].bbox()
@@ -230,7 +237,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--post", default="mach3")
     s.add_argument("--sheet", default="1", help="sheet number or 'all'")
     s.add_argument("-o", "--output")
-    s = sub.add_parser("import", help="create a project from a DXF / SVG file")
+    s = sub.add_parser("import", help="create a project from a DXF / SVG / HPGL / CorelDRAW file")
     s.add_argument("file")
     s.add_argument("-o", "--output", required=True)
     s.add_argument("--thickness", type=float, default=18.0)

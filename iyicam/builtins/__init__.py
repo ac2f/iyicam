@@ -15,7 +15,7 @@ def register(api: PluginAPI) -> None:
     from ..cam.pocket import PocketOp
     from ..cam.profile import ProfileOp
     from ..cam.vcarve import VCarveOp
-    from ..formats import dxf, hpgl, svg
+    from ..formats import cdr, dxf, hpgl, svg
     from ..post.loader import BUILTIN_DIR, load_posts
     from .commands import commands
 
@@ -28,6 +28,7 @@ def register(api: PluginAPI) -> None:
     api.add_importer(("dxf",), "AutoCAD DXF", dxf.import_dxf)
     api.add_importer(("svg",), "Scalable Vector Graphics", svg.import_svg)
     api.add_importer(("plt", "hpgl", "hpg"), "HPGL plotter file", hpgl.import_hpgl)
+    api.add_importer(("cdr",), "CorelDRAW", cdr.import_cdr)
     api.add_exporter("dxf", "AutoCAD DXF", dxf.export_dxf, [
         Param("version", "AutoCAD version", "choice", dxf.DEFAULT_DXF_VERSION, choices=list(dxf.DXF_VERSIONS),
               help="The release other programs are told the file is from. Try an older one (2000, or R12) when "

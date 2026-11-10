@@ -14,11 +14,13 @@ from PySide6.QtWidgets import (QApplication, QDialog, QDockWidget, QLabel, QMain
 from .. import __version__
 from ..cam.moves import PathStats, format_time
 from ..core import vectorops
-from ..core.document import VectorObject, new_id, toolpath_from_dict, toolpath_to_dict
+from ..core.document import Project, VectorObject, new_id, toolpath_from_dict, toolpath_to_dict
 from ..core.geom import BBox, Transform
 from ..core.params import Param
+from ..formats.cdr import CdrError, import_cdr
 from ..formats.report import ImportReport, run_importer
 from . import menus, theme
+from .busy import run_busy
 from .canvas import Canvas
 from .console import Console
 from .cutorder_panel import CutOrderPanel, sequenced_toolpaths
@@ -1003,8 +1005,29 @@ class MainWindow(QMainWindow):
             kw = {"join_tolerance": options.get("join", 0.05), "scale": options.get("scale", 100.0) / 100.0}
         c = self.ctrl
         report = ImportReport()
+        read = None
+        if imp.func is import_cdr:
+            # A CorelDRAW file goes through a converter program that may take a while: it is read away from the
+            # drawing, in a thread (the window stays alive, with a Cancel button), and put into the project after.
+            kw = {"scale": options.get("scale", 100.0) / 100.0, "text_to_curves": options.get("text_to_curves", True)}
+            state: dict = {"label": f"Reading {Path(path).name}..."}
+            scratch = Project("cdr")
+            try:
+                read = run_busy(lambda: import_cdr(path, scratch, scratch.sheets[0], report=report,
+                                                   cancel=lambda: state["cancel"].is_set(), **kw),
+                                self, state["label"], state=state)
+            except CdrError as exc:
+                if exc.code != "cdr_cancelled":
+                    QMessageBox.warning(self, "Import", f"{Path(path).name} could not be opened.\n\n{exc}")
+                return []
         with c.edit(f"Import {Path(path).name}"):
-            objs = run_importer(imp.func, path, c.project, c.sheet, report, layer_id=c.layer_id, **kw)
+            if read is not None:
+                objs = read
+                for o in objs:
+                    o.layer_id = c.layer_id
+                    c.sheet.vectors.append(o)
+            else:
+                objs = run_importer(imp.func, path, c.project, c.sheet, report, layer_id=c.layer_id, **kw)
             if options.get("center") and objs:
                 bb = BBox()
                 for o in objs:
@@ -1014,7 +1037,8 @@ class MainWindow(QMainWindow):
                     o.transform(T)
         c.select([o.id for o in objs])
         self.canvas.zoom_extents()
-        self.statusBar().showMessage(f"Imported {len(objs)} vector(s) from {Path(path).name}", 5000)
+        via = f" - {report.via}" if report.via else ""
+        self.statusBar().showMessage(f"Imported {len(objs)} vector(s) from {Path(path).name}{via}", 5000)
         if report.summary():
             QMessageBox.warning(self, "Import", f"{Path(path).name}: {len(objs)} vector(s) imported.\n\n"
                                                 f"{report.summary()}")
