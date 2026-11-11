@@ -26,7 +26,7 @@ def test_files_exist_and_have_unix_line_endings(path):
 
 def test_every_placeholder_of_the_unit_is_filled_by_the_installer():
     placeholders = set(re.findall(r"@([A-Z_]+)@", UNIT.read_text(encoding="utf-8")))
-    assert placeholders == {"APP", "SERVICE_USER", "HOST", "PORT", "PROXY", "FILES", "ROOTS", "RW_PATHS"}
+    assert placeholders == {"APP", "SERVICE_USER", "HOST", "PORT", "PROXY", "FILES", "HUB", "ROOTS", "RW_PATHS"}
     script = INSTALL.read_text(encoding="utf-8")
     for name in placeholders:
         assert f"s|@{name}@|" in script, name
@@ -39,10 +39,10 @@ def test_the_unit_uses_options_that_the_program_has():
     assert {"--host", "--port", "--quiet"} <= flags
     out = subprocess.run([sys.executable, "-m", "iyicam", "serve", "--help"], capture_output=True, text=True,
                          timeout=60).stdout
-    # (the installer fills "--trust-proxy" in through @PROXY@ and "--no-files" through @FILES@)
-    for flag in flags | {"--trust-proxy", "--no-files", "--root"}:
+    # (the installer fills "--trust-proxy" in through @PROXY@, "--no-files" through @FILES@ and "--hub" through @HUB@)
+    for flag in flags | {"--trust-proxy", "--no-files", "--root", "--hub"}:
         assert flag in out, flag
-    assert "-m iyicam serve" in line and "@PROXY@" in line and "@FILES@" in line
+    assert "-m iyicam serve" in line and "@PROXY@" in line and "@FILES@" in line and "@HUB@" in line
 
 
 def test_the_state_directory_is_the_same_in_the_unit_and_the_installer():
@@ -59,6 +59,7 @@ def test_the_folders_of_the_page_are_given_to_the_service_and_may_be_written():
     assert "ReadWritePaths=@RW_PATHS@" in unit and "ProtectSystem=strict" in unit    # (else nothing could be saved)
     assert 'DEFAULT_ROOT="$STATE_DIR/files"' in script          # inside the state folder, so it is writable anyway
     assert "--no-files" in script and "IYICAM_FILES" in script
+    assert '"--hub"' in script and "IYICAM_HUB" in script          # (a hub is asked for with IYICAM_HUB=on)
 
 
 def test_the_proxy_examples_overwrite_the_headers_that_trust_proxy_reads():

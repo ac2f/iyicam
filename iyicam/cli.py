@@ -10,6 +10,8 @@
     python -m iyicam nest job.icam --angles 0,22.5,90 --rotate-layer Grain=none -o nested.icam
     python -m iyicam nest job.icam --squeeze-angle 5 --squeeze-margin 3 --apply-squeeze -o nested.icam
     python -m iyicam serve --host 0.0.0.0           # a web page for a phone, with its own key (docs/web.md)
+    python -m iyicam serve --hub --trust-proxy      # a hub on a server: agents connect to it (docs/web.md)
+    python -m iyicam agent --server-url https://hub.example.com --server-key KEY   # the agent of this computer
 """
 from __future__ import annotations
 
@@ -28,7 +30,7 @@ from .formats.cdr import CdrError
 from .formats.report import ImportReport, run_importer
 from .plugins.manager import PluginManager
 
-COMMANDS = ("posts", "info", "gcode", "import", "export", "nest", "plugins", "selftest", "serve")
+COMMANDS = ("posts", "info", "gcode", "import", "export", "nest", "plugins", "selftest", "serve", "agent")
 
 
 def _setup(plugins: bool = True) -> None:
@@ -58,7 +60,16 @@ def cmd_serve(a) -> int:
     if a.no_plugins:
         os.environ["IYICAM_SERVICE_PLUGINS"] = "0"
     return server.serve(a.host, a.port, trust_proxy=a.trust_proxy, max_body=a.max_upload_mb * 1024 * 1024,
-                        verbose=not a.quiet, roots=a.root or None, files=not a.no_files)
+                        verbose=not a.quiet, roots=a.root or None, files=not a.no_files, hub=a.hub)
+
+
+def cmd_agent(a) -> int:
+    """The agent of this computer for a hub (``iyicam serve --hub``): its engine and its files; see docs/web.md."""
+    from .service import agent
+    if a.no_plugins:
+        os.environ["IYICAM_SERVICE_PLUGINS"] = "0"
+    return agent.run(a.server_url, a.server_key, name=a.name, roots=a.root or None, no_files=a.no_files,
+                     show_key=a.show_key, new_key=a.new_key, setup=a.setup)
 
 
 def cmd_posts(a) -> int:
@@ -260,7 +271,25 @@ def main(argv: list[str] | None = None) -> int:
                         "default: IYICAM_ROOTS, else the home folder)")
     s.add_argument("--no-files", action="store_true",
                    help="the page cannot open or save files of this computer (it can still upload and download)")
+    s.add_argument("--hub", action="store_true",
+                   help="a hub: no engine and no files here, agents (iyicam agent) connect to it and a browser signs in "
+                        "with the client key of an agent; the key of this server only lets agents register")
     s.add_argument("--quiet", action="store_true", help="do not log every request")
+    s = sub.add_parser("agent", help="the agent of this computer: its engine and files for a hub (iyicam serve --hub)")
+    s.add_argument("--server-url", metavar="URL", help="address of the hub (https://...); kept for the next runs")
+    s.add_argument("--server-key", metavar="KEY",
+                   help="the server key of the hub ('iyicam serve --show-key' there; or IYICAM_SERVER_KEY); kept")
+    s.add_argument("--name", help="name of this computer as the hub shows it (default: the computer name)")
+    s.add_argument("--root", action="append", metavar="FOLDER",
+                   help="a folder of this computer the page may open and save files in (repeat it for more; kept; "
+                        "default: IYICAM_ROOTS, else the home folder)")
+    s.add_argument("--no-files", action="store_true", help="no access to files of this computer (kept)")
+    s.add_argument("--setup", action="store_true",
+                   help="keep the settings and register at the hub (this checks the address and the server key), "
+                        "print the client key and stop; nothing is kept when the hub does not take it")
+    s.add_argument("--show-key", action="store_true", help="print the client key (what a browser signs in with) and stop")
+    s.add_argument("--new-key", action="store_true",
+                   help="make a new client key and register it at the hub; the old one stops working at once")
     s = sub.add_parser("info", help="summarise a project")
     s.add_argument("project")
     s = sub.add_parser("gcode", help="calculate toolpaths and write G-code")
@@ -318,12 +347,12 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--apply-squeeze", action="store_true",
                    help="take the squeezed layout when it is better (else it is only suggested)")
     a = ap.parse_args(argv)
-    if a.cmd != "serve":        # (the service registers everything itself, plugins included)
+    if a.cmd not in ("serve", "agent"):        # (the service registers everything itself, plugins included)
         _setup(not a.no_plugins)
     try:
         return {"posts": cmd_posts, "plugins": cmd_plugins, "info": cmd_info, "gcode": cmd_gcode,
                 "import": cmd_import, "export": cmd_export, "nest": cmd_nest, "selftest": cmd_selftest,
-                "serve": cmd_serve}[a.cmd](a)
+                "serve": cmd_serve, "agent": cmd_agent}[a.cmd](a)
     except FileNotFoundError as exc:
         print(f"error: {exc.filename or exc} was not found", file=sys.stderr)
     except (OSError, ValueError, KeyError, TypeError, IndexError) as exc:   # a bad file or a bad number

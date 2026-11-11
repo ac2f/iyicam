@@ -10,6 +10,10 @@ Access is by a **key** (``~/.iyicam/server.key``): the page asks for it once, th
 cookie (12 hours; ``HttpOnly``, ``SameSite=Strict``) and every ``/api`` call needs that cookie.  After 10 wrong keys
 within 5 minutes an address waits (HTTP 429).  A new key (``iyicam serve --new-key``) ends every session at once.
 
+With ``--hub`` the server has no engine and no disk of its own: it is the meeting point of agents (``iyicam agent`` on
+the computers of the people, see :mod:`iyicam.service.hub`).  A browser signs in with the client key of an agent and
+every operation is passed on to that agent, which answers it with the files of its own computer.
+
 The server speaks plain HTTP.  On a home network that is fine; on the internet put it behind a reverse proxy that
 adds HTTPS (``--trust-proxy`` then takes the client address and the scheme from the proxy), see ``docs/web.md``.
 """
@@ -20,7 +24,6 @@ import hashlib
 import hmac
 import json
 import os
-import re
 import secrets
 import socket
 import sys
@@ -30,29 +33,18 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from ..core import paths
+from .api import API_OPS, ERROR_STATUS, call, status_of  # noqa: F401  (API_OPS, ERROR_STATUS: part of this module's face)
 from .files import FILE_OPS, Files
 from .host import ServiceHost
+from .hub import Hub, HubAuth, HubError
+from .keys import KEY_ALPHABET, KeyStore, Throttled, key_file, make_key, normalise_key  # noqa: F401  (re-exported)
 from .ops import API_VERSION
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 COOKIE = "iyicam_session"
 SESSION_TTL = 12 * 3600.0
-KEY_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"      # no 0 O 1 I: a key is read from a screen and typed on a phone
 DEFAULT_PORT = 8300
 DEFAULT_MAX_BODY = 64 * 1024 * 1024                    # a big drawing as base64 is still well below this
-
-# what /api/<operation> may call (the whole service interface, nothing else)
-API_OPS = frozenset({"ping", "schema", "validate", "import", "export", "command", "compute", "gcode", "simulate",
-                     "nest", "job.start", "job.status", "job.cancel", "job.result"})
-
-# an error code that is not "the request was wrong" (400) answers with another HTTP status
-ERROR_STATUS = {"unknown_operation": 404, "job_not_found": 404, "job_not_finished": 409, "too_busy": 503,
-                "internal_error": 500,
-                # files of the computer (iyicam.service.files)
-                "path_not_allowed": 403, "files_disabled": 403, "folder_not_found": 404, "file_not_found": 404,
-                "file_exists": 409, "file_changed": 409, "file_too_large": 413, "payload_too_large": 413,
-                "os_error": 500}
 
 STATIC_TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
                 ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".json": "application/json",
@@ -63,83 +55,8 @@ CSP = ("default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe
 
 
 # ---------------------------------------------------------------------------------------------
-# the key
-# ---------------------------------------------------------------------------------------------
-
-def key_file() -> Path:
-    return paths.user_dir() / "server.key"
-
-
-def make_key() -> str:
-    """``ABCDEF-GHJKLM-NPQRST-UVWXYZ``: 24 characters of 32, about 120 bits."""
-    chars = "".join(secrets.choice(KEY_ALPHABET) for _ in range(24))
-    return "-".join(chars[i:i + 6] for i in range(0, 24, 6))
-
-
-def normalise_key(text: object) -> str:
-    """Dashes, spaces and case do not matter when a key is typed."""
-    return re.sub(r"[^A-Za-z0-9]", "", str(text or "")).upper()
-
-
-class KeyStore:
-    """The key in its file, created at the first use.  ``fixed`` (tests, a caller that keeps the key itself) is
-    used instead of the file.  The file is read again when it changes, so ``--new-key`` takes effect in a running
-    server."""
-
-    def __init__(self, path: Path | None = None, fixed: str | None = None):
-        self.path = Path(path) if path else key_file()
-        self.fixed = fixed
-        self._lock = threading.Lock()
-        self._cache: tuple[tuple[int, int], str] | None = None
-
-    def _write(self, key: str) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_name(self.path.name + ".tmp")
-        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)     # (Windows ignores the mode)
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(key + "\n")
-        os.replace(tmp, self.path)
-        self._cache = None
-
-    def get(self) -> str:
-        """The key as shown (``ABCDEF-...``)."""
-        if self.fixed is not None:
-            return self.fixed
-        with self._lock:
-            try:
-                st = self.path.stat()
-            except FileNotFoundError:
-                self._write(make_key())
-                st = self.path.stat()
-            sig = (st.st_mtime_ns, st.st_size)
-            if self._cache is None or self._cache[0] != sig:
-                key = self.path.read_text(encoding="utf-8").strip()
-                if len(normalise_key(key)) < 16:         # empty or damaged: a new one, never an open door
-                    self._write(make_key())
-                    st = self.path.stat()
-                    sig = (st.st_mtime_ns, st.st_size)
-                    key = self.path.read_text(encoding="utf-8").strip()
-                self._cache = (sig, key)
-            return self._cache[1]
-
-    def rotate(self) -> str:
-        if self.fixed is not None:
-            raise ValueError("this key is not kept in a file")
-        with self._lock:
-            key = make_key()
-            self._write(key)
-            return key
-
-
-# ---------------------------------------------------------------------------------------------
 # sessions and failed attempts
 # ---------------------------------------------------------------------------------------------
-
-class Throttled(Exception):
-    def __init__(self, wait: float):
-        super().__init__("too many failed attempts")
-        self.wait = wait
-
 
 class Auth:
     def __init__(self, keys: KeyStore, ttl: float = SESSION_TTL, max_fail: int = 10, window: float = 300.0,
@@ -212,11 +129,13 @@ class ServiceServer(ThreadingHTTPServer):
     request_queue_size = 64
     allow_reuse_address = os.name != "nt"       # (on Windows this would let a second program take the same port)
 
-    def __init__(self, address: tuple[str, int], service: ServiceHost, auth: Auth, *, trust_proxy: bool = False,
-                 max_body: int = DEFAULT_MAX_BODY, verbose: bool = False, files: Files | None = None):
+    def __init__(self, address: tuple[str, int], service: ServiceHost | None, auth: Auth | HubAuth, *,
+                 trust_proxy: bool = False, max_body: int = DEFAULT_MAX_BODY, verbose: bool = False,
+                 files: Files | None = None, hub: Hub | None = None):
         if ":" in address[0]:
             self.address_family = socket.AF_INET6
         self.service, self.auth, self.files = service, auth, files      # (files None: no access to the disk at all)
+        self.hub = hub                                  # (a hub has no service and no files: the agents have)
         self.trust_proxy, self.max_body, self.verbose = trust_proxy, max_body, verbose
         # only these files are ever served: a name from the URL is looked up here, never turned into a path
         self.assets = {p.name: p for p in WEB_DIR.iterdir() if p.is_file() and p.suffix in STATIC_TYPES} \
@@ -225,6 +144,11 @@ class ServiceServer(ThreadingHTTPServer):
 
     def log(self, text: str) -> None:
         print(time.strftime("%H:%M:%S"), text, file=sys.stderr, flush=True)
+
+    def server_close(self) -> None:
+        if self.hub is not None:                        # (the agents' polls that wait for a call are let go)
+            self.hub.close()
+        super().server_close()
 
     def handle_error(self, request, client_address) -> None:     # (a phone that went away is not news)
         exc = sys.exc_info()[1]
@@ -356,6 +280,8 @@ class Handler(BaseHTTPRequestHandler):
     # -- POST -----------------------------------------------------------------------------
     def do_POST(self) -> None:          # noqa: N802
         path = urlsplit(self.path).path
+        if path.startswith("/agent/"):
+            return self._agent(path[len("/agent/"):])
         if not path.startswith("/api/"):
             return self._fail(404, "not_found", "there is nothing here", close=True)
         if not self._same_origin():
@@ -374,20 +300,48 @@ class Handler(BaseHTTPRequestHandler):
         payload = self._read_json()
         if payload is None:
             return
-        if name in FILE_OPS:
-            if self.server.files is not None:
-                out = self.server.files.handle(name, payload)
-            elif name == "status":                      # (the page asks first, and learns that there is no disk to browse)
-                out = {"files": False, "roots": [], "limits": {}}
-            else:
-                out = {"error": "files_disabled", "message": "this server does not give access to files"}
+        if self.server.hub is not None:                 # a hub: the agent of this session answers
+            agent_id = self.server.auth.agent_of(self._token())
+            if agent_id is None:                        # (the key was replaced while the body was read)
+                return self._fail(401, "not_logged_in", "enter the key first", close=True)
+            status, out = self.server.hub.submit(agent_id, name, payload)
         else:
-            out = self.server.service.handle(name, payload)
-        code = out.get("error")
-        # an answer is an error when it carries an error CODE; job.status has an 'error' field of its own (null
-        # while the job runs, the job's error object after it failed) and is an answer like any other
-        status = ERROR_STATUS.get(code, 400) if isinstance(code, str) else 200
+            status, out = call(self.server.service, self.server.files, name, payload)
         self._json(status, out)
+
+    # -- the agents of a hub ---------------------------------------------------------------------
+    def _agent(self, action: str) -> None:
+        """``/agent/register``, ``/agent/poll`` and ``/agent/reply``: what an agent does.  They need the server key
+        (header ``X-Server-Key``); a browser never calls them."""
+        hub = self.server.hub
+        if hub is None or action not in ("register", "poll", "reply"):
+            return self._fail(404, "not_found", "there is nothing here", close=True)
+        ip = self._ip()
+        try:
+            hub.check_server_key(ip, self.headers.get("X-Server-Key"))
+        except Throttled as exc:
+            wait = max(1, int(exc.wait))
+            self.server.log(f"{ip} too many wrong server keys, waits {wait} s")
+            return self._json(429, {"error": "too_many_attempts", "message": "too many wrong keys; wait a moment",
+                                    "retry_after": wait}, {"Retry-After": str(wait)}, close=True)
+        except HubError as exc:
+            self.server.log(f"{ip} wrong server key")
+            return self._fail(exc.status, exc.code, exc.message, close=True)
+        body = self._read_json()
+        if body is None:
+            return
+        try:
+            if action == "register":
+                hub.register(body.get("agent_id"), body.get("token"), body.get("name"))
+                self.server.log(f"{ip} agent {str(body.get('name') or '')[:30]!r} registered")
+                return self._json(200, {"ok": True, "max_body": self.server.max_body, "api": API_VERSION})
+            if action == "poll":
+                job = hub.poll(body.get("agent_id"))
+                return self._json(200, {"job": job} if job else {})
+            taken = hub.reply(body.get("agent_id"), body.get("job_id"), body.get("status"), body.get("out"))
+            return self._json(200, {"ok": taken})
+        except HubError as exc:
+            return self._fail(exc.status, exc.code, exc.message)
 
     def _cookie(self, token: str, max_age: int) -> str:
         return (f"{COOKIE}={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age={max_age}"
@@ -419,12 +373,23 @@ class Handler(BaseHTTPRequestHandler):
 def make_server(host: str = "127.0.0.1", port: int = DEFAULT_PORT, *, key: str | None = None,
                 key_path: Path | None = None, trust_proxy: bool = False, max_body: int = DEFAULT_MAX_BODY,
                 service: ServiceHost | None = None, verbose: bool = False, roots: list[str] | None = None,
-                files: bool = True) -> ServiceServer:
+                files: bool = True, hub: bool | Hub = False, hub_state: Path | None = None) -> ServiceServer:
     """A server that is bound but not yet serving (``serve_forever()``); ``port=0`` takes a free port.  ``key``
     (instead of the key file) is for tests.  The page may open and save files inside ``roots`` (default: those of
-    ``IYICAM_ROOTS``, else the home folder); ``files=False`` gives no access to the disk at all."""
-    keys = KeyStore(key_path, fixed=key)
+    ``IYICAM_ROOTS``, else the home folder); ``files=False`` gives no access to the disk at all.
+
+    ``hub=True`` makes a hub (:mod:`iyicam.service.hub`): no engine and no disk here, the agents have them; the key
+    is then the server key that lets agents register.  A ready :class:`~iyicam.service.hub.Hub` can be given too
+    (tests); ``hub_state`` is where the registered agents are kept (default ``~/.iyicam/agents.json``)."""
+    if isinstance(hub, Hub):
+        keys = hub.keys
+    else:
+        keys = KeyStore(key_path, fixed=key)
     keys.get()                                   # the key file exists from now on
+    if hub:
+        the_hub = hub if isinstance(hub, Hub) else Hub(keys, hub_state)
+        return ServiceServer((host, port), None, HubAuth(the_hub), trust_proxy=trust_proxy, max_body=max_body,
+                             verbose=verbose, files=None, hub=the_hub)
     service = service or ServiceHost()
     return ServiceServer((host, port), service, Auth(keys), trust_proxy=trust_proxy, max_body=max_body,
                          verbose=verbose, files=Files(service, roots) if files else None)
@@ -453,15 +418,15 @@ def lan_addresses() -> list[str]:
 
 def serve(host: str = "127.0.0.1", port: int = DEFAULT_PORT, *, trust_proxy: bool = False,
           max_body: int = DEFAULT_MAX_BODY, verbose: bool = True, roots: list[str] | None = None,
-          files: bool = True) -> int:
+          files: bool = True, hub: bool = False) -> int:
     try:
         srv = make_server(host, port, trust_proxy=trust_proxy, max_body=max_body, verbose=verbose, roots=roots,
-                          files=files)
+                          files=files, hub=hub)
     except OSError as exc:
         print(f"error: cannot listen on {host}:{port}: {exc}", file=sys.stderr)
         return 1
     shown = srv.server_address[1]
-    print(f"iyiCAM web service on port {shown}")
+    print(f"iyiCAM {'hub' if hub else 'web service'} on port {shown}")
     if _is_loopback(host):
         print(f"  this computer only:   http://localhost:{shown}")
         print("  (a phone needs --host 0.0.0.0)")
@@ -472,15 +437,19 @@ def serve(host: str = "127.0.0.1", port: int = DEFAULT_PORT, *, trust_proxy: boo
         if not trust_proxy:
             print("  plain HTTP: use it on a network you trust, or behind an HTTPS proxy (docs/web.md)")
     print(f"  key file: {srv.auth.keys.path}")
-    if srv.files is None:
+    if hub:
+        print("  hub:      agents (iyicam agent) register with the server key; a browser signs in with the client key")
+        print("            of an agent and works with the files of that agent's computer")
+    elif srv.files is None:
         print("  files:    off (--no-files): the page cannot open or save files of this computer")
     else:
         shown_roots = srv.files.roots()
         print("  files:    " + ("; ".join(shown_roots) if shown_roots else "no folder to open files from (see --root)"))
+    label = "server key" if hub else "key"
     if sys.stdout is not None and sys.stdout.isatty():       # (pythonw has no stdout at all)
-        print(f"  key:      {srv.auth.keys.get()}")
+        print(f"  {label + ':':<11}{srv.auth.keys.get()}")
     else:
-        print("  key:      iyicam serve --show-key")
+        print(f"  {label + ':':<11}iyicam serve --show-key")
     print("  Ctrl+C stops it.", flush=True)
     try:
         srv.serve_forever(poll_interval=0.5)

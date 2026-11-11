@@ -21,6 +21,9 @@
 #                            the folders (separated by ":") in which the page may open and save files; the
 #                            default is made here. A folder of your own must be writable by the user "iyicam".
 #    IYICAM_FILES=off        the page cannot open or save files of this computer at all
+#    IYICAM_HUB=on           a hub: this server has no engine and no files; the agents (iyicam agent) on the
+#                            computers of the people connect to it, and a browser signs in with the client key
+#                            of an agent (docs/web.md)
 #    PYTHON=python3.12       the Python to use (3.11 or newer)
 #  The project directory must NOT be under /root or /home (the service user
 #  cannot read it); recommended: /opt/iyicam
@@ -53,6 +56,10 @@ done
 FILES_FLAG=""
 case "${IYICAM_FILES:-on}" in
   off|OFF|no|0) FILES_FLAG="--no-files" ;;
+esac
+HUB_FLAG=""
+case "${IYICAM_HUB:-off}" in
+  on|ON|yes|1) HUB_FLAG="--hub" ;;
 esac
 case "$APP" in
   /root|/root/*|/home|/home/*)
@@ -108,7 +115,7 @@ fi
 
 # the folders of the page: the default one is made here (inside the state folder, owned by the service user, so
 # that systemd leaves it as it is); a folder of your own that is missing is made, one that exists is left alone
-if [[ -z "$FILES_FLAG" ]]; then
+if [[ -z "$FILES_FLAG" && -z "$HUB_FLAG" ]]; then        # (a hub has no files of its own)
   for r in "${ROOT_LIST[@]}"; do
     if [[ "$r" == "$DEFAULT_ROOT" ]]; then
       install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0700 "$STATE_DIR" "$DEFAULT_ROOT"
@@ -142,7 +149,7 @@ step 3/4 "venv ready: $APP/venv/bin/python"
 # 4) systemd
 sed -e "s|@APP@|$APP|g" -e "s|@SERVICE_USER@|$SERVICE_USER|g" \
     -e "s|@HOST@|$HOST|g" -e "s|@PORT@|$PORT|g" -e "s|@PROXY@|$PROXY|g" \
-    -e "s|@FILES@|$FILES_FLAG|g" -e "s|@ROOTS@|$ROOTS|g" -e "s|@RW_PATHS@|$RW_PATHS|g" \
+    -e "s|@FILES@|$FILES_FLAG|g" -e "s|@HUB@|$HUB_FLAG|g" -e "s|@ROOTS@|$ROOTS|g" -e "s|@RW_PATHS@|$RW_PATHS|g" \
     "$APP/packaging/linux/$SERVICE.service" > "/etc/systemd/system/$SERVICE.service"
 systemctl daemon-reload
 systemctl enable "$SERVICE" >/dev/null 2>&1
@@ -164,14 +171,24 @@ echo "======================================================================"
 if [[ -n "${HEALTHY:-}" ]]; then echo "  INSTALLATION COMPLETE - the service is running at http://$HOST:$PORT"
 else echo "  The service was started but the health check did not pass:  journalctl -u $SERVICE -n 50"; fi
 echo
-echo "  Key             : $STATE_DIR/server.key   (made at the first start; type it on the page)"
-echo "                    to view it:  sudo cat $STATE_DIR/server.key"
-echo "  New key         : sudo -u $SERVICE_USER IYICAM_HOME=$STATE_DIR $APP/venv/bin/iyicam serve --new-key"
-echo "                    (prints it; every signed-in browser is signed out at once)"
-if [[ -n "$FILES_FLAG" ]]; then
-  echo "  Files           : off (the page cannot open or save files of this computer)"
+if [[ -n "$HUB_FLAG" ]]; then
+  echo "  Mode            : HUB (no engine and no files here; the agents have them)"
+  echo "  Server key      : $STATE_DIR/server.key   (made at the first start; it lets AGENTS register, it is not typed on the page)"
+  echo "                    to view it:  sudo cat $STATE_DIR/server.key"
+  echo "  On the computer : iyicam agent --server-url https://<this server's host name> --server-key <the server key>"
+  echo "                    (docs/web.md; the agent shows the CLIENT key: that is what is typed on the page)"
+  echo "  New server key  : sudo -u $SERVICE_USER IYICAM_HOME=$STATE_DIR $APP/venv/bin/iyicam serve --new-key"
+  echo "                    (every agent then needs the new one:  iyicam agent --server-key <new key>)"
 else
-  echo "  Files           : the page opens and saves files in:  ${ROOTS//:/  }"
+  echo "  Key             : $STATE_DIR/server.key   (made at the first start; type it on the page)"
+  echo "                    to view it:  sudo cat $STATE_DIR/server.key"
+  echo "  New key         : sudo -u $SERVICE_USER IYICAM_HOME=$STATE_DIR $APP/venv/bin/iyicam serve --new-key"
+  echo "                    (prints it; every signed-in browser is signed out at once)"
+  if [[ -n "$FILES_FLAG" ]]; then
+    echo "  Files           : off (the page cannot open or save files of this computer)"
+  else
+    echo "  Files           : the page opens and saves files in:  ${ROOTS//:/  }"
+  fi
 fi
 echo "  Status / log    : systemctl status $SERVICE   |   journalctl -u $SERVICE -f"
 echo "  Update          : git pull && sudo bash packaging/linux/install.sh"

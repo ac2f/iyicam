@@ -22,9 +22,11 @@ Environment=IYICAM_ROOTS=@ROOTS@
 # Runs with the venv python. By default it listens on 127.0.0.1 only and a reverse proxy adds HTTPS;
 # @PROXY@ is "--trust-proxy" exactly in that case (see docs/web.md before listening on another address).
 # @FILES@ is "--no-files" when the page is not to open or save files of this computer at all.
+# @HUB@ is "--hub" for a hub: no engine and no files here, agents (iyicam agent, on the computers of the people)
+# connect to it and a browser signs in with the client key of an agent (docs/web.md).
 # The key is made at the first start (/var/lib/iyicam/server.key) and stays valid until it is replaced
-# with:  iyicam serve --new-key  (a running server notices it at once).
-ExecStart=@APP@/venv/bin/python -m iyicam serve --host @HOST@ --port @PORT@ @PROXY@ @FILES@ --quiet
+# with:  iyicam serve --new-key  (a running server notices it at once). For a hub it is the key that lets agents in.
+ExecStart=@APP@/venv/bin/python -m iyicam serve --host @HOST@ --port @PORT@ @PROXY@ @FILES@ @HUB@ --quiet
 
 Restart=on-failure
 RestartSec=3

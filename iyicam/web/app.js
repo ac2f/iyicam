@@ -51,6 +51,10 @@ const TXT = {
     "e.file_not_found": "Dosya bulunamadı.", "e.file_exists": "Bu adda bir dosya var.", "e.file_changed": "Dosya bu arada değişti.",
     "e.file_too_large": "Dosya çok büyük.", "e.invalid_name": "Dosya adı geçerli değil.", "e.invalid_path": "Yol geçerli değil.",
     "e.files_disabled": "Bu sunucu dosyalara erişim vermiyor.", "e.payload_too_large": "Çok fazla veri.",
+    "e.agent_offline": "Bilgisayardaki iyiCAM ajanı bağlı değil. O bilgisayarda ajanı başlat (iyicam agent), sonra yeniden dene.",
+    "e.agent_timeout": "Bilgisayardaki ajan zamanında cevap vermedi.",
+    "e.reply_too_large": "Cevap, sunucunun taşıyabileceğinden büyük.",
+    "e.bad_agent_answer": "Ajanın cevabı okunamadı.",
     "e.os_error": "Dosya işlemi yapılamadı."
   },
   en: {
@@ -100,6 +104,10 @@ const TXT = {
     "e.file_not_found": "File not found.", "e.file_exists": "A file with this name exists.", "e.file_changed": "The file was changed in the meantime.",
     "e.file_too_large": "The file is too large.", "e.invalid_name": "The file name is not valid.", "e.invalid_path": "The path is not valid.",
     "e.files_disabled": "This server gives no access to files.", "e.payload_too_large": "Too much data.",
+    "e.agent_offline": "The iyiCAM agent on the computer is not connected. Start it there (iyicam agent), then try again.",
+    "e.agent_timeout": "The agent on the computer did not answer in time.",
+    "e.reply_too_large": "The answer is larger than the server can carry.",
+    "e.bad_agent_answer": "The agent's answer could not be read.",
     "e.os_error": "The file operation failed."
   }
 };
@@ -908,11 +916,14 @@ async function start() {
 }
 
 (async () => {
+  let note;
   try {
     const r = await fetch("/api/session", { credentials: "same-origin" });
     if (r.ok) return await start();
-  } catch { /* the login page says what is wrong when it cannot be reached */ }
-  showLogin();
+  } catch (e) {          // (the login page says what is wrong when it cannot be reached; a hub whose agent is away says so)
+    if (e instanceof ApiError && e.code === "agent_offline") note = e.text;
+  }
+  showLogin(note);
 })();
 
 })();

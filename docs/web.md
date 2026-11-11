@@ -5,6 +5,10 @@ drawing can be opened from the phone and the G-code downloaded to it, and the pa
 files of the computer the server runs on**, inside the folders you name ([below](#files-of-the-computer)). Everything
 is the [service](service.md) behind a web page.
 
+When the server is **not** the computer with the drawings and the machine's folders (a small server on the internet,
+the workshop PC at home), put a **hub** on the server and an **agent** on the workshop PC: the page is the same, but
+the engine and the files are those of the PC ([a hub and an agent](#a-hub-and-an-agent-the-server-somewhere-else-the-files-here)).
+
 ```bash
 python -m pip install -e .    # in a checkout of this repository; no Qt needed
 iyicam serve --host 0.0.0.0   # the computer and every phone on the same Wi-Fi
@@ -34,6 +38,7 @@ allow it for *private* networks.
 | `--max-upload-mb N` | largest request, default 64 (a drawing travels as base64) |
 | `--root FOLDER` | a folder in which the page may open and save files; repeat it for more (default: `IYICAM_ROOTS`, else the home folder) |
 | `--no-files` | the page cannot open or save files of this computer at all (it can still upload and download) |
+| `--hub` | a hub: no engine and no files here, agents on other computers have them ([below](#a-hub-and-an-agent-the-server-somewhere-else-the-files-here)) |
 | `--quiet` | no line per request |
 
 User posts, tools and plugins are read from `~/.iyicam` (`IYICAM_HOME`), as in the program; `--no-plugins` or
@@ -98,7 +103,93 @@ two projects share nothing but that interface (no code, no dependency). `status`
 (404), `file_exists` and `file_changed` (409), `file_too_large` (413), `unsupported_file`, `invalid_name`, `invalid_path`
 (400), `files_disabled` (403). Tests: `tests/test_files.py`.
 
+## A hub and an agent (the server somewhere else, the files here)
+
+`iyicam serve` works with the files of the computer it runs on. A server on the internet is not that computer: the
+drawings are on the workshop PC and the G-code has to go where the machine's program reads it. So the work is split
+in two programs of iyiCAM (nothing of CNC-Assistant is needed):
+
+```
+phone ──HTTPS──▶  hub (iyicam serve --hub)  ◀──HTTPS, outward──  agent (iyicam agent) on the workshop PC
+                  the page, the keys, the queue                    the engine and the files of that PC
+```
+
+* the **hub** runs on the server. It has no engine and no disk of its own: it serves the page, checks the keys and
+  passes each call of the page on to the agent;
+* the **agent** runs on the PC, in the background. It connects *outward* to the hub (so nothing has to reach into the
+  workshop: no open port, no tunnel), waits for calls, does them with the engine and the files of the PC and sends the
+  answers back. The answers are the same as `iyicam serve` gives (the folders it may touch are the same rules as
+  [above](#files-of-the-computer): `--root`, never a hidden folder, never a program).
+
+Two keys, never mixed up:
+
+| | made by | kept in | what it does |
+|---|---|---|---|
+| **server key** | the hub, at its first start | `server.key` of the hub (`sudo cat /var/lib/iyicam/server.key`) | only lets an **agent** register; it is typed once on the PC, **never on the page**, and it does not sign a browser in |
+| **client key** | the agent, on the PC | `agent.json` of the PC (`iyicam agent --show-key`) | what the **page** asks for; it belongs to that PC and opens that PC only |
+
+**On the server** (Linux, as in [A server](#a-server-linux-systemd-and-https)):
+
+```bash
+git pull && sudo IYICAM_HUB=on bash packaging/linux/install.sh
+sudo cat /var/lib/iyicam/server.key        # the server key, for the agent
+```
+
+**On the PC** (Windows; the script makes its own `.venv`, needs the 64-bit Python 3.11+ of python.org):
+
+```
+packaging\agent_windows.bat -ServerUrl https://hub.example.com -ServerKey ABCDEF-GHJKMN-PQRSTU-VWXYZ2
+```
+
+This keeps the settings, checks them at the hub (nothing is kept when the hub does not take them), starts the agent
+without a window and prints the **client key**. The phone opens the address of the hub and signs in with that client
+key; the file window of the page then shows the folders of the PC. Later:
+
+```
+packaging\agent_windows.bat             starts it if it is not running; shows whether it is connected, and the client key
+packaging\agent_windows.bat -Stop       stops it
+packaging\agent_windows.bat -Restart    stops it and starts it again
+packaging\agent_windows.bat -NewKey     a new client key (the old one stops working at once, signed-in phones are signed out)
+```
+
+Anywhere else (Linux or macOS PC): `iyicam agent --server-url https://hub.example.com --server-key KEY`, which runs in
+the console (put it in a service of your own to keep it in the background).
+
+| `iyicam agent` | |
+|---|---|
+| `--server-url URL`, `--server-key KEY` | the hub and its server key (kept in `agent.json`, so later runs need nothing; the key may also come from `IYICAM_SERVER_KEY`) |
+| `--setup` | keep the settings, register at the hub (this checks the address and the key), print the client key and stop |
+| `--show-key` | print the client key and stop |
+| `--new-key` | a new client key, registered at the hub; the old one stops working at once (a running agent needs no restart) |
+| `--root FOLDER` | a folder of this PC the page may open and save files in (repeat it; kept; default `IYICAM_ROOTS`, else the home folder) |
+| `--no-files` | the page cannot open or save files of this PC (kept) |
+| `--name NAME` | the name of this PC as the hub lists it (default the computer name) |
+
+What to know:
+
+* the agent has no window; it writes what it does to `agent.log` and its state to `agent.state.json` in `~/.iyicam`
+  (`IYICAM_HOME`), never a key. A phone that signs in while the agent is not running is told so ("the agent is not
+  connected") and can try again when it is; the hub counts an agent as gone when it has not been heard of for 60 s;
+* the settings file `agent.json` holds the server key and the client key (readable by the user only); the hub keeps
+  only a digest of each client key (`agents.json`), so a copy of the hub's state does not open any PC;
+* a restart of the hub ends the sessions (a phone signs in again, with the same client key: the hub remembers its
+  agents) and the agents come back on their own; a new server key (`iyicam serve --new-key`) has to be given to the
+  agents (`iyicam agent --server-key NEW`);
+* one call waits at most 5 minutes for its answer, a drawing travels through the hub like through `iyicam serve`
+  (`--max-upload-mb`, default 64), and an answer larger than that is refused with a message instead of lost;
+* the page, the proxy (`--trust-proxy`, HTTPS) and the protections against wrong keys are those of the plain server; the
+  agent's own calls need the server key and are slowed down the same way after 10 wrong ones.
+
+For programs: the agent's calls are `POST /agent/register` (`agent_id`, `token` = the client key, `name`), `POST
+/agent/poll` (`agent_id`; held open for up to 25 s; answers `{"job": {"id", "op", "payload"}}` or `{}`) and `POST
+/agent/reply` (`agent_id`, `job_id`, `status`, `out`), all JSON with the header `X-Server-Key`. Errors: `bad_server_key`
+(403), `invalid_agent` / `invalid_client_key` (400), `key_taken` (409), `unknown_agent` (409: register again). A browser's
+call that the hub cannot pass on answers `agent_offline` (503), `agent_timeout` (504) or `too_busy` (503). Tests:
+`tests/test_hub.py`.
+
 ## The key and what protects it
+
+(For a plain `iyicam serve`; a hub has the two keys above.)
 
 * The key is in `~/.iyicam/server.key`, made at the first start: 24 letters and digits (about 120 bits), without
   `0 O 1 I`. Dashes, spaces and case do not matter when it is typed.
@@ -131,8 +222,9 @@ no Qt), and installs and starts the systemd service **`iyicam-web`**, which also
 again: after a `git pull` the same command updates it. Settings are environment variables:
 `sudo IYICAM_PORT=8301 bash ...` (port, default 8300), `IYICAM_HOST` (address, default `127.0.0.1`), `PYTHON`
 (for example `python3.12`), `IYICAM_ROOTS` (the folders of [the files of the computer](#files-of-the-computer),
-separated by `:`, default `/var/lib/iyicam/files`, which the installer makes) and `IYICAM_FILES=off` (no file access at
-all).
+separated by `:`, default `/var/lib/iyicam/files`, which the installer makes), `IYICAM_FILES=off` (no file access at
+all) and `IYICAM_HUB=on` (a [hub](#a-hub-and-an-agent-the-server-somewhere-else-the-files-here) instead of a server
+with files of its own: the engine and the files are those of the agents).
 
 The service runs as the user `iyicam` with the system read-only to it, so a folder of your own in `IYICAM_ROOTS` must
 be writable by that user (`chown iyicam: /srv/cam`, or `setfacl -m u:iyicam:rwx /srv/cam`; the installer makes a missing

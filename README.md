@@ -177,7 +177,10 @@ calculate, write G-code and download it, with nothing else installed (no Qt, no 
 browse, open and save files of the computer it runs on, inside the folders you name (`--root`); see
 [docs/web.md](docs/web.md). On a Linux server `packaging/linux/install.sh` installs it as a systemd service
 (`iyicam-web`), and ready-made Caddy, nginx and HAProxy examples put HTTPS in front of it
-([how](docs/web.md#a-server-linux-systemd-and-https)).
+([how](docs/web.md#a-server-linux-systemd-and-https)). When the server is not the computer with the drawings, run
+`iyicam serve --hub` on the server and `iyicam agent` on that computer (it connects outward; the phone signs in with the
+key the agent shows and works with the files of that computer;
+[how](docs/web.md#a-hub-and-an-agent-the-server-somewhere-else-the-files-here)).
 
 ## Installation
 
@@ -289,7 +292,8 @@ iyicam/
   builtins/    built-in features, registered like a plugin
   gui/         PySide6 user interface (controller, canvas, tools, panels, dialogs)
   service/     the engine behind a JSON interface (no window): used by the mobile page, see docs/service.md;
-               server.py is `iyicam serve` and files.py its access to folders, see docs/web.md
+               server.py is `iyicam serve`, files.py its access to folders, hub.py and agent.py the hub and
+               the agent of a server apart from the computer, see docs/web.md
   web/         the page `iyicam serve` shows (plain HTML, CSS and JavaScript, no build step)
   cli.py       command line interface
 examples/plugins/   example plugins (surfacing toolpath, G-code statistics, box maker)
