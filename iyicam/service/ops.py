@@ -182,7 +182,8 @@ def op_import(payload: dict) -> dict:
     ensure_ready()
     name = Path(str(payload.get("name") or "file")).name
     ext = Path(name).suffix.lower().lstrip(".")
-    data = b64d(payload.get("data_b64"))
+    raw = payload.get("data")                       # (the bytes themselves when the caller is in this process: no base64 round trip)
+    data = bytes(raw) if isinstance(raw, (bytes, bytearray)) else b64d(payload.get("data_b64"))
     if not data:
         raise ServiceError("empty_file", "the file is empty", name=name)
     report = ImportReport()

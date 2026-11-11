@@ -23,6 +23,7 @@ The agent has no window of its own when it runs in the background (``pythonw``),
 from __future__ import annotations
 
 import getpass
+import gzip
 import http.client
 import json
 import os
@@ -35,6 +36,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+import zlib
 from pathlib import Path
 
 from ..core import paths
@@ -46,6 +48,7 @@ from .keys import is_key, make_key
 USER_AGENT = "iyicam-agent"
 POLL_TIMEOUT = 40.0              # a little more than the hub holds a poll (25 s)
 MAX_JOBS = 4                     # calls done at the same time; one more is answered "too busy"
+GZIP_FROM = 4096                 # a body bigger than this goes to the hub gzipped
 LOG_LIMIT = 512 * 1024           # the log is cut to its end when it grows beyond this, at the start
 
 
@@ -179,15 +182,29 @@ class Agent:
                 self._write_state()
 
     # -- talking to the hub --------------------------------------------------------------------
-    def request(self, path: str, body: dict, timeout: float) -> tuple[int, dict]:
-        data = json.dumps(body, separators=(",", ":"), allow_nan=False).encode("utf-8")
-        req = urllib.request.Request(self.server_url + path, data=data, method="POST", headers={
-            "Content-Type": "application/json", "X-Server-Key": self.server_key, "User-Agent": USER_AGENT})
+    def _post(self, path: str, data: bytes, timeout: float) -> tuple[int, bytes]:
+        """One call to the hub: a body over a few KB goes gzipped (a drawing is mostly numbers: a fifth of the size) and
+        the answer may come gzipped too."""
+        headers = {"Content-Type": "application/json", "X-Server-Key": self.server_key, "User-Agent": USER_AGENT,
+                   "Accept-Encoding": "gzip"}
+        if len(data) > GZIP_FROM:
+            data, headers["Content-Encoding"] = gzip.compress(data, 3), "gzip"
+        req = urllib.request.Request(self.server_url + path, data=data, method="POST", headers=headers)
         try:
             with urllib.request.urlopen(req, timeout=timeout) as r:
-                code, raw = r.status, r.read()
+                code, raw, enc = r.status, r.read(), r.headers.get("Content-Encoding", "")
         except urllib.error.HTTPError as exc:
-            code, raw = exc.code, exc.read()
+            code, raw, enc = exc.code, exc.read(), exc.headers.get("Content-Encoding", "")
+        if raw and enc.lower() == "gzip":
+            try:
+                raw = gzip.decompress(raw)
+            except (OSError, EOFError, zlib.error):
+                raw = b""
+        return code, raw
+
+    def request(self, path: str, body: dict, timeout: float) -> tuple[int, dict]:
+        data = json.dumps(body, separators=(",", ":"), allow_nan=False).encode("utf-8")
+        code, raw = self._post(path, data, timeout)
         try:
             obj = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, ValueError):
@@ -251,15 +268,9 @@ class Agent:
         data = self._reply_body(job.get("id"), status, out)
         for attempt in range(3):
             try:
-                req = urllib.request.Request(self.server_url + "/agent/reply", data=data, method="POST", headers={
-                    "Content-Type": "application/json", "X-Server-Key": self.server_key, "User-Agent": USER_AGENT})
-                with urllib.request.urlopen(req, timeout=120) as r:
-                    r.read()
-                return
-            except urllib.error.HTTPError as exc:
-                exc.read()
-                if exc.code != 409:                         # (409: the hub forgot us; the call is gone with it)
-                    self.log(f"the hub refused an answer ({exc.code})")
+                code, _ = self._post("/agent/reply", data, 120)
+                if code not in (200, 409):                  # (409: the hub forgot us; the call is gone with it)
+                    self.log(f"the hub refused an answer ({code})")
                 return
             except (OSError, ValueError, http.client.HTTPException):
                 if self._stop.wait(2 * (attempt + 1)):

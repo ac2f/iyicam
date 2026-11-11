@@ -62,9 +62,20 @@ class ServiceHost:
                 raise ServiceError("bad_request", "'payload' must be an object")
             if kind in LONG:
                 fn = LONG[kind]
-                return {"id": self.jobs.start(kind, lambda ctl: fn(inner, ctl)), "state": "queued"}
-            quick = QUICK[kind]
-            return {"id": self.jobs.start(kind, lambda ctl: quick(inner)), "state": "queued"}
+                jid = self.jobs.start(kind, lambda ctl: fn(inner, ctl))
+            else:
+                quick = QUICK[kind]
+                jid = self.jobs.start(kind, lambda ctl: quick(inner))
+            wait = payload.get("wait")                  # milliseconds: a job that is over by then answers at once
+            if isinstance(wait, (int, float)) and not isinstance(wait, bool) and wait > 0:
+                job = self.jobs.wait(jid, min(float(wait), 30000.0) / 1000.0)
+                if job.state == "done":
+                    self.jobs.forget(jid)               # (the caller has it: it is not kept in memory for later)
+                    return {"id": jid, "state": "done", "result": job.result}
+                if job.state == "error":
+                    self.jobs.forget(jid)
+                    return {"id": jid, "state": "error", "error": job.error}
+            return {"id": jid, "state": "queued"}
         if op == "job.status":
             return self.jobs.status(str(payload.get("id")))
         if op == "job.cancel":

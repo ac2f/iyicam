@@ -23,12 +23,15 @@ every answer of the service; :meth:`Files.handle` never raises.
 from __future__ import annotations
 
 import base64
+import gzip
 import hashlib
 import json
 import os
 import secrets
 import sys
+import time
 import traceback
+import unicodedata
 
 from ..core import paths
 from .errors import ServiceError
@@ -36,6 +39,8 @@ from .errors import ServiceError
 MAX_OPEN_BYTES = 64 * 1024 * 1024        # biggest file that is opened
 MAX_WRITE_BYTES = 256 * 1024 * 1024      # most that is written in one call
 LIST_LIMIT = 3000
+LIST_SCAN_LIMIT = 30000                  # most entries of one folder that are looked at
+SEARCH_LIMIT, SEARCH_VISITS, SEARCH_SECONDS = 300, 60000, 4.0
 
 READ_EXT = {".icam", ".dxf", ".svg", ".plt", ".hpgl", ".hpg", ".cdr"}
 GCODE_EXT = {".nc", ".tap", ".ngc", ".cnc", ".gcode", ".mpf", ".txt"}
@@ -43,7 +48,7 @@ WRITE_EXT = {".icam", ".dxf", ".svg", ".png"} | GCODE_EXT
 DENIED_EXT = {".exe", ".bat", ".cmd", ".com", ".ps1", ".vbs", ".js", ".py", ".sh", ".lnk", ".dll", ".msi",
               ".scr", ".jar", ".reg", ".hta", ".pif", ".cpl"}
 
-FILE_OPS = frozenset({"status", "list", "open", "save", "save_files"})
+FILE_OPS = frozenset({"status", "list", "search", "open", "save", "save_files"})
 
 
 def default_roots() -> list[str]:
@@ -67,8 +72,58 @@ def _ext(path: str) -> str:
     return os.path.splitext(path)[1].lower()
 
 
+def _fold(text: str) -> str:
+    """A name as it is compared when it is searched for: no capitals, no accents, the Turkish i with and without a dot alike."""
+    text = unicodedata.normalize("NFD", text.replace("İ", "i").replace("ı", "i").casefold())
+    return "".join(ch for ch in text if not unicodedata.combining(ch))
+
+
 def _sha256(raw: bytes) -> str:
     return hashlib.sha256(raw).hexdigest()
+
+
+CACHE_VERSION = 1                 # raise it when an importer starts to give another result for the same file
+CACHE_MIN_SECONDS = 1.5           # only what took this long to read is kept (a small drawing is read again in no time)
+CACHE_KEEP, CACHE_MAX_BYTES = 12, 800 * 1024 * 1024
+
+
+class _ImportCache:
+    """The project read from a drawing, kept (compressed, in the state folder of iyiCAM) while the file does not change:
+    a big CorelDRAW file that needs half a minute to be read opens at once the next time.  The key is the path, the
+    size, the time of the last change and the thickness; a drawing that is added to a project is never cached."""
+
+    def __init__(self, full: str, size: int, thickness) -> None:
+        try:
+            from .. import __version__ as version
+        except ImportError:
+            version = ""
+        key = f"{CACHE_VERSION}|{version}|{_norm(full)}|{size}|{os.stat(full).st_mtime_ns}|{thickness}"
+        self.path = paths.user_dir() / "cache" / (hashlib.sha1(key.encode("utf-8")).hexdigest() + ".json.gz")
+
+    def load(self):
+        try:
+            with gzip.open(self.path, "rb") as f:
+                res = json.loads(f.read())
+            os.utime(self.path)                    # (used just now: it stays when the oldest go)
+        except (OSError, ValueError, EOFError):
+            return None
+        return res if isinstance(res, dict) and "project" in res else None
+
+    def store(self, res: dict) -> None:
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self.path.with_name(self.path.name + "." + secrets.token_hex(3) + ".tmp")
+            with gzip.GzipFile(str(tmp), "wb", compresslevel=3) as f:
+                f.write(json.dumps(res, separators=(",", ":")).encode("utf-8"))
+            os.replace(tmp, self.path)
+            files = sorted((p for p in self.path.parent.glob("*.json.gz")), key=lambda p: p.stat().st_mtime, reverse=True)
+            total = 0
+            for i, p in enumerate(files):
+                total += p.stat().st_size
+                if i >= CACHE_KEEP or total > CACHE_MAX_BYTES:
+                    p.unlink(missing_ok=True)
+        except OSError:
+            pass                                   # (no cache is no harm)
 
 
 def _write_atomic(full: str, raw: bytes) -> None:
@@ -128,15 +183,20 @@ class Files:
         return {"files": True, "roots": self.roots(), "limits": {"open": MAX_OPEN_BYTES, "write": MAX_WRITE_BYTES}}
 
     def list(self, data) -> dict:
-        """Folders and the files of the kinds the page knows, inside the roots.  Without a path: the roots."""
-        path = (data or {}).get("path")
+        """Folders and the files of the kinds the page knows, inside the roots.  Without a path: the roots.  ``q`` keeps
+        the names that contain it (capital letters, accents and the Turkish dotted / dotless i do not matter); ``sort``
+        is ``name`` (the default), ``date`` or ``size`` and ``desc`` turns it round; the folders stay first.  A folder with
+        more than :data:`LIST_LIMIT` entries is cut after sorting, so what is cut is the end of the order asked for."""
+        data = data or {}
+        path = data.get("path")
         if not path:
             return {"path": "", "parent": None, "roots": True,
                     "entries": [{"name": r, "path": r, "type": "dir"} for r in self.roots()]}
         full = self.resolve(path)
         if not os.path.isdir(full):
             raise ServiceError("folder_not_found", f"folder not found: {path}", path=path)
-        entries, truncated = [], False
+        q = _fold(str(data.get("q") or "").strip())
+        entries, seen = [], 0
         try:
             with os.scandir(full) as it:
                 for e in it:
@@ -144,19 +204,35 @@ class Files:
                         continue
                     try:
                         if e.is_dir():
-                            entries.append({"name": e.name, "path": os.path.join(full, e.name), "type": "dir"})
+                            item = {"name": e.name, "path": os.path.join(full, e.name), "type": "dir"}
                         elif _ext(e.name) in READ_EXT | GCODE_EXT:
+                            if q and q not in _fold(e.name):
+                                continue
                             st = e.stat()
-                            entries.append({"name": e.name, "path": os.path.join(full, e.name), "type": "file",
-                                            "ext": _ext(e.name).lstrip("."), "size": st.st_size, "mtime": st.st_mtime})
+                            item = {"name": e.name, "path": os.path.join(full, e.name), "type": "file",
+                                    "ext": _ext(e.name).lstrip("."), "size": st.st_size, "mtime": st.st_mtime}
+                        else:
+                            continue
+                        if q and item["type"] == "dir" and q not in _fold(e.name):
+                            continue
                     except OSError:
                         continue
-                    if len(entries) >= LIST_LIMIT:
-                        truncated = True
+                    entries.append(item)
+                    seen += 1
+                    if seen >= LIST_SCAN_LIMIT:
                         break
         except OSError as exc:
             raise ServiceError("os_error", str(exc)) from exc
-        entries.sort(key=lambda x: (x["type"] != "dir", x["name"].lower()))
+        key = {"date": lambda x: x.get("mtime", 0.0), "size": lambda x: x.get("size", 0)}.get(str(data.get("sort") or ""))
+        desc = bool(data.get("desc"))
+        entries.sort(key=lambda x: _fold(x["name"]))
+        if key is not None:
+            entries.sort(key=key, reverse=desc)
+        elif desc:
+            entries.sort(key=lambda x: _fold(x["name"]), reverse=True)
+        entries.sort(key=lambda x: x["type"] != "dir")            # (stable: the folders first, the order kept)
+        truncated = len(entries) > LIST_LIMIT or seen >= LIST_SCAN_LIMIT
+        entries = entries[:LIST_LIMIT]
         parent = os.path.dirname(full)
         try:
             parent = self.resolve(parent) if parent != full else None
@@ -164,6 +240,46 @@ class Files:
             parent = None
         return {"path": full, "parent": parent, "entries": entries, "truncated": truncated}
 
+    def search(self, data) -> dict:
+        """The drawings and projects whose name contains ``q``, in a folder (``path``; without it: all the roots) and
+        below it.  It stops at :data:`SEARCH_LIMIT` finds, after :data:`SEARCH_VISITS` entries or :data:`SEARCH_SECONDS`
+        seconds, and says so (``truncated``); hidden folders and the state folder are never looked into."""
+        data = data or {}
+        q = _fold(str(data.get("q") or "").strip())
+        if not q:
+            raise ServiceError("bad_request", "'q' (what to look for) is needed")
+        start = data.get("path")
+        stack = [self.resolve(start)] if start else list(self.roots())
+        found, visited, truncated = [], 0, False
+        deadline = time.monotonic() + SEARCH_SECONDS
+        while stack and not truncated:
+            folder = stack.pop()
+            try:
+                it = os.scandir(folder)
+            except OSError:
+                continue
+            with it:
+                for e in it:
+                    visited += 1
+                    if visited > SEARCH_VISITS or len(found) >= SEARCH_LIMIT or time.monotonic() > deadline:
+                        truncated = True
+                        break
+                    if e.name.startswith("."):
+                        continue
+                    try:
+                        if e.is_dir(follow_symlinks=False):
+                            sub = os.path.join(folder, e.name)
+                            try:
+                                stack.append(self.resolve(sub))
+                            except ServiceError:
+                                pass                         # (outside the roots, or the state folder)
+                        elif _ext(e.name) in READ_EXT and q in _fold(e.name):
+                            st = e.stat()
+                            found.append({"name": e.name, "path": os.path.join(folder, e.name), "type": "file",
+                                          "ext": _ext(e.name).lstrip("."), "size": st.st_size, "mtime": st.st_mtime})
+                    except OSError:
+                        continue
+        return {"entries": found, "truncated": truncated, "visited": visited}
     def open(self, data) -> dict:
         """Read a project (``.icam``) or a drawing (DXF, SVG, HPGL, CorelDRAW) into a project.  A drawing is added to
         the project in ``project`` (to ``sheet``) when one is given, else it starts a new one (``thickness``)."""
@@ -178,17 +294,27 @@ class Files:
         if size > MAX_OPEN_BYTES:
             raise ServiceError("file_too_large", f"the file is {size // 1048576} MB; the limit is "
                                                  f"{MAX_OPEN_BYTES // 1048576} MB", size=size)
+        info = dict(path=full, name=os.path.basename(full), size=size, mtime=os.path.getmtime(full),
+                    kind="project" if ext == ".icam" else "drawing")
+        cache = None if (ext == ".icam" or data.get("project")) else _ImportCache(full, size, data.get("thickness"))
+        if cache is not None:                      # a drawing that took long to read is not read again while it is unchanged
+            hit = cache.load()
+            if hit is not None:
+                hit.update(info, hash="", cached=True)
+                return hit
         with open(full, "rb") as f:
             raw = f.read()
-        req = {"name": os.path.basename(full), "data_b64": base64.b64encode(raw).decode("ascii")}
+        req = {"name": os.path.basename(full), "data": raw}
         for key in ("thickness", "project", "sheet"):
             if data.get(key) is not None:
                 req[key] = data[key]
+        t0 = time.monotonic()
         res = self.engine.handle("import", req)
         if "error" in res:
             return res
-        res.update(path=full, name=os.path.basename(full), hash=_sha256(raw), size=size,
-                   mtime=os.path.getmtime(full), kind="project" if ext == ".icam" else "drawing")
+        if cache is not None and time.monotonic() - t0 >= CACHE_MIN_SECONDS:
+            cache.store(res)
+        res.update(info, hash=_sha256(raw))
         return res
 
     def save(self, data) -> dict:
@@ -269,7 +395,7 @@ class Files:
     # -- the front door -------------------------------------------------------------------------
     def handle(self, op: str, data: dict | None = None) -> dict:
         """One of :data:`FILE_OPS`; never raises."""
-        fn = {"status": self.status, "list": self.list, "open": self.open, "save": self.save,
+        fn = {"status": self.status, "list": self.list, "search": self.search, "open": self.open, "save": self.save,
               "save_files": self.save_files}.get(op)
         if fn is None:
             return ServiceError("unknown_operation", f"there is no operation '{op}'", operation=op).to_dict()

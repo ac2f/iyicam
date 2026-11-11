@@ -50,6 +50,7 @@ class Job:
     started: float | None = None
     finished: float | None = None
     cancel: threading.Event = field(default_factory=threading.Event)
+    finished_event: threading.Event = field(default_factory=threading.Event)       # set when the job is over, however it ended
 
     def status(self) -> dict:
         end = self.finished or time.time()
@@ -100,10 +101,21 @@ class JobManager:
         threading.Thread(target=self._run, args=(job, fn), daemon=True, name=f"iyicam-job-{job.id}").start()
         return job.id
 
+    def wait(self, jid: str, timeout: float) -> Job:
+        """The job, after waiting up to ``timeout`` seconds for it to be over (a quick job answers in the same call)."""
+        job = self._get(jid)
+        job.finished_event.wait(max(0.0, timeout))
+        return job
+
+    def forget(self, jid: str) -> None:
+        with self._lock:
+            self._jobs.pop(str(jid), None)
+
     def _run(self, job: Job, fn: Callable[[JobControl], dict]) -> None:
         with self._slots:
             if job.cancel.is_set():
                 job.state, job.finished = "cancelled", time.time()
+                job.finished_event.set()
                 return
             job.state, job.started = "running", time.time()
             try:
@@ -124,6 +136,7 @@ class JobManager:
                     raise
             finally:
                 job.finished = time.time()
+                job.finished_event.set()
 
     def status(self, jid: str) -> dict:
         return self._get(jid).status()
@@ -133,6 +146,7 @@ class JobManager:
         job.cancel.set()
         if job.state == "queued":
             job.state, job.finished = "cancelled", time.time()
+            job.finished_event.set()
         return job.status()
 
     def result(self, jid: str) -> dict:

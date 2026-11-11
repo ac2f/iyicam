@@ -67,6 +67,9 @@ nothing between requests.
 
 ### Editing the drawing
 
+Every button has its **name under it** (turn that off with *Aa*), a **long press** tells what it does, and **?** lists
+them all with their words.
+
 The bar over the drawing has the tools (touch, or the mouse); every change can be undone (↶ / ↷, Ctrl+Z / Ctrl+Y, up to
 40 steps):
 
@@ -74,6 +77,7 @@ The bar over the drawing has the tools (touch, or the mouse); every change can b
 |---|---|
 | 🖐 view | one finger pans, two zoom, **a tap selects** the vector under the finger (a tap on nothing clears the selection; *select several* or Shift adds and removes) |
 | ⬚ select | drag a box: left to right takes what is wholly inside, right to left everything it touches |
+| ⌖ transform | type the numbers: the position of a reference point (nine to choose from) of the selection, a move by dX / dY, a size (keeping the proportions or not), a scale in %, an angle about the reference point, the sheet origin or a point of your own, a mirror, a slant, and a number of **copies** (the first moved by the change, the next by it twice, …); the browser does it on the project itself and asks the engine (`xform.*`) only for what it cannot (an arc under a stretch) |
 | ✥ move | drag the selected vectors; they **cling** (rigidly: the corners, middles and centre of the selection) to the sheet and to the nodes of the other vectors, or to a grid (▦ 1 / 5 / 10 / 25 mm); 🧲 switches that off; the arrow keys nudge by 1 mm (10 with Shift) |
 | ／ ⌇ ▭ ◯ ⬭ ⬡ | draw a line, a polyline (tap the points, then ✓ or ▢ to close), a rectangle, a circle (from the centre), an ellipse, a regular polygon (the sides are set on the bar); the points cling like a moved selection |
 | ◇ nodes | the nodes of the one selected vector: drag a node or a bezier handle, tap a line to insert a node (＋), delete a node, start the cut here, break at the node, close, make a span a line or a curve |
@@ -103,7 +107,10 @@ the computer…** (Project tab) opens a drawing or a project from there, **Save 
 `.icam` (the same file again with *Save*, and the page notices when somebody changed the file meanwhile), and on the
 Output tab the G-code files and the exports can be written into a folder instead of being downloaded. A name that is
 taken is never replaced without asking. The file window has three modes (open, save as, choose a folder) and remembers
-the last folder.
+the last folder. It has a **search box** (the names of the folder, at once; capitals, accents and the Turkish dotted /
+dotless i do not matter: `celik` finds `Çelik Kapı.svg`), buttons to **sort by name, date or size** (a second tap turns
+the order round; the choice is remembered; folders stay first), and *Search the sub-folders too*, which looks for the
+drawings below the folder (at most 300 finds, 60 000 entries or 4 seconds, never in hidden folders).
 
 It is meant for the computer in the workshop: the drawings are on it, and the G-code goes where the machine's program
 reads it. What it may touch is limited on purpose:
@@ -126,7 +133,10 @@ reads it. What it may touch is limited on purpose:
 On a Windows computer at home the default (the home folder) is what the CNC-Assistant agent does too. For a server name
 the folders: `iyicam serve --root D:\Cam --root D:\Gcode`.
 
-The operations are `status`, `list`, `open`, `save` and `save_files` under `/api/` (after the login, like the others).
+The operations are `status`, `list`, `search`, `open`, `save` and `save_files` under `/api/` (after the login, like the
+others). `list` also takes `sort` (`name`, `date`, `size`), `desc` and `q` (a part of a name); a folder with more than
+3000 entries is cut *after* it is sorted. `search` takes `q` and a `path` (without it: every root) and answers
+`{entries, truncated, visited}` like `list`.
 They are the same, with the same answers, as the ones CNC-Assistant's mobile page calls on its agent
 (`/api/cam/list` and so on), so a page written for one works with the other; the code is this program's own, and the
 two projects share nothing but that interface (no code, no dependency). `status` answers
@@ -137,6 +147,32 @@ two projects share nothing but that interface (no code, no dependency). `status`
 (`{name, text}` or `{name, data_b64}`). Errors: `path_not_allowed` (HTTP 403), `folder_not_found` and `file_not_found`
 (404), `file_exists` and `file_changed` (409), `file_too_large` (413), `unsupported_file`, `invalid_name`, `invalid_path`
 (400), `files_disabled` (403). Tests: `tests/test_files.py`.
+
+## Big drawings
+
+Made to stay quick with a 25 MB CorelDRAW file (14 000 vectors, 260 000 curves; 18 s to read where it took 23 s, 17 MB
+of JSON):
+
+* **read once**: a drawing that took more than 1.5 s to read is kept in `cache/` of the state folder (compressed, the
+  newest 12 and at most 800 MB) while the file does not change (path, size, time, thickness), so the next time it opens in
+  about a second instead of 18. A drawing added to a project and `.icam` files are not kept. Delete the folder to forget
+  it all;
+* **gzip everywhere**: the page sends a body of some size gzipped (a drawing is a fifth of its size that way; `Content-
+  Encoding: gzip`, unpacked up to the size limit, a "zip bomb" is refused), the server and the hub answer gzipped, and an
+  agent talks to the hub gzipped both ways. The files of the page come with an `ETag`: a phone that has them is answered
+  `304` without a body and the page opens from its own copy;
+* **one call for a quick job**: `job.start` takes `wait` (milliseconds); a job that is over by then answers in the same
+  call (`state: "done"`, `result`) instead of three calls through the hub; a longer one is polled as before, quickly at
+  first;
+* **drawn from curves, not from points**: the page makes one path per colour with the arcs and beziers as arcs and
+  beziers (a quarter of a million curves in 0.2 s, 100 MB of memory) and only strokes it at every frame; while a finger
+  moves a big drawing the picture that is on the screen is moved and scaled, and the drawing is made again when the finger
+  is up; a tap looks at the few vectors whose box is under the finger; the project is kept in the browser's storage
+  after the last change (not at every one) and not at all when it is too big for it;
+* **the schema and the folders together**: the two calls of the start go at the same time.
+
+What is still heavy: every call that needs the project (a command, *Calculate*, *Write G-code*) sends the whole project and
+the engine builds it again (about 8 s for this file); only the first reading and the transport were made faster.
 
 ## A hub and an agent (the server somewhere else, the files here)
 

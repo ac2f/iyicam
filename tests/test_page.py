@@ -65,9 +65,10 @@ def _texts():
 
 def test_every_text_the_page_asks_for_exists_in_both_languages():
     source, tr, en = _texts()
-    used = set(re.findall(r'\bt\("([a-z0-9_]+\.[A-Za-z0-9_.]+)"', source))
+    used = {k for k in re.findall(r'\bt\("([a-z0-9_]+\.[A-Za-z0-9_.]+)"', source) if not k.endswith(".")}
     used |= {"ed." + tool for tool in ("view", "select", "move", "line", "poly", "rect", "circle", "ellipse", "polygon",
                                        "nodes", "start")}          # (the tool bar asks for them as "ed." + name)
+    used |= {"files.sort." + k for k in ("name", "date", "size")}  # (and the file window as "files.sort." + key)
     assert used, "the pattern found nothing: the test is wrong"
     assert not sorted(used - tr), f"missing in Turkish: {sorted(used - tr)}"
     assert not sorted(used - en), f"missing in English: {sorted(used - en)}"

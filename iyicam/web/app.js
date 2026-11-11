@@ -168,11 +168,22 @@ class ApiError extends Error {
   constructor(body, status) { super(body.message || body.error || "error"); this.code = body.error; this.body = body; this.status = status; }
   get text() { const k = "e." + this.code; return TXT[lang][k] ? t(k) : (this.code === "network" ? t("err.network") : this.message); }
 }
+/** a body of some size goes gzipped (a drawing is mostly numbers: about a fifth of the size over the air) */
+async function packBody(text) {
+  const headers = { "Content-Type": "application/json" };
+  if (text.length > 16000 && typeof CompressionStream === "function") {
+    try {
+      const gz = await new Response(new Blob([text]).stream().pipeThrough(new CompressionStream("gzip"))).arrayBuffer();
+      return { body: gz, headers: { ...headers, "Content-Encoding": "gzip" } };
+    } catch { /* the plain body goes */ }
+  }
+  return { body: text, headers };
+}
 async function api(op, payload) {
   let r;
   try {
-    r = await fetch("/api/" + op, { method: "POST", credentials: "same-origin",
-      headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload || {}) });
+    const { body: sent, headers } = await packBody(JSON.stringify(payload || {}));
+    r = await fetch("/api/" + op, { method: "POST", credentials: "same-origin", headers, body: sent });
   } catch { throw new ApiError({ error: "network" }, 0); }
   let body;
   try { body = await r.json(); } catch { body = { error: "bad_answer", message: "HTTP " + r.status }; }
@@ -182,12 +193,16 @@ async function api(op, payload) {
 }
 
 async function runJob(op, payload) {
-  const { id } = await api("job.start", { op, payload });
+  const first = await api("job.start", { op, payload, wait: 1500 });       // (a job that is over within 1.5 s answers right here)
+  if (first.state === "done") return first.result;
+  if (first.state === "error") throw new ApiError(first.error || { error: "internal_error" }, 400);
+  const { id } = first;
   const busy = { id, label: t("busy"), k: 0, n: 0, stop: false };
   setBusy(busy);
+  let wait = 100;
   try {
     for (;;) {
-      await sleep(350);
+      await sleep(wait); wait = Math.min(400, wait * 1.5);
       if (busy.stop) { busy.stop = false; await api("job.cancel", { id }).catch(() => {}); }
       const st = await api("job.status", { id });
       busy.k = st.k || 0; busy.n = st.n || 0; busy.label = st.label || t("busy");
@@ -203,7 +218,8 @@ const S = { schema: null, project: null, tab: "project", sheetId: null, results:
             report: null, post: store.get("iyicam.post") || "", showPaths: true, views: {}, busy: null,
             files: null,          // what the server says about files of its computer ({files, roots, limits}); null: none
             file: null,           // the file the open project came from or was saved to: {path, hash}
-            toComputer: store.get("iyicam.tocomputer") === "1" };
+            toComputer: store.get("iyicam.tocomputer") === "1",
+            rev: 0 };             // counts the changes of the project: what is drawn from it is made again when it moves on
 
 const layerMap = p => new Map(p.layers.map(l => [l.id, l]));
 const sheetThickness = (p, s) => (s && s.thickness != null ? s.thickness : p.material.thickness);
@@ -211,14 +227,24 @@ function activeSheet() {
   const p = S.project;
   return p ? (p.sheets.find(s => s.id === S.sheetId) || p.sheets[0]) : null;
 }
-function persist() {
-  if (!S.project) return store.del("iyicam.project");
+/** a project too big to keep in the browser's storage (counted, not written out: writing it out is what is slow) */
+function tooBigToKeep(p) {
+  let n = 0;
+  for (const s of p.sheets) for (const v of s.vectors) for (const c of v.contours) { n += c.segs.length; if (n > 30000) return true; }
+  return false;
+}
+function persistNow() {
+  if (!S.project || tooBigToKeep(S.project)) return store.del("iyicam.project");
   const s = JSON.stringify(S.project);
   if (s.length < 4e6) store.set("iyicam.project", s); else store.del("iyicam.project");
 }
-function touch() { S.results = S.gcode = S.sim = null; persist(); }       // the project changed; what was calculated is stale
+let persistTimer = 0;
+function persist() { clearTimeout(persistTimer); persistTimer = setTimeout(persistNow, 700); }     // (a burst of changes is kept once)
+addEventListener("pagehide", persistNow);
+function touch() { S.rev++; S.results = S.gcode = S.sim = null; persist(); }       // the project changed; what was calculated is stale
 function changed() { touch(); render(); }
 function applyPatch(patch) {
+  S.rev++;
   for (const sh of S.project.sheets)
     sh.vectors = sh.vectors.map(v => patch.vectors[v.id] || v);
   for (const tp of S.project.toolpaths)
@@ -261,6 +287,64 @@ const flatCache = new WeakMap();
 const flatten = IyiGeom.flatten;                           // (geom.js: the points of a contour as a polyline)
 const flatOf = v => { let f = flatCache.get(v); if (!f) { f = v.contours.map(c => ({ closed: c.closed, pts: flatten(c) })); flatCache.set(v, f); } return f; };
 
+/** The drawing of a sheet as one Path2D per colour, with the arcs and beziers as arcs and beziers (no thousands of little
+ *  lines, no arrays of points).  Made when the project changed (``S.rev``) or a layer was shown, hidden or coloured. */
+const scenes = new Map();
+function sceneOf(sheet) {
+  const layers = layerMap(S.project);
+  const key = `${S.rev}|${sheet.id}|${sheet.vectors.length}|${S.project.layers.map(l => `${l.id}${l.color}${l.visible ? 1 : 0}`).join()}`;
+  let sc = scenes.get(sheet.id);
+  if (sc && sc.key === key) return sc;
+  const paths = new Map();
+  let segs = 0;
+  for (const v of sheet.vectors) {
+    const l = layers.get(v.layer);
+    if (l && !l.visible) continue;
+    const col = (l && l.color) || "#1f77b4";
+    let path = paths.get(col);
+    if (!path) paths.set(col, path = new Path2D());
+    for (const c of v.contours) {
+      let [x, y] = c.start;
+      path.moveTo(x, y);
+      for (const s of c.segs) {
+        if (s[0] === "L") { path.lineTo(s[1], s[2]); x = s[1]; y = s[2]; }
+        else if (s[0] === "A") {
+          const g = IyiGeom.arcGeom(x, y, s[1], s[2], s[3]);
+          if (g) path.arc(g.cx, g.cy, g.r, g.a0, g.a0 + g.th, g.th < 0); else path.lineTo(s[1], s[2]);
+          x = s[1]; y = s[2];
+        } else { path.bezierCurveTo(s[1], s[2], s[3], s[4], s[5], s[6]); x = s[5]; y = s[6]; }
+      }
+      if (c.closed) path.closePath();
+      segs += c.segs.length;
+    }
+  }
+  sc = { key, paths, segs };
+  scenes.set(sheet.id, sc);
+  return sc;
+}
+/** the toolpaths that were calculated, as paths per depth: made once for a calculation */
+const previews = new WeakMap();
+function previewOf(sheet, th) {
+  let per = previews.get(S.results);
+  if (!per) previews.set(S.results, per = new Map());
+  const key = sheet.id + "|" + th;
+  let pv = per.get(key);
+  if (pv) return pv;
+  const buckets = Array.from({ length: 8 }, () => new Path2D()), rapid = new Path2D(), drills = [];
+  for (const it of S.results.results) {
+    if (it.sheet !== sheet.id || !it.preview) continue;
+    for (const c of it.preview.cuts) {
+      const b = buckets[clamp(Math.floor(clamp(-c.z / th, 0, 1) * 7.999), 0, 7)];
+      for (let i = 0; i + 1 < c.p.length; i += 2) i ? b.lineTo(c.p[i], c.p[i + 1]) : b.moveTo(c.p[i], c.p[i + 1]);
+    }
+    const r = it.preview.rapids;
+    for (let i = 0; i + 3 < r.length; i += 4) { rapid.moveTo(r[i], r[i + 1]); rapid.lineTo(r[i + 2], r[i + 3]); }
+    drills.push(...it.preview.drills);
+  }
+  per.set(key, pv = { buckets, rapid, drills });
+  return pv;
+}
+
 function fitView(cv, sheet) {
   const w = cv.clientWidth || 300, hgt = cv.clientHeight || 300, m = 24;
   const s = Math.max(1e-6, Math.min((w - 2 * m) / Math.max(sheet.width, 1), (hgt - 2 * m) / Math.max(sheet.height, 1)));
@@ -281,37 +365,12 @@ function drawScene(cv, sheet, view, extra) {
   else ctx.rect(0, 0, sheet.width, sheet.height);
   ctx.fillStyle = dark ? "#1b251f" : "#ffffff"; ctx.fill("evenodd");
   ctx.lineWidth = 1.5 * px; ctx.strokeStyle = dark ? "#4b6455" : "#9db2a5"; ctx.stroke();
-  // the vectors
-  const layers = layerMap(p);
-  const byColor = new Map();
-  for (const v of sheet.vectors) {
-    const l = layers.get(v.layer);
-    if (l && !l.visible) continue;
-    if (extra && extra.skip && extra.skip.has(v.id)) continue;        // (the editor draws it itself while it is being changed)
-    const col = (l && l.color) || "#1f77b4";
-    let path = byColor.get(col);
-    if (!path) byColor.set(col, path = new Path2D());
-    for (const c of flatOf(v)) {
-      c.pts.forEach(([x, y], i) => i ? path.lineTo(x, y) : path.moveTo(x, y));
-      if (c.closed) path.closePath();
-    }
-  }
+  // the vectors: their paths are made once (with the curves as curves) and only stroked at every frame
   ctx.lineWidth = 1.6 * px; ctx.lineJoin = "round";
-  for (const [col, path] of byColor) { ctx.strokeStyle = col; ctx.stroke(path); }
+  for (const [col, path] of sceneOf(sheet).paths) { ctx.strokeStyle = col; ctx.stroke(path); }
   // the toolpaths
   if (S.showPaths && S.results) {
-    const th = Math.max(sheetThickness(p, sheet), 0.01), buckets = Array.from({ length: 8 }, () => new Path2D());
-    const rapid = new Path2D(), drills = [];
-    for (const it of S.results.results) {
-      if (it.sheet !== sheet.id || !it.preview) continue;
-      for (const c of it.preview.cuts) {
-        const b = buckets[clamp(Math.floor(clamp(-c.z / th, 0, 1) * 7.999), 0, 7)];
-        for (let i = 0; i + 1 < c.p.length; i += 2) i ? b.lineTo(c.p[i], c.p[i + 1]) : b.moveTo(c.p[i], c.p[i + 1]);
-      }
-      const r = it.preview.rapids;
-      for (let i = 0; i + 3 < r.length; i += 4) { rapid.moveTo(r[i], r[i + 1]); rapid.lineTo(r[i + 2], r[i + 3]); }
-      drills.push(...it.preview.drills);
-    }
+    const th = Math.max(sheetThickness(p, sheet), 0.01), { buckets, rapid, drills } = previewOf(sheet, th);
     ctx.lineWidth = 1 * px; ctx.setLineDash([4 * px, 4 * px]); ctx.strokeStyle = dark ? "#7d8b83" : "#9aa7a0"; ctx.stroke(rapid); ctx.setLineDash([]);
     ctx.lineWidth = 2 * px;
     buckets.forEach((path, i) => { ctx.strokeStyle = `hsl(${140 - 125 * i / 7} 80% ${dark ? 58 : 42}%)`; ctx.stroke(path); });
@@ -582,31 +641,82 @@ function fileBrowser({ mode = "open", ext = null, start = "", name = "", title =
       const named = ext && !n.toLowerCase().endsWith("." + ext) ? `${n}.${ext}` : n;
       finish({ path: joinPath(dir, named), dir, name: named });
     } }, mode === "save" ? t("files.save") : t("files.chooseHere"));
-    const body = h("div", {}, h("div", { class: "row fbar" }, up, crumb), list,
+    // the folder as the server gave it; what is shown is made from it here (sorted and searched at once, no call)
+    let entries = [], truncated = false, found = null;
+    let sort = ["name", "date", "size"].includes(store.get("iyicam.sort")) ? store.get("iyicam.sort") : "name";
+    let desc = store.get("iyicam.sortdesc") === "1";
+    const fold = s => s.toLocaleLowerCase("tr").replace(/ı/g, "i").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    const query = h("input", { type: "search", placeholder: t("files.search"), "aria-label": t("files.search"), autocomplete: "off", autocapitalize: "off", spellcheck: "false" });
+    const sortBtns = h("div", { class: "row fsort" });
+    const deep = h("div");
+    let serverTimer = 0;
+    const MAX_ROWS = 300;
+    function sortBar() {
+      sortBtns.replaceChildren(...["name", "date", "size"].map(k => h("button", { class: "small" + (sort === k ? " primary" : ""), onclick: () => {
+        if (sort === k) desc = !desc; else { sort = k; desc = k !== "name"; }           // (newest and biggest first)
+        store.set("iyicam.sort", sort); store.set("iyicam.sortdesc", desc ? "1" : "0");
+        sortBar(); draw(); refetchIfCut();
+      } }, t("files.sort." + k) + (sort === k ? (desc ? " ↓" : " ↑") : ""))));
+    }
+    function refetchIfCut() {                                   // (a folder too big for one answer is asked again, in this order)
+      if (!truncated || found || !dir) return;
+      clearTimeout(serverTimer);
+      serverTimer = setTimeout(() => load(dir, true), 250);
+    }
+    function draw() {
+      const needle = fold(query.value.trim());
+      let rows = (found || entries).filter(e => e.type === "dir" || (mode !== "folder" && (mode !== "open" || readable.has(e.ext))));
+      if (needle && !found) rows = rows.filter(e => fold(e.name).includes(needle));
+      const byName = (a, b) => (fold(a.name) < fold(b.name) ? -1 : fold(a.name) > fold(b.name) ? 1 : 0);
+      const key = { name: byName, date: (a, b) => (a.mtime || 0) - (b.mtime || 0), size: (a, b) => (a.size || 0) - (b.size || 0) }[sort];
+      const dirs = rows.filter(e => e.type === "dir").sort(byName);
+      const files = rows.filter(e => e.type !== "dir").sort((a, b) => (desc ? -1 : 1) * key(a, b) || byName(a, b));
+      const all = [...dirs, ...files];
+      list.replaceChildren();
+      if (!all.length) list.append(h("div", { class: "empty" }, found ? t("files.deepNone") : t(mode === "folder" ? "files.nofolders" : "files.empty")));
+      for (const e of all.slice(0, MAX_ROWS)) {
+        if (e.type === "dir") list.append(h("button", { class: "frow dir", onclick: () => { query.value = ""; go(e.path); } }, h("span", { class: "ic" }, "📁"), h("span", { class: "nm" }, e.name), h("span", { class: "sz" }, "›")));
+        else list.append(h("button", { class: "frow file" + (ext && e.ext !== ext ? " dim" : ""), onclick: () => {
+          if (mode === "open") finish({ path: e.path, name: e.name, dir: dirOf(e.path) }); else nameIn.value = e.name;
+        } }, h("span", { class: "ic" }, EXT_ICON[e.ext] || "▤"),
+          h("span", { class: "nm" }, e.name, found ? h("div", { class: "muted small" }, dirOf(e.path).replace(dir, "…")) : null),
+          h("span", { class: "sz" }, `${fmtSize(e.size)} · ${new Date(e.mtime * 1000).toLocaleDateString(lang === "tr" ? "tr-TR" : "en-GB")}`)));
+      }
+      if (all.length > MAX_ROWS) list.append(h("div", { class: "empty" }, t("files.more", all.length - MAX_ROWS)));
+      else if (truncated && !found) list.append(h("div", { class: "empty" }, t("files.cut")));
+      // the search below this folder (a call: it looks into every sub-folder, which can take a moment)
+      deep.replaceChildren();
+      if (needle && mode !== "folder" && dir) deep.append(found
+        ? h("button", { class: "small", onclick: () => { found = null; draw(); } }, "✕ " + t("files.deepOff"))
+        : h("button", { class: "small primary", onclick: deepSearch }, "🔎 " + t("files.deep")));
+    }
+    async function deepSearch() {
+      deep.replaceChildren(h("span", { class: "muted small" }, "…"));
+      try {
+        const r = await api("search", { path: dir, q: query.value.trim() });
+        found = r.entries; draw();
+        if (r.truncated) toast(t("files.deepCut"), "warn");
+      } catch (e) { fail(e); draw(); }
+    }
+    query.addEventListener("input", () => { found = null; draw(); clearTimeout(serverTimer); if (truncated) serverTimer = setTimeout(() => load(dir, true), 350); });
+    sortBar();
+    const body = h("div", {}, h("div", { class: "row fbar" }, up, crumb), query, sortBtns, deep, list,
       mode === "save" ? h("label", { class: "f" }, h("span", {}, t("files.name")), nameIn) : null,
       h("div", { class: "row", style: "margin-top:12px" }, h("button", { class: "grow", onclick: () => finish(null) }, t("cancel")), mode === "open" ? null : choose));
     close = openSheet(title || (mode === "open" ? t("files.openTitle") : mode === "save" ? t("files.saveTitle") : t("files.folderTitle")), body, () => finish(null));
 
-    async function go(path) {
-      list.replaceChildren(h("div", { class: "empty" }, "…"));
+    function go(path) { found = null; return load(path, false); }
+    async function load(path, again) {
+      if (!again) list.replaceChildren(h("div", { class: "empty" }, "…"));
       try {
-        const r = await api("list", { path: path || "" });
+        const r = await api("list", { path: path || "", sort, desc, ...(again && query.value.trim() ? { q: query.value.trim() } : {}) });
         first = false;
         if (r.roots && r.entries.length === 1) return go(r.entries[0].path);          // one place to browse: go in
         dir = r.roots ? "" : r.path; parent = r.roots ? null : r.parent;
         up.disabled = !parent; choose.disabled = !dir;
         crumb.textContent = r.roots ? t("files.roots") : r.path;
-        list.replaceChildren();
-        const rows = r.entries.filter(e => e.type === "dir" || (mode !== "folder" && (mode !== "open" || readable.has(e.ext))));
-        if (!rows.length) list.append(h("div", { class: "empty" }, t(mode === "folder" ? "files.nofolders" : "files.empty")));
-        for (const e of rows) {
-          if (e.type === "dir") list.append(h("button", { class: "frow dir", onclick: () => go(e.path) }, h("span", { class: "ic" }, "📁"), h("span", { class: "nm" }, e.name), h("span", { class: "sz" }, "›")));
-          else list.append(h("button", { class: "frow file" + (ext && e.ext !== ext ? " dim" : ""), onclick: () => {
-            if (mode === "open") finish({ path: e.path, name: e.name, dir: r.path }); else nameIn.value = e.name;
-          } }, h("span", { class: "ic" }, EXT_ICON[e.ext] || "▤"), h("span", { class: "nm" }, e.name),
-            h("span", { class: "sz" }, `${fmtSize(e.size)} · ${new Date(e.mtime * 1000).toLocaleDateString(lang === "tr" ? "tr-TR" : "en-GB")}`)));
-        }
-        if (r.truncated) list.append(h("div", { class: "empty" }, "…"));
+        entries = r.entries; truncated = !!r.truncated;
+        draw();
       } catch (e) {
         if (path && first) { first = false; return go(""); }                         // the remembered folder is gone: start again
         list.replaceChildren(h("div", { class: "empty bad" }, e instanceof ApiError ? e.text : String(e)));
@@ -933,8 +1043,8 @@ function showLogin(note) {
 function signedOut() { if (!$(".login")) showLogin(t("err.session")); }
 
 async function start() {
-  S.schema = await api("schema");
-  try { S.files = await api("status"); } catch { S.files = null; }          // (a server without files, or an older one)
+  // the two calls go together (through a hub each one has a way to the computer and back)
+  [S.schema, S.files] = await Promise.all([api("schema"), api("status").catch(() => null)]);   // (no files, or an older server: null)
   if (!S.project) {
     const saved = store.get("iyicam.project");
     if (saved) {
@@ -950,7 +1060,8 @@ async function start() {
 
 // what edit.js (the drawing tools) needs of this file; it adds ``editor`` to it
 window.IyiPage = { S, h, $, t, TXT, api, runJob, toast, fail, openSheet, paramsForm, numberInput, fmt, store, guarded, render, touch,
-                   persist, changed, activeSheet, layerMap, flatOf, drawScene, fitView, setFile, editor: null };
+                   persist, changed, activeSheet, layerMap, flatOf, drawScene, fitView, setFile, editor: null,
+                   sceneSegs: sheet => sceneOf(sheet).segs };
 
 (async () => {
   let note;

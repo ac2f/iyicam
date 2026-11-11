@@ -29,6 +29,7 @@ import socket
 import sys
 import threading
 import time
+import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -140,6 +141,7 @@ class ServiceServer(ThreadingHTTPServer):
         # only these files are ever served: a name from the URL is looked up here, never turned into a path
         self.assets = {p.name: p for p in WEB_DIR.iterdir() if p.is_file() and p.suffix in STATIC_TYPES} \
             if WEB_DIR.is_dir() else {}
+        self.asset_cache: dict[str, tuple] = {}         # name -> (etag, bytes, gzipped bytes)
         super().__init__(address, Handler)
 
     def log(self, text: str) -> None:
@@ -200,12 +202,14 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, OSError):
             pass
 
-    def _send(self, status: int, body: bytes, ctype: str, headers: dict | None = None, close: bool = False) -> None:
+    def _send(self, status: int, body: bytes, ctype: str, headers: dict | None = None, close: bool = False,
+              gz: bytes | None = None) -> None:
+        """``gz``: the body already gzipped (a page file that is kept so), used when the client takes gzip."""
         if close:
             self._drain()
         if len(body) > 1024 and "gzip" in self.headers.get("Accept-Encoding", "") and \
                 (ctype.startswith(("text/", "application/json", "image/svg"))):
-            body = gzip.compress(body, 5)
+            body = gz if gz is not None else gzip.compress(body, 5 if len(body) < (1 << 20) else 3)   # (a big answer: quick first)
             headers = {**(headers or {}), "Content-Encoding": "gzip"}
         self.send_response(status)
         self.send_header("Content-Type", ctype)
@@ -252,6 +256,17 @@ class Handler(BaseHTTPRequestHandler):
         if len(raw) != length:
             self.close_connection = True
             return None
+        if raw and self.headers.get("Content-Encoding", "").lower() == "gzip":       # (the page and the agents send big bodies gzipped)
+            try:
+                d = zlib.decompressobj(16 + zlib.MAX_WBITS)
+                raw = d.decompress(raw, self.server.max_body + 1)
+            except zlib.error:
+                self._fail(400, "bad_request", "the body is not valid gzip")
+                return None
+            if d.unconsumed_tail or len(raw) > self.server.max_body:        # (a "zip bomb" is not unpacked beyond the limit)
+                self._fail(413, "too_large", f"the request is larger than {self.server.max_body // (1024 * 1024)} MB",
+                           limit_bytes=self.server.max_body)
+                return None
         try:
             data = json.loads(raw.decode("utf-8")) if raw else {}
         except (UnicodeDecodeError, ValueError):
@@ -288,10 +303,27 @@ class Handler(BaseHTTPRequestHandler):
     do_HEAD = do_GET            # noqa: N815
 
     def _static(self, name: str) -> None:
+        """A file of the page: kept in memory (and gzipped once) while it does not change; a browser that has it asks
+        with its ETag and is answered 304 without a body, so the page opens from the phone's own copy."""
         p = self.server.assets.get(name)
         if p is None:
             return self._fail(404, "not_found", "there is nothing here")
-        self._send(200, p.read_bytes(), STATIC_TYPES[p.suffix], {"Cache-Control": "no-cache"})
+        try:
+            st = p.stat()
+        except OSError:
+            return self._fail(404, "not_found", "there is nothing here")
+        etag = f'"{st.st_mtime_ns:x}-{st.st_size:x}"'
+        if self.headers.get("If-None-Match") == etag:
+            self.send_response(304)
+            self.send_header("ETag", etag)
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            return
+        cached = self.server.asset_cache.get(name)
+        if cached is None or cached[0] != etag:
+            raw = p.read_bytes()
+            cached = self.server.asset_cache[name] = (etag, raw, gzip.compress(raw, 9) if len(raw) > 1024 else None)
+        self._send(200, cached[1], STATIC_TYPES[p.suffix], {"Cache-Control": "no-cache", "ETag": etag}, gz=cached[2])
 
     # -- POST -----------------------------------------------------------------------------
     def do_POST(self) -> None:          # noqa: N802

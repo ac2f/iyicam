@@ -18,6 +18,27 @@
     "ed.nodes": "Düğümler", "ed.start": "Başlangıç noktası (vektörün üstüne dokun)",
     "ed.undo": "Geri al", "ed.redo": "Yinele", "ed.multi": "Çoklu seçim", "ed.all": "Hepsini seç", "ed.invert": "Seçimi ters çevir",
     "ed.none": "Seçimi kaldır", "ed.snap": "Yakalama", "ed.grid": "Izgara", "ed.cmds": "Komutlar", "ed.sides": "Kenar",
+    "ed.transform": "Dönüştür: konum, boyut, açı ve ölçeği rakam yazarak ver", "ed.help": "Düğmeler ne işe yarar?", "ed.labels": "Düğme altındaki yazıları aç / kapat",
+    "ed.s.view": "Gez", "ed.s.select": "Kutu", "ed.s.move": "Taşı", "ed.s.line": "Çizgi", "ed.s.poly": "Çoklu", "ed.s.rect": "Dikd.", "ed.s.circle": "Daire",
+    "ed.s.ellipse": "Elips", "ed.s.polygon": "Çokgen", "ed.s.nodes": "Düğüm", "ed.s.start": "Başlat", "ed.s.undo": "Geri", "ed.s.redo": "İleri",
+    "ed.s.multi": "Çoklu", "ed.s.all": "Tümü", "ed.s.invert": "Ters", "ed.s.none": "Hiç", "ed.s.transform": "Dönüş.", "ed.s.snap": "Yakala",
+    "ed.s.grid": "Izgara", "ed.s.cmds": "Komut", "ed.s.help": "Yardım", "ed.s.rot": "90°", "ed.s.flipH": "Sağ-sol", "ed.s.flipV": "Alt-üst",
+    "ed.s.dup": "Çoğalt", "ed.s.copy": "Kopya", "ed.s.paste": "Yapıştır", "ed.s.delete": "Sil", "ed.s.done": "Bitti", "ed.s.last": "Son sil",
+    "ed.s.cancel": "İptal", "ed.s.ni": "Ekle", "ed.s.nd": "Sil", "ed.s.ns": "Başlat", "ed.s.nb": "Ayır", "ed.s.nk": "Kapat", "ed.s.nl": "Çizgi", "ed.s.nc": "Eğri",
+    "tf.title": "Dönüştür", "tf.none": "Önce vektör seç.", "tf.sel": "{0} vektör · sol-alt ({1}, {2}) · boyut {3} × {4}", "tf.ref": "Referans noktası",
+    "tf.pos": "Konum (referans noktasının koordinatı)", "tf.go": "Bu konuma taşı", "tf.by": "Kaydır", "tf.move": "Kaydır", "tf.size": "Boyut", "tf.w": "Genişlik",
+    "tf.h": "Yükseklik", "tf.prop": "Oranı koru", "tf.sizeGo": "Boyutlandır", "tf.scale": "Ölçek (%)", "tf.sx": "Yatay %", "tf.sy": "Dikey %", "tf.scaleGo": "Ölçekle",
+    "tf.rot": "Döndür", "tf.angle": "Açı (°)", "tf.about": "Merkez", "tf.about.ref": "Referans noktası", "tf.about.origin": "Sayfa başlangıcı (0, 0)",
+    "tf.about.point": "Kendi noktam", "tf.rotGo": "Döndür", "tf.mirror": "Ayna", "tf.mh": "Sağ / sol", "tf.mv": "Alt / üst", "tf.slant": "Eğ",
+    "tf.ax": "Yatay açı (°)", "tf.ay": "Dikey açı (°)", "tf.slantGo": "Eğ", "tf.copies": "Kopyalar",
+    "tf.copiesN": "Kopya sayısı (0 = seçimin kendisi değişir, N = N kopya eklenir)", "tf.cant": "Bu dönüşüm yapılamadı.",
+    "help.title": "Düğmeler ne işe yarar?", "help.tip": "Bir düğmeye uzun basarsan adı görünür. «Aa» düğmesi düğme altındaki yazıları açar ve kapatır.",
+    "help.tools": "Araçlar (üst sıra)", "help.general": "Genel düğmeler", "help.selection": "Bir şey seçiliyken", "help.nodes": "Düğüm aracı",
+    "help.poly": "Çoklu çizgi çizerken", "help.side": "Çizimin sağındaki düğmeler", "help.zoomin": "Yaklaştır", "help.zoomout": "Uzaklaştır",
+    "files.search": "Dosya ara…", "files.sort.name": "Ad", "files.sort.date": "Tarih", "files.sort.size": "Boyut",
+    "files.deep": "Alt klasörlerde de ara", "files.deepOff": "Aramayı kapat", "files.deepNone": "Eşleşen dosya yok.",
+    "files.deepCut": "Arama çok uzadı, ilk bulunanlar gösteriliyor; daha özel yaz.", "files.more": "{0} satır daha var: aramayı daralt.",
+    "files.cut": "Klasör çok büyük; sıralamaya göre ilk 3000 dosya gösteriliyor.",
     "ed.order": "Kesim sırası numaraları", "ed.selected": "{0} seçili", "ed.nothing": "Hiçbir şey seçili değil.", "ed.minsel": "Bu komut için en az {0} vektör seç.",
     "ed.delete": "Sil", "ed.dup": "Çoğalt", "ed.copy": "Kopyala", "ed.paste": "Yapıştır", "ed.flipH": "Sağ/sol çevir", "ed.flipV": "Alt/üst çevir",
     "ed.rot": "90° döndür", "ed.layer": "Katmana taşı", "ed.more": "Daha fazlası",
@@ -50,6 +71,27 @@
     "ed.nodes": "Nodes", "ed.start": "Start point (tap on a vector)",
     "ed.undo": "Undo", "ed.redo": "Redo", "ed.multi": "Select several", "ed.all": "Select all", "ed.invert": "Invert selection",
     "ed.none": "Select nothing", "ed.snap": "Snapping", "ed.grid": "Grid", "ed.cmds": "Commands", "ed.sides": "Sides",
+    "ed.transform": "Transform: give position, size, angle and scale as numbers", "ed.help": "What is every button?", "ed.labels": "Show / hide the names under the buttons",
+    "ed.s.view": "View", "ed.s.select": "Box", "ed.s.move": "Move", "ed.s.line": "Line", "ed.s.poly": "Poly", "ed.s.rect": "Rect", "ed.s.circle": "Circle",
+    "ed.s.ellipse": "Ellipse", "ed.s.polygon": "Polygon", "ed.s.nodes": "Nodes", "ed.s.start": "Start", "ed.s.undo": "Undo", "ed.s.redo": "Redo",
+    "ed.s.multi": "Multi", "ed.s.all": "All", "ed.s.invert": "Invert", "ed.s.none": "None", "ed.s.transform": "Transf.", "ed.s.snap": "Snap",
+    "ed.s.grid": "Grid", "ed.s.cmds": "Cmds", "ed.s.help": "Help", "ed.s.rot": "90°", "ed.s.flipH": "Flip H", "ed.s.flipV": "Flip V",
+    "ed.s.dup": "Dupl.", "ed.s.copy": "Copy", "ed.s.paste": "Paste", "ed.s.delete": "Delete", "ed.s.done": "Done", "ed.s.last": "Undo pt",
+    "ed.s.cancel": "Cancel", "ed.s.ni": "Insert", "ed.s.nd": "Delete", "ed.s.ns": "Start", "ed.s.nb": "Break", "ed.s.nk": "Close", "ed.s.nl": "Line", "ed.s.nc": "Curve",
+    "tf.title": "Transform", "tf.none": "Select vectors first.", "tf.sel": "{0} vector(s) · lower left ({1}, {2}) · size {3} × {4}", "tf.ref": "Reference point",
+    "tf.pos": "Position (the coordinates of the reference point)", "tf.go": "Move to this position", "tf.by": "Move by", "tf.move": "Move", "tf.size": "Size", "tf.w": "Width",
+    "tf.h": "Height", "tf.prop": "Keep the proportions", "tf.sizeGo": "Set the size", "tf.scale": "Scale (%)", "tf.sx": "Horizontal %", "tf.sy": "Vertical %", "tf.scaleGo": "Scale",
+    "tf.rot": "Rotate", "tf.angle": "Angle (°)", "tf.about": "Centre", "tf.about.ref": "Reference point", "tf.about.origin": "Sheet origin (0, 0)",
+    "tf.about.point": "A point of my own", "tf.rotGo": "Rotate", "tf.mirror": "Mirror", "tf.mh": "Left / right", "tf.mv": "Top / bottom", "tf.slant": "Slant",
+    "tf.ax": "Horizontal angle (°)", "tf.ay": "Vertical angle (°)", "tf.slantGo": "Slant", "tf.copies": "Copies",
+    "tf.copiesN": "Number of copies (0 = the selection itself changes, N = N copies are added)", "tf.cant": "This could not be done.",
+    "help.title": "What is every button?", "help.tip": "A long press on a button tells its name. The «Aa» button shows or hides the names under the buttons.",
+    "help.tools": "Tools (top row)", "help.general": "General buttons", "help.selection": "With something selected", "help.nodes": "The node tool",
+    "help.poly": "While drawing a polyline", "help.side": "Buttons at the right of the drawing", "help.zoomin": "Zoom in", "help.zoomout": "Zoom out",
+    "files.search": "Search files…", "files.sort.name": "Name", "files.sort.date": "Date", "files.sort.size": "Size",
+    "files.deep": "Search the sub-folders too", "files.deepOff": "Close the search", "files.deepNone": "No file matches.",
+    "files.deepCut": "The search took too long; the first finds are shown. Be more specific.", "files.more": "{0} more: narrow the search.",
+    "files.cut": "The folder is too big: the first 3000 files in this order are shown.",
     "ed.order": "Show the cut order", "ed.selected": "{0} selected", "ed.nothing": "Nothing is selected.", "ed.minsel": "This command needs at least {0} selected vector(s).",
     "ed.delete": "Delete", "ed.dup": "Duplicate", "ed.copy": "Copy", "ed.paste": "Paste", "ed.flipH": "Flip left / right", "ed.flipV": "Flip top / bottom",
     "ed.rot": "Turn 90°", "ed.layer": "Move to layer", "ed.more": "More",
@@ -79,6 +121,7 @@
   // ------------------------------------------------------------------------------------------ state
   const E = {
     tool: "view", sel: new Set(), multi: false, snap: true, grid: 0, sides: 6, layer: null, sheetId: null, order: false,
+    labels: B.store.get("iyicam.labels") !== "0", tf: null,
     undo: [], redo: [], clip: null, pastes: 0, node: null, insert: false, poly: [], ghost: null, mark: null, rubber: null,
   };
   const sheet = () => B.activeSheet();
@@ -356,7 +399,33 @@
     const wrap = h("div", { class: "edstage" });
     const bars = h("div", { class: "edbars" });
     let view = S.views[sh.id], raf = 0;
-    const redraw = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(() => { if (!view) view = S.views[sh.id] = B.fitView(cv, sh); B.drawScene(cv, sh, view, { skip: skipIds(), overlay }); }); };
+    // A big drawing (tens of thousands of segments) is not drawn again at every frame of a gesture: the picture that was
+    // on the screen is moved and scaled instead, and the drawing is made once more when the finger is up.
+    let snap = null, gesturing = false, settle = 0;
+    const heavy = () => B.sceneSegs(sh) > 12000;
+    const redraw = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        if (!cv.isConnected) return;
+        if (!view) view = S.views[sh.id] = B.fitView(cv, sh);
+        if (gesturing && snap) return drawSnap();
+        B.drawScene(cv, sh, view, { skip: skipIds(), overlay });
+      });
+    };
+    function beginGesture() {
+      clearTimeout(settle);
+      if (gesturing) return;
+      gesturing = true;
+      if (heavy()) { const c = document.createElement("canvas"); c.width = cv.width; c.height = cv.height; c.getContext("2d").drawImage(cv, 0, 0); snap = { c, v: { ...view } }; }
+    }
+    function endGesture(delay = 90) { clearTimeout(settle); settle = setTimeout(() => { gesturing = false; snap = null; redraw(); }, delay); }
+    function drawSnap() {
+      const dpr = window.devicePixelRatio || 1, ctx = cv.getContext("2d"), f = view.s / snap.v.s;
+      ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, cv.width, cv.height);
+      ctx.drawImage(snap.c, (view.ox - snap.v.ox * f) * dpr, (view.oy - snap.v.oy * f) * dpr, snap.c.width * f, snap.c.height * f);
+      ctx.setTransform(dpr * view.s, 0, 0, -dpr * view.s, dpr * view.ox, dpr * view.oy);
+      if (E.ghost || E.rubber || E.mark) overlay(ctx, view, 1 / view.s);          // (what is being drawn or moved goes on top)
+    }
     const toWorld = (px, py) => [(px - view.ox) / view.s, (view.oy - py) / view.s];
     const tol = () => 14 / view.s;
     const zoomAt = (cx, cy, f) => { f = Math.min(40, Math.max(0.2, f)); view.ox = cx - (cx - view.ox) * f; view.oy = cy - (cy - view.oy) * f; view.s *= f; };
@@ -438,7 +507,7 @@
         if (!gg.moved) tapSelect(gg.x0, gg.y0, additive);
         else {
           const r = { x0: Math.min(gg.x0, x), y0: Math.min(gg.y0, y), x1: Math.max(gg.x0, x), y1: Math.max(gg.y0, y) }, crossing = x < gg.x0;
-          const hits = sh.vectors.filter(v => usable(v) && G.inRect(B.flatOf(v), r, crossing)).map(v => v.id);
+          const hits = sh.vectors.filter(v => usable(v) && G.vInRect(v, B.flatOf, r, crossing)).map(v => v.id);
           E.sel = additive ? new Set([...E.sel, ...hits]) : new Set(hits); E.node = null; refresh();
         }
       } else if (gg.kind === "move") {
@@ -490,13 +559,14 @@
       if (!q || !view) return;
       const nx = e.offsetX, ny = e.offsetY;
       if (ptrs.size === 2) {
+        beginGesture();
         const o = [...ptrs].find(([id]) => id !== e.pointerId)[1];
         const d0 = Math.hypot(q.x - o.x, q.y - o.y) || 1, d1 = Math.hypot(nx - o.x, ny - o.y) || 1;
         zoomAt((q.x + o.x) / 2, (q.y + o.y) / 2, d1 / d0);
         view.ox += (nx + o.x) / 2 - (q.x + o.x) / 2; view.oy += (ny + o.y) / 2 - (q.y + o.y) / 2;
       } else if (g) {
-        if (g.pan) { if (Math.hypot(nx - g.sx, ny - g.sy) > 5) g.moved = true; if (g.moved) { view.ox += nx - q.x; view.oy += ny - q.y; } }
-        else drag(e);
+        if (g.pan) { if (Math.hypot(nx - g.sx, ny - g.sy) > 5) g.moved = true; if (g.moved) { beginGesture(); view.ox += nx - q.x; view.oy += ny - q.y; } }
+        else { if (Math.hypot(nx - g.sx, ny - g.sy) > 5) beginGesture(); drag(e); }
         if (E.ghost && E.ghost.dx !== undefined) lastGhost = E.ghost;
       }
       q.x = nx; q.y = ny;
@@ -508,50 +578,64 @@
       ptrs.delete(e.pointerId);
       if (one && g) finish(e);
       else if (!ptrs.size) { g = null; }
+      if (!ptrs.size) endGesture();
     };
     cv.addEventListener("pointerup", up);
-    cv.addEventListener("pointercancel", e => { ptrs.delete(e.pointerId); g = null; E.rubber = null; E.ghost = null; redraw(); });
-    cv.addEventListener("wheel", e => { e.preventDefault(); if (view) { zoomAt(e.offsetX, e.offsetY, Math.exp(-e.deltaY * 0.0015)); redraw(); } }, { passive: false });
+    cv.addEventListener("pointercancel", e => { ptrs.delete(e.pointerId); g = null; E.rubber = null; E.ghost = null; redraw(); endGesture(); });
+    cv.addEventListener("wheel", e => { e.preventDefault(); if (view) { beginGesture(); zoomAt(e.offsetX, e.offsetY, Math.exp(-e.deltaY * 0.0015)); redraw(); endGesture(140); } }, { passive: false });
     cv.addEventListener("dblclick", () => { if (E.tool === "poly") return; view = S.views[sh.id] = B.fitView(cv, sh); redraw(); });
     new ResizeObserver(() => redraw()).observe(cv);
 
     // ---- the bars
-    const btn = (label, title, fn, on) => h("button", { class: "ed" + (on ? " on" : ""), title, "aria-label": title, onclick: fn }, label);
+    const btn = (label, title, fn, on, short) => {
+      const lbl = E.labels && short;
+      const el = h("button", { class: "ed" + (on ? " on" : "") + (lbl ? " lbl" : ""), title, "aria-label": title,
+        onclick: ev => { if (el._long) { el._long = false; return; } fn(ev); } },
+        lbl ? [h("span", { class: "i" }, label), h("span", { class: "l" }, short)] : label);
+      let timer = 0;                              // (a long press tells what the button is: a phone has no hover)
+      el.addEventListener("pointerdown", () => { el._long = false; clearTimeout(timer); timer = setTimeout(() => { el._long = true; toast(title); }, 500); });
+      for (const ev of ["pointerup", "pointerleave", "pointercancel"]) el.addEventListener(ev, () => clearTimeout(timer));
+      return el;
+    };
+    const sh_ = k => t("ed.s." + k);              // the short name under a button
     function fillBars() {
       const sel = selected(), one = oneVector();
-      const toolRow = h("div", { class: "edrow tools" }, TOOLS.map(([id, ic]) => btn(ic, t("ed." + id), () => { E.tool = id; E.poly = []; E.node = null; E.insert = false; E.rubber = null; fillBars(); redraw(); }, E.tool === id)));
+      const toolRow = h("div", { class: "edrow tools" }, TOOLS.map(([id, ic]) => btn(ic, t("ed." + id), () => { E.tool = id; E.poly = []; E.node = null; E.insert = false; E.rubber = null; fillBars(); redraw(); }, E.tool === id, sh_(id))));
       const rows = [toolRow];
       if (E.tool === "polygon") rows.push(h("div", { class: "edrow" }, h("span", { class: "muted small" }, t("ed.sides")),
         btn("−", "−", () => { E.sides = Math.max(3, E.sides - 1); fillBars(); }), h("b", {}, String(E.sides)), btn("＋", "+", () => { E.sides = Math.min(60, E.sides + 1); fillBars(); })));
       if (E.tool === "poly") rows.push(h("div", { class: "edrow" },
-        btn("✓", t("ed.done"), () => { if (E.poly.length > 1) { const c = G.polyline(E.poly, false); E.poly = []; addVector(c, "Polyline"); } }, false),
-        btn("▢", t("ed.node.close"), () => { if (E.poly.length > 2) { const c = G.polyline(E.poly, true); E.poly = []; addVector(c, "Polyline"); } }, false),
-        btn("⌫", t("ed.last"), () => { E.poly.pop(); fillBars(); redraw(); }, false), btn("✕", t("ed.cancel"), () => { E.poly = []; fillBars(); redraw(); }, false)));
+        btn("✓", t("ed.done"), () => { if (E.poly.length > 1) { const c = G.polyline(E.poly, false); E.poly = []; addVector(c, "Polyline"); } }, false, sh_("done")),
+        btn("▢", t("ed.node.close"), () => { if (E.poly.length > 2) { const c = G.polyline(E.poly, true); E.poly = []; addVector(c, "Polyline"); } }, false, sh_("nk")),
+        btn("⌫", t("ed.last"), () => { E.poly.pop(); fillBars(); redraw(); }, false, sh_("last")), btn("✕", t("ed.cancel"), () => { E.poly = []; fillBars(); redraw(); }, false, sh_("cancel"))));
       if (E.tool === "nodes") {
         rows.push(!one ? h("div", { class: "edrow muted small" }, t("ed.node.pick")) : h("div", { class: "edrow" },
-          btn("＋", t("ed.node.insert"), () => { E.insert = !E.insert; fillBars(); }, E.insert),
-          btn("🗑", t("ed.node.del"), () => nodeEdit((c, k) => G.deleteNode(c, k))),
-          btn("⚑", t("ed.node.start"), () => nodeEdit((c, k) => (c.closed ? G.setStart(c, k) : null))),
-          btn("✂", t("ed.node.break"), () => nodeEdit((c, k) => G.breakAt(c, k))),
-          btn("▢", t("ed.node.close"), () => nodeEdit(c => (c.closed ? null : G.closeContour(c)))),
-          btn("—", t("ed.node.line"), () => nodeEdit((c, k) => (c.segs[k] ? G.convertSpan(c, k, "L") : null))),
-          btn("〜", t("ed.node.curve"), () => nodeEdit((c, k) => (c.segs[k] ? G.convertSpan(c, k, "C") : null)))));
+          btn("＋", t("ed.node.insert"), () => { E.insert = !E.insert; fillBars(); }, E.insert, sh_("ni")),
+          btn("🗑", t("ed.node.del"), () => nodeEdit((c, k) => G.deleteNode(c, k)), false, sh_("nd")),
+          btn("⚑", t("ed.node.start"), () => nodeEdit((c, k) => (c.closed ? G.setStart(c, k) : null)), false, sh_("ns")),
+          btn("✂", t("ed.node.break"), () => nodeEdit((c, k) => G.breakAt(c, k)), false, sh_("nb")),
+          btn("▢", t("ed.node.close"), () => nodeEdit(c => (c.closed ? null : G.closeContour(c))), false, sh_("nk")),
+          btn("—", t("ed.node.line"), () => nodeEdit((c, k) => (c.segs[k] ? G.convertSpan(c, k, "L") : null)), false, sh_("nl")),
+          btn("〜", t("ed.node.curve"), () => nodeEdit((c, k) => (c.segs[k] ? G.convertSpan(c, k, "C") : null)), false, sh_("nc"))));
       }
       const gen = h("div", { class: "edrow" },
-        btn("↶", t("ed.undo"), undo), btn("↷", t("ed.redo"), redo),
-        btn("＋", t("ed.multi"), () => { E.multi = !E.multi; fillBars(); }, E.multi),
-        btn("▣", t("ed.all"), selectAll), btn("◫", t("ed.invert"), invert), btn("⊘", t("ed.none"), clear),
-        btn("🧲", t("ed.snap"), () => { E.snap = !E.snap; fillBars(); }, E.snap),
-        btn("▦" + (E.grid ? E.grid : ""), t("ed.grid"), () => { const o = [0, 1, 5, 10, 25]; E.grid = o[(o.indexOf(E.grid) + 1) % o.length]; fillBars(); }, !!E.grid),
-        btn("⋯ " + t("ed.cmds"), t("ed.cmdsTitle"), openCommands));
+        btn("↶", t("ed.undo"), undo, false, sh_("undo")), btn("↷", t("ed.redo"), redo, false, sh_("redo")),
+        btn("＋", t("ed.multi"), () => { E.multi = !E.multi; fillBars(); }, E.multi, sh_("multi")),
+        btn("▣", t("ed.all"), selectAll, false, sh_("all")), btn("◫", t("ed.invert"), invert, false, sh_("invert")), btn("⊘", t("ed.none"), clear, false, sh_("none")),
+        btn("⌖", t("ed.transform"), openTransform, false, sh_("transform")),
+        btn("🧲", t("ed.snap"), () => { E.snap = !E.snap; fillBars(); }, E.snap, sh_("snap")),
+        btn("▦" + (E.grid ? E.grid : ""), t("ed.grid"), () => { const o = [0, 1, 5, 10, 25]; E.grid = o[(o.indexOf(E.grid) + 1) % o.length]; fillBars(); }, !!E.grid, sh_("grid")),
+        btn("⋯", t("ed.cmdsTitle"), openCommands, false, sh_("cmds")),
+        btn("?", t("ed.help"), openHelp, false, sh_("help")),
+        btn("Aa", t("ed.labels"), () => { E.labels = !E.labels; B.store.set("iyicam.labels", E.labels ? "1" : "0"); fillBars(); }, E.labels));
       rows.push(gen);
       if (sel.length) {
         const bb = G.bbox(sel, B.flatOf);
         rows.push(h("div", { class: "edrow sel" }, h("span", { class: "badge" }, t("ed.selected", sel.length) + (bb ? ` · ${fmt(bb.x1 - bb.x0, 1)}×${fmt(bb.y1 - bb.y0, 1)}` : "")),
-          btn("↻", t("ed.rot"), rot90), btn("⇆", t("ed.flipH"), flipH), btn("⇅", t("ed.flipV"), flipV), btn("⧉", t("ed.dup"), duplicate),
-          btn("📋", t("ed.copy"), copy), E.clip ? btn("📌", t("ed.paste"), paste) : null,
-          btn("🗑", t("ed.delete"), removeSelected), layerPicker()));
-      } else if (E.clip) rows.push(h("div", { class: "edrow" }, btn("📌 " + t("ed.paste"), t("ed.paste"), paste)));
+          btn("↻", t("ed.rot"), rot90, false, sh_("rot")), btn("⇆", t("ed.flipH"), flipH, false, sh_("flipH")), btn("⇅", t("ed.flipV"), flipV, false, sh_("flipV")), btn("⧉", t("ed.dup"), duplicate, false, sh_("dup")),
+          btn("📋", t("ed.copy"), copy, false, sh_("copy")), E.clip ? btn("📌", t("ed.paste"), paste, false, sh_("paste")) : null,
+          btn("🗑", t("ed.delete"), removeSelected, false, sh_("delete")), layerPicker()));
+      } else if (E.clip) rows.push(h("div", { class: "edrow" }, btn("📌", t("ed.paste"), paste, false, sh_("paste"))));
       bars.replaceChildren(...rows);
     }
     function layerPicker() {
@@ -588,6 +672,129 @@
     fillBars();
     wrap.append(bars, stageEl);
     return wrap;
+  }
+
+  // ------------------------------------------------------------------------------------------ transform (typed numbers)
+  const REFS = [["tl", "↖"], ["tc", "↑"], ["tr", "↗"], ["ml", "←"], ["mc", "●"], ["mr", "→"], ["bl", "↙"], ["bc", "↓"], ["br", "↘"]];
+  /** a point of the box of the selection: t, m, b (top, middle, bottom; Y is up) and l, c, r */
+  const refPoint = (bb, ref) => [ref[1] === "l" ? bb.x0 : ref[1] === "r" ? bb.x1 : (bb.x0 + bb.x1) / 2,
+                                 ref[0] === "t" ? bb.y1 : ref[0] === "b" ? bb.y0 : (bb.y0 + bb.y1) / 2];
+  /** the map A after the map B */
+  const mul = (A, B) => [A[0] * B[0] + A[2] * B[1], A[1] * B[0] + A[3] * B[1], A[0] * B[2] + A[2] * B[3], A[1] * B[2] + A[3] * B[3],
+                         A[0] * B[4] + A[2] * B[5] + A[4], A[1] * B[4] + A[3] * B[5] + A[5]];
+  const shiftMap = (dx, dy) => [1, 0, 0, 1, dx, dy];
+  const scaleXY = (sx, sy, cx, cy) => [sx, 0, 0, sy, cx - sx * cx, cy - sy * cy];
+  const slantMap = (ax, ay, cx, cy) => { const tx = Math.tan(ax * Math.PI / 180), ty = Math.tan(ay * Math.PI / 180); return [1, ty, tx, 1, -tx * cy, -ty * cx]; };
+  /** Apply a map to the selection: ``copies`` 0 changes the vectors themselves, N adds N copies (the first one moved by
+   *  the map, the next by it twice, and so on: a row of five copies is one go).  ``false`` when this browser cannot (an arc
+   *  under a map that does not keep its shape): the engine does it then. */
+  function applyMap(map, copies) {
+    const src = selected();
+    if (!src.length) return null;
+    if (copies > 0) {
+      const news = [];
+      let m = map;
+      for (let k = 1; k <= Math.min(copies, 500); k++) {
+        for (const v of src) { const n = G.affine(v, m); if (!n) return false; news.push({ ...n, id: G.newId(), locked_starts: (v.locked_starts || []).slice() }); }
+        m = mul(map, m);
+      }
+      edit(() => { sheet().vectors.push(...news); });
+      E.sel = new Set(news.map(v => v.id));
+      return true;
+    }
+    const out = mapSelected(map);
+    if (!out) return false;
+    edit(() => setVectors(out));
+    return true;
+  }
+
+  function openTransform() {
+    if (!selected().length) return toast(t("tf.none"), "warn");
+    const st = E.tf || (E.tf = { ref: "mc", prop: true, copies: 0, about: "ref", px: 0, py: 0, angle: 90, ax: 15, ay: 0, sx: 100, sy: 100, dx: 0, dy: 0 });
+    const body = h("div", { class: "tf" });
+    let close = () => {};
+    const num = (label, key, opts = {}) => h("label", { class: "f" }, h("span", {}, label), numberInput(opts.value !== undefined ? opts.value : st[key], v => { st[key] = v; if (opts.on) opts.on(v); }, opts.p));
+    /** run one change: this browser's own, else the engine's command with the same numbers */
+    const run = (map, fallback) => {
+      const r = applyMap(map, Math.max(0, Math.round(st.copies || 0)));
+      if (r === false && fallback) { const cmd = (S.schema.commands || []).find(c => c.id === fallback[0]); if (cmd) { B.guarded(async () => { await exec(cmd, fallback[1]); build(); }); return; } }
+      if (r === false) toast(t("tf.cant"), "warn");
+      if (r) build();
+    };
+    function build() {
+      const sel = selected();
+      if (!sel.length) { close(); return; }
+      const bb = G.bbox(sel), w = bb.x1 - bb.x0, hh = bb.y1 - bb.y0, [rx, ry] = refPoint(bb, st.ref);
+      const refGrid = h("div", { class: "refgrid", role: "radiogroup", "aria-label": t("tf.ref") }, REFS.map(([id, ic]) => h("button", { class: "ed" + (st.ref === id ? " on" : ""), title: t("tf.ref"), "aria-label": id, onclick: () => { st.ref = id; build(); } }, ic)));
+      const X = h("input", { type: "number", step: "any", inputmode: "decimal", value: +rx.toFixed(4) }), Y = h("input", { type: "number", step: "any", inputmode: "decimal", value: +ry.toFixed(4) });
+      const W = h("input", { type: "number", step: "any", inputmode: "decimal", value: +w.toFixed(4) }), H = h("input", { type: "number", step: "any", inputmode: "decimal", value: +hh.toFixed(4) });
+      W.addEventListener("input", () => { if (st.prop && w > 1e-9 && Number.isFinite(W.valueAsNumber)) H.value = +(W.valueAsNumber * hh / w).toFixed(4); });
+      H.addEventListener("input", () => { if (st.prop && hh > 1e-9 && Number.isFinite(H.valueAsNumber)) W.value = +(H.valueAsNumber * w / hh).toFixed(4); });
+      const prop = h("input", { type: "checkbox", checked: st.prop }); prop.onchange = () => { st.prop = prop.checked; };
+      const val = el => (Number.isFinite(el.valueAsNumber) ? el.valueAsNumber : 0);
+      const pct = (label, key) => h("label", { class: "f" }, h("span", {}, label), numberInput(st[key], v => { st[key] = v; if (st.prop && key === "sx") st.sy = v; }));
+      const aboutSel = h("select", {}, [["ref", t("tf.about.ref")], ["origin", t("tf.about.origin")], ["point", t("tf.about.point")]].map(([v, l]) => h("option", { value: v }, l)));
+      aboutSel.value = st.about; aboutSel.onchange = () => { st.about = aboutSel.value; build(); };
+      const pivot = () => (st.about === "origin" ? [0, 0] : st.about === "point" ? [st.px, st.py] : [rx, ry]);
+      const go = (label, fn) => h("button", { class: "primary", onclick: fn }, label);
+      body.replaceChildren(
+        h("div", { class: "muted small" }, t("tf.sel", sel.length, fmt(bb.x0, 2), fmt(bb.y0, 2), fmt(w, 2), fmt(hh, 2))),
+        h("div", { class: "group-h" }, t("tf.ref")), refGrid,
+        h("div", { class: "group-h" }, t("tf.pos")),
+        h("div", { class: "grid2" }, h("label", { class: "f" }, h("span", {}, "X"), X), h("label", { class: "f" }, h("span", {}, "Y"), Y)),
+        go(t("tf.go"), () => run(shiftMap(val(X) - rx, val(Y) - ry))),
+        h("div", { class: "group-h" }, t("tf.by")),
+        h("div", { class: "grid2" }, num("dX", "dx"), num("dY", "dy")),
+        go(t("tf.move"), () => run(shiftMap(st.dx, st.dy), ["xform.move", { dx: st.dx, dy: st.dy }])),
+        h("div", { class: "group-h" }, t("tf.size")),
+        h("div", { class: "grid2" }, h("label", { class: "f" }, h("span", {}, t("tf.w")), W), h("label", { class: "f" }, h("span", {}, t("tf.h")), H)),
+        h("label", { class: "chk" }, prop, t("tf.prop")),
+        go(t("tf.sizeGo"), () => {
+          const nw = val(W), nh = val(H);
+          if (nw <= 0 || nh <= 0 || w < 1e-9 || hh < 1e-9) return toast(t("tf.cant"), "warn");
+          run(scaleXY(nw / w, nh / hh, rx, ry), ["xform.size", { width: nw, height: nh, uniform: false }]);
+        }),
+        h("div", { class: "group-h" }, t("tf.scale")),
+        h("div", { class: "grid2" }, pct(t("tf.sx"), "sx"), pct(t("tf.sy"), "sy")),
+        go(t("tf.scaleGo"), () => {
+          const sx = st.sx / 100, sy = (st.prop ? st.sx : st.sy) / 100;
+          if (!(sx > 0 && sy > 0)) return toast(t("tf.cant"), "warn");
+          run(scaleXY(sx, sy, rx, ry), ["xform.scale", { sx: st.sx, sy: st.prop ? st.sx : st.sy, uniform: false, about: "center" }]);
+        }),
+        h("div", { class: "group-h" }, t("tf.rot")),
+        h("div", { class: "grid2" }, num(t("tf.angle"), "angle"), h("label", { class: "f" }, h("span", {}, t("tf.about")), aboutSel)),
+        st.about === "point" ? h("div", { class: "grid2" }, num("X", "px"), num("Y", "py")) : null,
+        go(t("tf.rotGo"), () => { const [cx, cy] = pivot(); run(G.rotateMap(st.angle, cx, cy)); }),
+        h("div", { class: "group-h" }, t("tf.mirror")),
+        h("div", { class: "row" },
+          h("button", { class: "grow", onclick: () => run(G.flipHMap(pivot()[0]), ["xform.mirror", { axis: "vertical", about: "center" }]) }, "⇆ " + t("tf.mh")),
+          h("button", { class: "grow", onclick: () => run(G.flipVMap(pivot()[1]), ["xform.mirror", { axis: "horizontal", about: "center" }]) }, "⇅ " + t("tf.mv"))),
+        h("div", { class: "group-h" }, t("tf.slant")),
+        h("div", { class: "grid2" }, num(t("tf.ax"), "ax"), num(t("tf.ay"), "ay")),
+        go(t("tf.slantGo"), () => { const [cx, cy] = pivot(); run(slantMap(st.ax, st.ay, cx, cy), ["xform.slant", { angle_x: st.ax, angle_y: st.ay, about: "center" }]); }),
+        h("div", { class: "group-h" }, t("tf.copies")),
+        num(t("tf.copiesN"), "copies", { p: { kind: "int", min: 0 } }),
+        h("div", { class: "row", style: "margin-top:14px" }, h("button", { class: "grow", onclick: () => close() }, t("ed.close"))));
+    }
+    build();
+    close = openSheet(t("tf.title"), body);
+  }
+
+  // ------------------------------------------------------------------------------------------ what every button is
+  function openHelp() {
+    const item = (ic, key) => h("div", { class: "helprow" }, h("span", { class: "helpic" }, ic), h("span", {}, t(key)));
+    const sec = (title, items) => h("div", {}, h("div", { class: "group-h" }, title), items.map(([ic, key]) => item(ic, key)));
+    let close;
+    close = openSheet(t("help.title"), h("div", { class: "help" },
+      h("div", { class: "muted small" }, t("help.tip")),
+      sec(t("help.tools"), TOOLS.map(([id, ic]) => [ic, "ed." + id])),
+      sec(t("help.general"), [["↶", "ed.undo"], ["↷", "ed.redo"], ["＋", "ed.multi"], ["▣", "ed.all"], ["◫", "ed.invert"], ["⊘", "ed.none"], ["⌖", "ed.transform"],
+        ["🧲", "ed.snap"], ["▦", "ed.grid"], ["⋯", "ed.cmdsTitle"], ["?", "ed.help"], ["Aa", "ed.labels"]]),
+      sec(t("help.selection"), [["↻", "ed.rot"], ["⇆", "ed.flipH"], ["⇅", "ed.flipV"], ["⧉", "ed.dup"], ["📋", "ed.copy"], ["📌", "ed.paste"], ["🗑", "ed.delete"], ["▤", "ed.layer"]]),
+      sec(t("help.nodes"), [["＋", "ed.node.insert"], ["🗑", "ed.node.del"], ["⚑", "ed.node.start"], ["✂", "ed.node.break"], ["▢", "ed.node.close"], ["—", "ed.node.line"], ["〜", "ed.node.curve"]]),
+      sec(t("help.poly"), [["✓", "ed.done"], ["⌫", "ed.last"], ["✕", "ed.cancel"]]),
+      sec(t("help.side"), [["⤢", "draw.fit"], ["＋", "help.zoomin"], ["－", "help.zoomout"], ["◉", "draw.paths"], ["①", "ed.order"]]),
+      h("div", { class: "row", style: "margin-top:12px" }, h("button", { class: "grow", onclick: () => close() }, t("ed.close")))));
   }
 
   // ------------------------------------------------------------------------------------------ the engine's commands

@@ -70,6 +70,9 @@ def cdr_version(ch: int) -> int:
 # bytes
 # ---------------------------------------------------------------------------------------------------------------
 
+_UNPACK_H, _UNPACK_I, _UNPACK_SH, _UNPACK_SI, _UNPACK_D = (struct.Struct(f).unpack_from for f in ("<H", "<I", "<h", "<i", "<d"))
+
+
 class _R:
     """A stream of bytes with a position (like libcdr's input streams: seeking is clamped, reading past the end throws)."""
     __slots__ = ("d", "p", "n")
@@ -86,19 +89,57 @@ class _R:
     def skip(self, n: int) -> None:
         self.seek(self.p + n)
 
-    def _take(self, fmt: str, size: int):
-        if self.p + size > self.n:
+    # (these are called millions of times for a big drawing: each one does its own work, without a helper in between)
+    def u8(self):
+        p = self.p
+        if p >= self.n:
             raise _Short()
-        v = struct.unpack_from(fmt, self.d, self.p)[0]
-        self.p += size
-        return v
+        self.p = p + 1
+        return self.d[p]
 
-    def u8(self): return self._take("<B", 1)
-    def u16(self): return self._take("<H", 2)
-    def u32(self): return self._take("<I", 4)
-    def s16(self): return self._take("<h", 2)
-    def s32(self): return self._take("<i", 4)
-    def f64(self): return self._take("<d", 8)
+    def u16(self):
+        p = self.p
+        if p + 2 > self.n:
+            raise _Short()
+        self.p = p + 2
+        return _UNPACK_H(self.d, p)[0]
+
+    def u32(self):
+        p = self.p
+        if p + 4 > self.n:
+            raise _Short()
+        self.p = p + 4
+        return _UNPACK_I(self.d, p)[0]
+
+    def s16(self):
+        p = self.p
+        if p + 2 > self.n:
+            raise _Short()
+        self.p = p + 2
+        return _UNPACK_SH(self.d, p)[0]
+
+    def s32(self):
+        p = self.p
+        if p + 4 > self.n:
+            raise _Short()
+        self.p = p + 4
+        return _UNPACK_SI(self.d, p)[0]
+
+    def f64(self):
+        p = self.p
+        if p + 8 > self.n:
+            raise _Short()
+        self.p = p + 8
+        return _UNPACK_D(self.d, p)[0]
+
+    def coords(self, count: int, bits: int) -> list[int]:
+        """``count`` signed numbers of 16 or 32 bits in one go (a path has thousands)."""
+        size = count * (bits // 8)
+        p = self.p
+        if p + size > self.n:
+            raise _Short()
+        self.p = p + size
+        return list(struct.unpack_from(f"<{count}{'h' if bits == 16 else 'i'}", self.d, p))
 
     def fixed(self) -> float:
         v = self.u32()
@@ -709,6 +750,7 @@ class _Parser:
     def __init__(self, collector, external: list[bytes | None]):
         self.c = collector
         self.ext = external
+        self.fast_levels = all(hasattr(collector, a) for a in ("obj_level", "vect_level", "page_level"))
         self.version = 0
         self.prec = 0                                      # 16 or 32 (bit), 0 until the version is known
 
@@ -718,12 +760,16 @@ class _Parser:
             raise Unsupported("the file gives its numbers before its version")
 
     def coord(self, r: _R) -> float:
+        if self.prec == 32:
+            return r.s32() / 254000.0
         self._need_prec()
-        return r.s16() / 1000.0 if self.prec == 16 else r.s32() / 254000.0
+        return r.s16() / 1000.0
 
     def unsigned(self, r: _R) -> int:
+        if self.prec == 32:
+            return r.u32()
         self._need_prec()
-        return r.u16() if self.prec == 16 else r.u32()
+        return r.u16()
 
     def angle(self, r: _R) -> float:
         self._need_prec()
@@ -740,18 +786,20 @@ class _Parser:
 
     def parse_records(self, r: _R, blocks: list[int], level: int) -> bool:
         self.c.collect_level(level)
-        while not r.end():
+        while r.p < r.n:
             if not self.parse_record(r, blocks, level):
                 return False
         return True
 
     def parse_record(self, r: _R, blocks: list[int], level: int) -> bool:
         try:
-            self.c.collect_level(level)
+            c = self.c
+            if not self.fast_levels or level <= c.obj_level or level <= c.vect_level or level <= c.page_level:
+                c.collect_level(level)                      # (it does nothing else than act on these three levels)
             while not r.end() and r.u8() == 0:
                 pass
             if not r.end():
-                r.seek(r.p - 1)
+                r.p -= 1
             else:
                 return True
             four = r.take(4)
@@ -804,7 +852,7 @@ class _Parser:
                         return False
             else:
                 self.read_record(four, length, r)
-            r.seek(position + length)
+            r.p = max(0, min(r.n, position + length))               # (seek: clamped)
             return True
         except _Short:
             return False
@@ -1092,7 +1140,18 @@ class _Parser:
         self.c.collect_path(p)
 
     def _points(self, r: _R, n: int) -> list[tuple[float, float]]:
-        return [(self.coord(r), self.coord(r)) for _ in range(n)]
+        self._need_prec()
+        v = r.coords(2 * n, self.prec)
+        div = 1000.0 if self.prec == 16 else 254000.0
+        return [(v[i] / div, v[i + 1] / div) for i in range(0, 2 * n, 2)]
+
+    @staticmethod
+    def _types(r: _R, n: int) -> list[int]:
+        if r.p + n > r.n:
+            raise _Short()
+        out = list(r.d[r.p:r.p + n])
+        r.p += n
+        return out
 
     def _output_path(self, points, types) -> None:
         p = _Path()
@@ -1131,7 +1190,7 @@ class _Parser:
         r.skip(2)
         n = min(n, (r.n - r.p) // size)
         pts = self._points(r, n)
-        types = [r.u8() for _ in range(n)]
+        types = self._types(r, n)
         self._output_path(pts, types)
 
     def read_path(self, r: _R) -> None:
@@ -1145,7 +1204,7 @@ class _Parser:
             n = (left - 16) // size
         r.skip(16)
         pts = self._points(r, n)
-        types = [r.u8() for _ in range(n)]
+        types = self._types(r, n)
         self._output_path(pts, types)
 
     def read_polygon_coords(self, r: _R) -> None:
@@ -1154,7 +1213,7 @@ class _Parser:
         n = min(n, (r.n - r.p) // size)
         r.skip(2)
         pts = self._points(r, n)
-        types = [r.u8() for _ in range(n)]
+        types = self._types(r, n)
         self._output_path(pts, types)
         self.c.collect_polygon()
 

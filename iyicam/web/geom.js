@@ -217,11 +217,28 @@
     let best = null, bd = tol;
     for (let i = vectors.length - 1; i >= 0; i--) {
       const v = vectors[i];
+      const b = G.vbox(v);                                    // (the box first: only the few vectors near the point are looked at closely)
+      if (!b || x < b.x0 - tol || x > b.x1 + tol || y < b.y0 - tol || y > b.y1 + tol) continue;
       if (!ok(v)) continue;
       const d = G.distance(flatOf(v), x, y);
       if (d < bd) { bd = d; best = v.id; }
     }
     return best;
+  };
+  const boxes = new WeakMap();
+  /** the exact box of one vector, made once (a vector object is never changed: a changed vector is a new object) */
+  G.vbox = v => {
+    let b = boxes.get(v);
+    if (b === undefined) { b = G.bbox([v]); boxes.set(v, b); }
+    return b;
+  };
+  /** whether a vector is taken by a window (wholly inside) or a crossing (touching) of a rectangle */
+  G.vInRect = (v, flatOf, r, crossing) => {
+    const b = G.vbox(v);
+    if (!b) return false;
+    if (!crossing) return b.x0 >= r.x0 && b.x1 <= r.x1 && b.y0 >= r.y0 && b.y1 <= r.y1;
+    if (b.x1 < r.x0 || b.x0 > r.x1 || b.y1 < r.y0 || b.y0 > r.y1) return false;
+    return G.inRect(flatOf(v), r, true);
   };
   /** a window takes what lies wholly inside; a crossing also what only touches it */
   G.inRect = (flat, r, crossing) => {
