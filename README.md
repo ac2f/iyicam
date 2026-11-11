@@ -172,6 +172,10 @@ G-code, simulation and nesting, with the project passed as data and long work as
 [CNC-Assistant](https://github.com/ac2f/Cnc-Assistant) mobile page uses it to open the drawings on a computer from a
 phone; see [docs/service.md](docs/service.md).
 
+`iyicam serve` puts that service behind a web page of its own, with a key: open a drawing on a phone, add toolpaths,
+calculate, write G-code and download it, with nothing else installed (no Qt, no CNC-Assistant); see
+[docs/web.md](docs/web.md).
+
 ## Installation
 
 **Without Python:** a packaged program is built by `packaging/build_windows.bat` (or `packaging/build_unix.sh`) or
@@ -281,7 +285,9 @@ iyicam/
   plugins/     plugin API and manager
   builtins/    built-in features, registered like a plugin
   gui/         PySide6 user interface (controller, canvas, tools, panels, dialogs)
-  service/     the engine behind a JSON interface (no window): used by the mobile page, see docs/service.md
+  service/     the engine behind a JSON interface (no window): used by the mobile page, see docs/service.md;
+               server.py is `iyicam serve`, see docs/web.md
+  web/         the page `iyicam serve` shows (plain HTML, CSS and JavaScript, no build step)
   cli.py       command line interface
 examples/plugins/   example plugins (surfacing toolpath, G-code statistics, box maker)
 docs/               plugin, post-processor and service documentation
