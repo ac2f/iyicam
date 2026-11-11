@@ -9,10 +9,12 @@
     python -m iyicam nest job.icam --leftover 900x600:2 --stock leftovers.json -o nested.icam
     python -m iyicam nest job.icam --angles 0,22.5,90 --rotate-layer Grain=none -o nested.icam
     python -m iyicam nest job.icam --squeeze-angle 5 --squeeze-margin 3 --apply-squeeze -o nested.icam
+    python -m iyicam serve --host 0.0.0.0           # a web page for a phone, with its own key (docs/web.md)
 """
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -26,7 +28,7 @@ from .formats.cdr import CdrError
 from .formats.report import ImportReport, run_importer
 from .plugins.manager import PluginManager
 
-COMMANDS = ("posts", "info", "gcode", "import", "export", "nest", "plugins", "selftest")
+COMMANDS = ("posts", "info", "gcode", "import", "export", "nest", "plugins", "selftest", "serve")
 
 
 def _setup(plugins: bool = True) -> None:
@@ -44,6 +46,19 @@ def _setup(plugins: bool = True) -> None:
 def cmd_selftest(a) -> int:
     from .selftest import run
     return run(gui=not a.no_gui)
+
+
+def cmd_serve(a) -> int:
+    """The web page for a phone (own key, no other program needed); see docs/web.md."""
+    from .service import server
+    if a.show_key or a.new_key:
+        keys = server.KeyStore()
+        print(keys.rotate() if a.new_key else keys.get())
+        return 0
+    if a.no_plugins:
+        os.environ["IYICAM_SERVICE_PLUGINS"] = "0"
+    return server.serve(a.host, a.port, trust_proxy=a.trust_proxy, max_body=a.max_upload_mb * 1024 * 1024,
+                        verbose=not a.quiet)
 
 
 def cmd_posts(a) -> int:
@@ -230,6 +245,17 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("plugins", help="list plugins")
     s = sub.add_parser("selftest", help="use every part of the program once and report what does not work")
     s.add_argument("--no-gui", action="store_true", help="leave out the window (a machine without Qt)")
+    s = sub.add_parser("serve", help="a web page for a phone or any browser, with a key of its own")
+    s.add_argument("--host", default="127.0.0.1",
+                   help="address to listen on; 0.0.0.0 = every network of this computer (a phone needs it)")
+    s.add_argument("--port", type=int, default=8300)
+    s.add_argument("--show-key", action="store_true", help="print the key and stop")
+    s.add_argument("--new-key", action="store_true",
+                   help="make a new key and print it; every signed-in browser is signed out at once")
+    s.add_argument("--trust-proxy", action="store_true",
+                   help="behind a reverse proxy: take the client address and scheme from X-Forwarded-For / -Proto")
+    s.add_argument("--max-upload-mb", type=int, default=64, help="largest request (a drawing as base64), MB")
+    s.add_argument("--quiet", action="store_true", help="do not log every request")
     s = sub.add_parser("info", help="summarise a project")
     s.add_argument("project")
     s = sub.add_parser("gcode", help="calculate toolpaths and write G-code")
@@ -287,10 +313,12 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--apply-squeeze", action="store_true",
                    help="take the squeezed layout when it is better (else it is only suggested)")
     a = ap.parse_args(argv)
-    _setup(not a.no_plugins)
+    if a.cmd != "serve":        # (the service registers everything itself, plugins included)
+        _setup(not a.no_plugins)
     try:
         return {"posts": cmd_posts, "plugins": cmd_plugins, "info": cmd_info, "gcode": cmd_gcode,
-                "import": cmd_import, "export": cmd_export, "nest": cmd_nest, "selftest": cmd_selftest}[a.cmd](a)
+                "import": cmd_import, "export": cmd_export, "nest": cmd_nest, "selftest": cmd_selftest,
+                "serve": cmd_serve}[a.cmd](a)
     except FileNotFoundError as exc:
         print(f"error: {exc.filename or exc} was not found", file=sys.stderr)
     except (OSError, ValueError, KeyError, TypeError, IndexError) as exc:   # a bad file or a bad number
