@@ -58,7 +58,7 @@ def cmd_serve(a) -> int:
     if a.no_plugins:
         os.environ["IYICAM_SERVICE_PLUGINS"] = "0"
     return server.serve(a.host, a.port, trust_proxy=a.trust_proxy, max_body=a.max_upload_mb * 1024 * 1024,
-                        verbose=not a.quiet)
+                        verbose=not a.quiet, roots=a.root or None, files=not a.no_files)
 
 
 def cmd_posts(a) -> int:
@@ -255,6 +255,11 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--trust-proxy", action="store_true",
                    help="behind a reverse proxy: take the client address and scheme from X-Forwarded-For / -Proto")
     s.add_argument("--max-upload-mb", type=int, default=64, help="largest request (a drawing as base64), MB")
+    s.add_argument("--root", action="append", metavar="FOLDER",
+                   help="a folder of this computer the page may open and save files in (repeat it for more; "
+                        "default: IYICAM_ROOTS, else the home folder)")
+    s.add_argument("--no-files", action="store_true",
+                   help="the page cannot open or save files of this computer (it can still upload and download)")
     s.add_argument("--quiet", action="store_true", help="do not log every request")
     s = sub.add_parser("info", help="summarise a project")
     s.add_argument("project")

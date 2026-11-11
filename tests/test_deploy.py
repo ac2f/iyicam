@@ -26,7 +26,7 @@ def test_files_exist_and_have_unix_line_endings(path):
 
 def test_every_placeholder_of_the_unit_is_filled_by_the_installer():
     placeholders = set(re.findall(r"@([A-Z_]+)@", UNIT.read_text(encoding="utf-8")))
-    assert placeholders == {"APP", "SERVICE_USER", "HOST", "PORT", "PROXY"}
+    assert placeholders == {"APP", "SERVICE_USER", "HOST", "PORT", "PROXY", "FILES", "ROOTS", "RW_PATHS"}
     script = INSTALL.read_text(encoding="utf-8")
     for name in placeholders:
         assert f"s|@{name}@|" in script, name
@@ -39,9 +39,10 @@ def test_the_unit_uses_options_that_the_program_has():
     assert {"--host", "--port", "--quiet"} <= flags
     out = subprocess.run([sys.executable, "-m", "iyicam", "serve", "--help"], capture_output=True, text=True,
                          timeout=60).stdout
-    for flag in flags | {"--trust-proxy"}:       # (the installer fills "--trust-proxy" in through @PROXY@)
+    # (the installer fills "--trust-proxy" in through @PROXY@ and "--no-files" through @FILES@)
+    for flag in flags | {"--trust-proxy", "--no-files", "--root"}:
         assert flag in out, flag
-    assert "-m iyicam serve" in line
+    assert "-m iyicam serve" in line and "@PROXY@" in line and "@FILES@" in line
 
 
 def test_the_state_directory_is_the_same_in_the_unit_and_the_installer():
@@ -49,6 +50,15 @@ def test_the_state_directory_is_the_same_in_the_unit_and_the_installer():
     assert "Environment=IYICAM_HOME=/var/lib/iyicam" in unit and "StateDirectory=iyicam" in unit
     assert 'STATE_DIR="/var/lib/iyicam"' in INSTALL.read_text(encoding="utf-8")
     assert 'STATE_DIR="/var/lib/iyicam"' in UNINSTALL.read_text(encoding="utf-8")
+
+
+def test_the_folders_of_the_page_are_given_to_the_service_and_may_be_written():
+    unit = UNIT.read_text(encoding="utf-8")
+    script = INSTALL.read_text(encoding="utf-8")
+    assert "Environment=IYICAM_ROOTS=@ROOTS@" in unit          # what the program reads (iyicam.service.files)
+    assert "ReadWritePaths=@RW_PATHS@" in unit and "ProtectSystem=strict" in unit    # (else nothing could be saved)
+    assert 'DEFAULT_ROOT="$STATE_DIR/files"' in script          # inside the state folder, so it is writable anyway
+    assert "--no-files" in script and "IYICAM_FILES" in script
 
 
 def test_the_proxy_examples_overwrite_the_headers_that_trust_proxy_reads():

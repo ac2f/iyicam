@@ -95,5 +95,19 @@ pre.code {
 .group-h { margin: 16px 0 0; font-size: 13px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); font-weight: 650; }
 .login { max-width: 420px; margin: 0 auto; padding: 18vh 20px 20px; width: 100%; }
 .login h1 { margin: 0 0 4px; font-size: 28px; color: var(--accent); }
+.fbar { flex-wrap: nowrap; margin-bottom: 8px; }
+.fbar .crumb { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.files { border: 1px solid var(--line); border-radius: 10px; background: var(--card); max-height: 46vh; min-height: 120px; overflow: auto; }
+.files .empty { padding: 24px 12px; }
+.frow {
+  display: flex; width: 100%; align-items: center; justify-content: flex-start; gap: 10px; min-height: 48px;
+  padding: 6px 12px; border: 0; border-top: 1px solid var(--line); border-radius: 0; background: none; text-align: left;
+}
+.frow:first-child { border-top: 0; }
+.frow .ic { flex: none; width: 22px; text-align: center; }
+.frow .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.frow .sz { flex: none; color: var(--muted); font-size: 12px; }
+.frow.dim { opacity: .55; }
 .empty { text-align: center; padding: 36px 12px; color: var(--muted); }
+.empty.bad { color: var(--bad); }
 .empty .big { font-size: 40px; }

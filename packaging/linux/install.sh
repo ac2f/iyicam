@@ -17,6 +17,10 @@
 #    IYICAM_HOST=127.0.0.1   address to listen on; the default is for a reverse proxy
 #                            that adds HTTPS (docs/web.md). 0.0.0.0 = every network, plain HTTP.
 #    IYICAM_PORT=8300
+#    IYICAM_ROOTS=/var/lib/iyicam/files
+#                            the folders (separated by ":") in which the page may open and save files; the
+#                            default is made here. A folder of your own must be writable by the user "iyicam".
+#    IYICAM_FILES=off        the page cannot open or save files of this computer at all
 #    PYTHON=python3.12       the Python to use (3.11 or newer)
 #  The project directory must NOT be under /root or /home (the service user
 #  cannot read it); recommended: /opt/iyicam
@@ -28,6 +32,8 @@ SERVICE_USER="iyicam"
 STATE_DIR="/var/lib/iyicam"
 HOST="${IYICAM_HOST:-127.0.0.1}"
 PORT="${IYICAM_PORT:-8300}"
+DEFAULT_ROOT="$STATE_DIR/files"
+ROOTS="${IYICAM_ROOTS:-$DEFAULT_ROOT}"
 APP="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 die()  { echo "ERROR: $*" >&2; exit 1; }
@@ -37,6 +43,17 @@ step() { echo "  [$1] $2"; }
 command -v systemctl >/dev/null || die "systemd is required."
 [[ "$PORT" =~ ^[0-9]+$ ]] || die "IYICAM_PORT must be a number."
 [[ "$HOST" =~ ^[0-9A-Za-z.:_-]+$ ]] || die "IYICAM_HOST must be an address such as 127.0.0.1 or 0.0.0.0."
+[[ "$ROOTS" =~ ^[0-9A-Za-z/._:-]+$ ]] || die "IYICAM_ROOTS: absolute folder names separated by ':' (letters, digits and / . _ - only)."
+IFS=: read -r -a ROOT_LIST <<<"$ROOTS"
+RW_PATHS=""
+for r in "${ROOT_LIST[@]}"; do
+  [[ "$r" == /* ]] || die "IYICAM_ROOTS: '$r' is not an absolute folder name."
+  RW_PATHS+="-$r "                      # ("-": a folder that is missing when the service starts does not stop it)
+done
+FILES_FLAG=""
+case "${IYICAM_FILES:-on}" in
+  off|OFF|no|0) FILES_FLAG="--no-files" ;;
+esac
 case "$APP" in
   /root|/root/*|/home|/home/*)
     die "The project directory ($APP) is not accessible to the service user. Example:
@@ -88,6 +105,24 @@ if ! id "$SERVICE_USER" >/dev/null 2>&1; then
   useradd --system --no-create-home --home-dir /nonexistent \
           --shell /usr/sbin/nologin "$SERVICE_USER"
 fi
+
+# the folders of the page: the default one is made here (inside the state folder, owned by the service user, so
+# that systemd leaves it as it is); a folder of your own that is missing is made, one that exists is left alone
+if [[ -z "$FILES_FLAG" ]]; then
+  for r in "${ROOT_LIST[@]}"; do
+    if [[ "$r" == "$DEFAULT_ROOT" ]]; then
+      install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0700 "$STATE_DIR" "$DEFAULT_ROOT"
+    elif [[ ! -d "$r" ]]; then
+      install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0750 "$r"
+    fi
+    if ! runuser -u "$SERVICE_USER" -- test -w "$r" 2>/dev/null; then
+      echo "  WARNING: the user $SERVICE_USER cannot write in $r; give it access (chown, or setfacl -m u:$SERVICE_USER:rwx)." >&2
+    fi
+    case "$r" in /home|/home/*|/root|/root/*)
+      echo "  WARNING: $r is under /home or /root, which the service cannot see (ProtectHome); see docs/web.md." >&2 ;;
+    esac
+  done
+fi
 step 2/4 "service user: $SERVICE_USER"
 
 # 3) venv + package (core only: pyclipper, numpy, ezdxf, svgelements; no Qt)
@@ -107,6 +142,7 @@ step 3/4 "venv ready: $APP/venv/bin/python"
 # 4) systemd
 sed -e "s|@APP@|$APP|g" -e "s|@SERVICE_USER@|$SERVICE_USER|g" \
     -e "s|@HOST@|$HOST|g" -e "s|@PORT@|$PORT|g" -e "s|@PROXY@|$PROXY|g" \
+    -e "s|@FILES@|$FILES_FLAG|g" -e "s|@ROOTS@|$ROOTS|g" -e "s|@RW_PATHS@|$RW_PATHS|g" \
     "$APP/packaging/linux/$SERVICE.service" > "/etc/systemd/system/$SERVICE.service"
 systemctl daemon-reload
 systemctl enable "$SERVICE" >/dev/null 2>&1
@@ -132,6 +168,11 @@ echo "  Key             : $STATE_DIR/server.key   (made at the first start; type
 echo "                    to view it:  sudo cat $STATE_DIR/server.key"
 echo "  New key         : sudo -u $SERVICE_USER IYICAM_HOME=$STATE_DIR $APP/venv/bin/iyicam serve --new-key"
 echo "                    (prints it; every signed-in browser is signed out at once)"
+if [[ -n "$FILES_FLAG" ]]; then
+  echo "  Files           : off (the page cannot open or save files of this computer)"
+else
+  echo "  Files           : the page opens and saves files in:  ${ROOTS//:/  }"
+fi
 echo "  Status / log    : systemctl status $SERVICE   |   journalctl -u $SERVICE -f"
 echo "  Update          : git pull && sudo bash packaging/linux/install.sh"
 if [[ -n "$PROXY" ]]; then

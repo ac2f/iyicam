@@ -11,7 +11,7 @@ const TXT = {
     "login.bad": "Anahtar yanlış.", "login.wait": "Çok fazla yanlış deneme. {0} sn bekle.",
     "logout": "Çıkış", "busy": "Çalışıyor…", "cancel": "Vazgeç", "cancelled": "İptal edildi.",
     "open.title": "Dosya aç", "open.hint": "iyiCAM projesi (.icam), DXF, SVG, HPGL, CorelDRAW…",
-    "open.pick": "Dosya seç…", "open.thickness": "Malzeme kalınlığı (mm)", "open.add": "Açık projeye ekle",
+    "open.pick": "Bu cihazdan seç…", "open.thickness": "Malzeme kalınlığı (mm)", "open.add": "Açık projeye ekle",
     "open.done": "{0} açıldı.", "report.title": "Dosyadan okunan", "report.notes": "Notlar", "report.errors": "Hatalar",
     "proj.none": "Henüz proje yok", "proj.none2": "Yukarıdan bir çizim dosyası aç.",
     "proj.name": "Proje adı", "proj.sheets": "Tezgahlar", "proj.layers": "Katmanlar", "proj.material": "Malzeme",
@@ -38,7 +38,20 @@ const TXT = {
     "out.simdone": "Malzeme kaldırma, {0}", "out.stale": "Proje değişti; yeniden hesapla.",
     "err.network": "Sunucuya ulaşılamıyor.", "err.session": "Oturum bitti; anahtarı yeniden gir.",
     "e.unsupported_file": "Bu dosya türü okunamıyor.", "e.empty_file": "Dosya boş.", "e.too_large": "Dosya çok büyük.",
-    "e.invalid_project": "Geçerli bir iyiCAM projesi değil.", "e.too_busy": "Sunucu meşgul, biraz sonra dene."
+    "e.invalid_project": "Geçerli bir iyiCAM projesi değil.", "e.too_busy": "Sunucu meşgul, biraz sonra dene.",
+    "files.open": "Bilgisayardan aç…", "files.openTitle": "Bilgisayardan dosya aç", "files.saveTitle": "Projeyi kaydet",
+    "files.folderTitle": "Klasör seç", "files.up": "Üst klasör", "files.roots": "Klasörler", "files.empty": "Burada dosya yok.",
+    "files.nofolders": "Alt klasör yok.", "files.name": "Dosya adı", "files.chooseHere": "Bu klasörü seç", "files.save": "Kaydet",
+    "files.saveTo": "Bilgisayara kaydet…", "files.saveHere": "Kaydet", "files.saveAs": "Farklı kaydet…",
+    "files.saved": "{0} dosya yazıldı: {1}", "files.savedProject": "Kaydedildi: {0}",
+    "files.overwrite": "Bu dosya var: {0}. Üzerine yazılsın mı?",
+    "files.changed": "{0} bu arada değişti. Üzerine yazılsın mı?",
+    "files.toComputer": "İndirmek yerine bilgisayara kaydet", "files.where": "Bilgisayarda", "files.opened": "{0} açıldı (bilgisayardan).",
+    "e.path_not_allowed": "Bu klasör kullanılamaz.", "e.folder_not_found": "Klasör bulunamadı.",
+    "e.file_not_found": "Dosya bulunamadı.", "e.file_exists": "Bu adda bir dosya var.", "e.file_changed": "Dosya bu arada değişti.",
+    "e.file_too_large": "Dosya çok büyük.", "e.invalid_name": "Dosya adı geçerli değil.", "e.invalid_path": "Yol geçerli değil.",
+    "e.files_disabled": "Bu sunucu dosyalara erişim vermiyor.", "e.payload_too_large": "Çok fazla veri.",
+    "e.os_error": "Dosya işlemi yapılamadı."
   },
   en: {
     "tab.project": "Project", "tab.draw": "Drawing", "tab.paths": "Toolpaths", "tab.out": "Output",
@@ -46,7 +59,7 @@ const TXT = {
     "login.bad": "The key is not right.", "login.wait": "Too many wrong tries. Wait {0} s.",
     "logout": "Sign out", "busy": "Working…", "cancel": "Cancel", "cancelled": "Cancelled.",
     "open.title": "Open a file", "open.hint": "iyiCAM project (.icam), DXF, SVG, HPGL, CorelDRAW…",
-    "open.pick": "Choose a file…", "open.thickness": "Material thickness (mm)", "open.add": "Add to the open project",
+    "open.pick": "From this device…", "open.thickness": "Material thickness (mm)", "open.add": "Add to the open project",
     "open.done": "{0} opened.", "report.title": "Read from the file", "report.notes": "Notes", "report.errors": "Errors",
     "proj.none": "No project yet", "proj.none2": "Open a drawing file above.",
     "proj.name": "Project name", "proj.sheets": "Sheets", "proj.layers": "Layers", "proj.material": "Material",
@@ -74,7 +87,20 @@ const TXT = {
     "err.network": "Cannot reach the server.", "err.session": "Signed out; enter the key again.",
     "e.unsupported_file": "This kind of file cannot be read.", "e.empty_file": "The file is empty.",
     "e.too_large": "The file is too large.", "e.invalid_project": "Not a valid iyiCAM project.",
-    "e.too_busy": "The server is busy, try again in a moment."
+    "e.too_busy": "The server is busy, try again in a moment.",
+    "files.open": "Open from the computer…", "files.openTitle": "Open a file from the computer", "files.saveTitle": "Save the project",
+    "files.folderTitle": "Choose a folder", "files.up": "Parent folder", "files.roots": "Folders", "files.empty": "No files here.",
+    "files.nofolders": "No sub-folders.", "files.name": "File name", "files.chooseHere": "Choose this folder", "files.save": "Save",
+    "files.saveTo": "Save to the computer…", "files.saveHere": "Save", "files.saveAs": "Save as…",
+    "files.saved": "{0} file(s) written to {1}", "files.savedProject": "Saved: {0}",
+    "files.overwrite": "{0} exists. Replace it?",
+    "files.changed": "{0} was changed in the meantime. Replace it?",
+    "files.toComputer": "Save to the computer instead of downloading", "files.where": "On the computer", "files.opened": "{0} opened (from the computer).",
+    "e.path_not_allowed": "This folder cannot be used.", "e.folder_not_found": "Folder not found.",
+    "e.file_not_found": "File not found.", "e.file_exists": "A file with this name exists.", "e.file_changed": "The file was changed in the meantime.",
+    "e.file_too_large": "The file is too large.", "e.invalid_name": "The file name is not valid.", "e.invalid_path": "The path is not valid.",
+    "e.files_disabled": "This server gives no access to files.", "e.payload_too_large": "Too much data.",
+    "e.os_error": "The file operation failed."
   }
 };
 let lang = (() => { try { return localStorage.getItem("iyicam.lang"); } catch { return null; } })()
@@ -166,7 +192,10 @@ async function runJob(op, payload) {
 
 // ------------------------------------------------------------------------------------------ state
 const S = { schema: null, project: null, tab: "project", sheetId: null, results: null, gcode: null, sim: null,
-            report: null, post: store.get("iyicam.post") || "", showPaths: true, views: {}, busy: null };
+            report: null, post: store.get("iyicam.post") || "", showPaths: true, views: {}, busy: null,
+            files: null,          // what the server says about files of its computer ({files, roots, limits}); null: none
+            file: null,           // the file the open project came from or was saved to: {path, hash}
+            toComputer: store.get("iyicam.tocomputer") === "1" };
 
 const layerMap = p => new Map(p.layers.map(l => [l.id, l]));
 const sheetThickness = (p, s) => (s && s.thickness != null ? s.thickness : p.material.thickness);
@@ -208,8 +237,9 @@ function setBusy(b) {
   $("i", box).style.width = (b.n ? Math.round(100 * b.k / b.n) : 6) + "%";
 }
 
-function openSheet(title, body) {
-  const close = () => { bg.remove(); document.removeEventListener("keydown", esc); };
+function openSheet(title, body, onClose) {
+  let closed = false;
+  const close = () => { if (closed) return; closed = true; bg.remove(); document.removeEventListener("keydown", esc); if (onClose) onClose(); };
   const esc = e => { if (e.key === "Escape") close(); };
   const bg = h("div", { class: "sheet-bg", onclick: e => { if (e.target === bg) close(); } },
     h("div", { class: "sheet-pane", role: "dialog", "aria-modal": "true" }, h("h3", {}, title), body));
@@ -502,10 +532,141 @@ async function openFile(input, replace) {
     const out = await runJob("import", { name: file.name, data_b64, thickness: +($("#thk") && $("#thk").value) || 18, ...(add ? { project: S.project } : {}) });
     S.project = out.project; S.report = out.report;
     S.sheetId = S.project.sheets[0].id; S.views = {};
-    if (!add) S.tab = out.project.toolpaths.length || out.report.errors.length ? "project" : "paths";
+    if (!add) { setFile(null); S.tab = out.project.toolpaths.length || out.report.errors.length ? "project" : "paths"; }
     changed();
     toast(t("open.done", file.name), "ok");
   } catch (e) { setBusy(null); fail(e); }
+}
+
+// ------------------------------------------------------------------------------------------ files of the computer
+// Only when the server gives them (S.files.files): folders inside the roots the server was started with, see docs/web.md.
+const hasFiles = () => !!(S.files && S.files.files);
+const dirOf = path => (path || "").replace(/[\\/][^\\/]*$/, "");
+const baseOf = path => (path || "").split(/[\\/]/).pop();
+const joinPath = (dir, name) => dir.replace(/[\\/]$/, "") + (dir.includes("\\") && !dir.includes("/") ? "\\" : "/") + name;
+const fmtSize = n => n < 1024 ? n + " B" : n < 1048576 ? fmt(n / 1024, 0) + " KB" : fmt(n / 1048576, 1) + " MB";
+const EXT_ICON = { icam: "◧", dxf: "▱", svg: "◇", plt: "✎", hpgl: "✎", hpg: "✎", cdr: "◈" };
+
+function setFile(f) {
+  S.file = f;
+  if (f) store.set("iyicam.file", JSON.stringify(f)); else store.del("iyicam.file");
+}
+
+/** Browse the computer.  mode "open" -> {path, name}, "save" -> {path, dir, name} (a file to write), "folder" -> {path};
+    ``null`` when it was closed without a choice. */
+function fileBrowser({ mode = "open", ext = null, start = "", name = "", title = "" } = {}) {
+  return new Promise(res => {
+    let dir = "", parent = null, done = false, close = () => {}, first = true;
+    const finish = v => { if (done) return; done = true; if (v && v.dir) store.set("iyicam.dir", v.dir); res(v); close(); };
+    const readable = new Set(S.schema.importers.flatMap(i => i.extensions));
+    const list = h("div", { class: "files" }), crumb = h("div", { class: "crumb muted small" });
+    const nameIn = h("input", { type: "text", value: name, autocapitalize: "off", spellcheck: "false", autocomplete: "off" });
+    const up = h("button", { class: "small", "aria-label": t("files.up"), onclick: () => go(parent) }, "↑");
+    const choose = h("button", { class: "grow primary", onclick: () => {
+      if (!dir) return;
+      if (mode === "folder") return finish({ path: dir, dir });
+      const n = nameIn.value.trim();
+      if (!n) return;
+      const named = ext && !n.toLowerCase().endsWith("." + ext) ? `${n}.${ext}` : n;
+      finish({ path: joinPath(dir, named), dir, name: named });
+    } }, mode === "save" ? t("files.save") : t("files.chooseHere"));
+    const body = h("div", {}, h("div", { class: "row fbar" }, up, crumb), list,
+      mode === "save" ? h("label", { class: "f" }, h("span", {}, t("files.name")), nameIn) : null,
+      h("div", { class: "row", style: "margin-top:12px" }, h("button", { class: "grow", onclick: () => finish(null) }, t("cancel")), mode === "open" ? null : choose));
+    close = openSheet(title || (mode === "open" ? t("files.openTitle") : mode === "save" ? t("files.saveTitle") : t("files.folderTitle")), body, () => finish(null));
+
+    async function go(path) {
+      list.replaceChildren(h("div", { class: "empty" }, "…"));
+      try {
+        const r = await api("list", { path: path || "" });
+        first = false;
+        if (r.roots && r.entries.length === 1) return go(r.entries[0].path);          // one place to browse: go in
+        dir = r.roots ? "" : r.path; parent = r.roots ? null : r.parent;
+        up.disabled = !parent; choose.disabled = !dir;
+        crumb.textContent = r.roots ? t("files.roots") : r.path;
+        list.replaceChildren();
+        const rows = r.entries.filter(e => e.type === "dir" || (mode !== "folder" && (mode !== "open" || readable.has(e.ext))));
+        if (!rows.length) list.append(h("div", { class: "empty" }, t(mode === "folder" ? "files.nofolders" : "files.empty")));
+        for (const e of rows) {
+          if (e.type === "dir") list.append(h("button", { class: "frow dir", onclick: () => go(e.path) }, h("span", { class: "ic" }, "📁"), h("span", { class: "nm" }, e.name), h("span", { class: "sz" }, "›")));
+          else list.append(h("button", { class: "frow file" + (ext && e.ext !== ext ? " dim" : ""), onclick: () => {
+            if (mode === "open") finish({ path: e.path, name: e.name, dir: r.path }); else nameIn.value = e.name;
+          } }, h("span", { class: "ic" }, EXT_ICON[e.ext] || "▤"), h("span", { class: "nm" }, e.name),
+            h("span", { class: "sz" }, `${fmtSize(e.size)} · ${new Date(e.mtime * 1000).toLocaleDateString(lang === "tr" ? "tr-TR" : "en-GB")}`)));
+        }
+        if (r.truncated) list.append(h("div", { class: "empty" }, "…"));
+      } catch (e) {
+        if (path && first) { first = false; return go(""); }                         // the remembered folder is gone: start again
+        list.replaceChildren(h("div", { class: "empty bad" }, e instanceof ApiError ? e.text : String(e)));
+      }
+    }
+    go(start || store.get("iyicam.dir") || "");
+  });
+}
+
+async function openPath(path, replace) {
+  if (S.busy) return;
+  try {
+    setBusy({ label: t("busy"), k: 0, n: 0 });
+    const add = !replace && S.project;
+    const out = await api("open", { path, thickness: +($("#thk") && $("#thk").value) || 18, ...(add ? { project: S.project } : {}) });
+    S.project = out.project; S.report = out.report;
+    S.sheetId = S.project.sheets[0].id; S.views = {};
+    if (out.kind === "project") setFile({ path: out.path, hash: out.hash });
+    else if (!add) setFile(null);                 // (a drawing added to a project leaves the file of that project as it was)
+    store.set("iyicam.dir", dirOf(out.path));
+    if (!add) S.tab = out.project.toolpaths.length || out.report.errors.length ? "project" : "paths";
+    changed();
+    toast(t("files.opened", out.name), "ok");
+  } catch (e) { fail(e); } finally { setBusy(null); }
+}
+
+async function openFromComputer(replace) {
+  const pick = await fileBrowser({ mode: "open", start: dirOf(S.file && S.file.path) });
+  if (pick) await openPath(pick.path, replace);
+}
+
+/** Write the project to a .icam file of the computer; ``as`` (or no file yet) asks where.  A file that exists is
+    replaced only when it is the one this project came from and nobody changed it meanwhile, or when the person says so. */
+async function saveProject(as) {
+  const p = S.project;
+  let path = !as && S.file ? S.file.path : null;
+  if (!path) {
+    const pick = await fileBrowser({ mode: "save", ext: "icam", start: dirOf(S.file && S.file.path),
+      name: (p.name || "project").replace(/[^\w .-]+/g, "_") + ".icam", title: t("files.saveTitle") });
+    if (!pick) return;
+    path = pick.path;
+  }
+  const write = overwrite => api("save", { path, project: p, overwrite: !!overwrite,
+    ...(!overwrite && S.file && S.file.path === path ? { base_hash: S.file.hash } : {}) });
+  let r;
+  try { r = await write(false); }
+  catch (e) {
+    if (e.code !== "file_exists" && e.code !== "file_changed") throw e;
+    if (!confirm(t(e.code === "file_exists" ? "files.overwrite" : "files.changed", baseOf(path)))) return;
+    r = await write(true);
+  }
+  setFile({ path: r.path, hash: r.hash });
+  store.set("iyicam.dir", dirOf(r.path));
+  toast(t("files.savedProject", r.path), "ok");
+  render();
+}
+
+/** Write files (G-code, exports) into a folder of the computer.  [{name, text} or {name, data_b64}] */
+async function saveToComputer(files) {
+  const pick = await fileBrowser({ mode: "folder", start: dirOf(S.file && S.file.path), title: t("files.folderTitle") });
+  if (!pick) return;
+  const write = overwrite => api("save_files", { folder: pick.path, overwrite: !!overwrite,
+    files: files.map(f => f.text !== undefined ? { name: f.name, text: f.text } : { name: f.name, data_b64: f.data_b64 }) });
+  let r;
+  try { r = await write(false); }
+  catch (e) {
+    if (e.code !== "file_exists") throw e;
+    const names = ((e.body.params || {}).names || []).join(", ");
+    if (!confirm(t("files.overwrite", names))) return;
+    r = await write(true);
+  }
+  toast(t("files.saved", r.written.length, r.folder), "ok");
 }
 
 function viewProject() {
@@ -518,7 +679,8 @@ function viewProject() {
     h("label", { class: "f" }, h("span", {}, t("open.thickness")), h("input", { type: "number", id: "thk", inputmode: "decimal", step: "any", value: p ? p.material.thickness : 18 })),
     p ? h("label", { class: "chk" }, addToggle, t("open.add")) : null,
     h("div", { class: "row", style: "margin-top:12px" },
-      h("button", { class: "primary grow", onclick: () => { pick.onchange = e => openFile(e.target, !addToggle.checked); pick.click(); } }, "📂 " + t("open.pick"))), pick));
+      h("button", { class: "primary grow", onclick: () => { pick.onchange = e => openFile(e.target, !addToggle.checked); pick.click(); } }, "📂 " + t("open.pick")),
+      hasFiles() ? h("button", { class: "grow", onclick: () => guarded(() => openFromComputer(!addToggle.checked)) }, "🖥 " + t("files.open")) : null), pick));
   if (S.report) {
     const r = S.report;
     out.push(h("div", { class: "card" }, h("h2", {}, t("report.title")), h("div", {}, r.summary || ""),
@@ -564,9 +726,12 @@ function viewProject() {
     return h("label", { class: "item" }, h("span", { class: "dot", style: `background:${l.color}` }), h("span", { class: "grow" }, l.name), h("span", { class: "badge" }, count.get(l.id) || 0), cb);
   }))));
 
+  if (hasFiles()) out.push(h("div", { class: "row", style: "margin-bottom:8px" },
+    h("button", { class: "primary grow", onclick: () => guarded(() => saveProject(false)) }, "🖥 " + (S.file ? `${t("files.saveHere")}: ${baseOf(S.file.path)}` : t("files.saveTo"))),
+    S.file ? h("button", { onclick: () => guarded(() => saveProject(true)) }, t("files.saveAs")) : null));
   out.push(h("div", { class: "row" },
     h("button", { class: "grow", onclick: () => download((p.name || "project").replace(/[^\w .-]+/g, "_") + ".icam", new Blob([JSON.stringify(p)], { type: "application/json" })) }, "💾 " + t("proj.save")),
-    h("button", { class: "danger", onclick: () => { if (confirm(t("proj.closeask"))) { S.project = null; S.report = null; S.views = {}; changed(); } } }, t("proj.close"))));
+    h("button", { class: "danger", onclick: () => { if (confirm(t("proj.closeask"))) { S.project = null; S.report = null; S.views = {}; setFile(null); changed(); } } }, t("proj.close"))));
   return h("div", {}, out);
 }
 
@@ -650,7 +815,9 @@ function viewOutput() {
         return h("div", { class: "item", style: "flex-wrap:wrap" },
           h("div", { class: "grow" }, h("b", {}, f.name), h("div", { class: "muted small" }, `${t("out.lines", fmt(lines, 0))} · ${fmt(f.text.length / 1024, 0)} KB`)),
           show, h("button", { class: "small primary", onclick: () => download(f.name, new Blob([f.text], { type: "text/plain" })) }, "⬇ " + t("out.download")), pre);
-      }))));
+      })),
+      hasFiles() && g.files.length ? h("div", { class: "row", style: "margin-top:10px" },
+        h("button", { class: "grow", onclick: () => guarded(() => saveToComputer(g.files.map(f => ({ name: f.name, text: f.text })))) }, "🖥 " + t("files.saveTo"))) : null));
   }
 
   if (S.sim) {
@@ -661,9 +828,14 @@ function viewOutput() {
 
   const exp = fmtId => h("button", { class: "grow", onclick: () => guarded(async () => {
     const r = await api("export", { project: p, format: fmtId, file_name: stem });
-    for (const f of r.files) download(f.name, b64blob(f.data_b64, f.mime));
-  }) }, "⬇ " + fmtId.toUpperCase());
-  out.push(h("div", { class: "card" }, h("h2", {}, t("out.export")), h("div", { class: "row" }, ["dxf", "svg", "icam"].filter(x => sc.exporters.some(e => e.extension === x)).map(exp))));
+    if (hasFiles() && S.toComputer) await saveToComputer(r.files.map(f => ({ name: f.name, data_b64: f.data_b64 })));
+    else for (const f of r.files) download(f.name, b64blob(f.data_b64, f.mime));
+  }) }, (hasFiles() && S.toComputer ? "🖥 " : "⬇ ") + fmtId.toUpperCase());
+  const toComp = h("input", { type: "checkbox", checked: S.toComputer });
+  toComp.onchange = () => { S.toComputer = toComp.checked; store.set("iyicam.tocomputer", S.toComputer ? "1" : "0"); render(); };
+  out.push(h("div", { class: "card" }, h("h2", {}, t("out.export")),
+    hasFiles() ? h("label", { class: "chk" }, toComp, t("files.toComputer")) : null,
+    h("div", { class: "row" }, ["dxf", "svg", "icam"].filter(x => sc.exporters.some(e => e.extension === x)).map(exp))));
   return h("div", {}, out);
 }
 
@@ -721,10 +893,14 @@ function signedOut() { if (!$(".login")) showLogin(t("err.session")); }
 
 async function start() {
   S.schema = await api("schema");
+  try { S.files = await api("status"); } catch { S.files = null; }          // (a server without files, or an older one)
   if (!S.project) {
     const saved = store.get("iyicam.project");
     if (saved) {
       try { S.project = (await api("validate", { project: JSON.parse(saved) })).project; } catch { store.del("iyicam.project"); }
+    }
+    if (S.project) {                                  // the file it came from is remembered with it
+      try { const f = JSON.parse(store.get("iyicam.file") || "null"); S.file = f && f.path && f.hash ? f : null; } catch { S.file = null; }
     }
   }
   if (S.project) S.sheetId = S.project.sheets[0].id;

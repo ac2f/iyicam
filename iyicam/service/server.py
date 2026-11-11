@@ -1,9 +1,10 @@
 """iyiCAM for a phone: the service behind a small web server, with a page and a key of its own.
 
-It needs nothing but this package (``pip install iyicam``, no Qt): ``iyicam serve`` listens on a port, serves the
-page in ``iyicam/web`` and answers the operations of :class:`~iyicam.service.ServiceHost` as JSON under
-``/api/<operation>``.  It is a program of its own: CNC-Assistant is not needed, and it needs none of the files of
-the computer it runs on (the project travels as data, as everywhere in the service).
+It needs nothing but this package (no Qt): ``iyicam serve`` listens on a port, serves the page in ``iyicam/web`` and
+answers the operations of :class:`~iyicam.service.ServiceHost` as JSON under ``/api/<operation>``.  It is a program of
+its own: CNC-Assistant is not needed.  The project travels as data, as everywhere in the service, and the page can also
+open and save files of the computer the server runs on, but only inside the folders named at the start (``--root``,
+see :mod:`iyicam.service.files`; ``--no-files`` turns that off).
 
 Access is by a **key** (``~/.iyicam/server.key``): the page asks for it once, the server answers with a session
 cookie (12 hours; ``HttpOnly``, ``SameSite=Strict``) and every ``/api`` call needs that cookie.  After 10 wrong keys
@@ -30,6 +31,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from ..core import paths
+from .files import FILE_OPS, Files
 from .host import ServiceHost
 from .ops import API_VERSION
 
@@ -46,7 +48,11 @@ API_OPS = frozenset({"ping", "schema", "validate", "import", "export", "command"
 
 # an error code that is not "the request was wrong" (400) answers with another HTTP status
 ERROR_STATUS = {"unknown_operation": 404, "job_not_found": 404, "job_not_finished": 409, "too_busy": 503,
-                "internal_error": 500}
+                "internal_error": 500,
+                # files of the computer (iyicam.service.files)
+                "path_not_allowed": 403, "files_disabled": 403, "folder_not_found": 404, "file_not_found": 404,
+                "file_exists": 409, "file_changed": 409, "file_too_large": 413, "payload_too_large": 413,
+                "os_error": 500}
 
 STATIC_TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
                 ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".json": "application/json",
@@ -207,10 +213,10 @@ class ServiceServer(ThreadingHTTPServer):
     allow_reuse_address = os.name != "nt"       # (on Windows this would let a second program take the same port)
 
     def __init__(self, address: tuple[str, int], service: ServiceHost, auth: Auth, *, trust_proxy: bool = False,
-                 max_body: int = DEFAULT_MAX_BODY, verbose: bool = False):
+                 max_body: int = DEFAULT_MAX_BODY, verbose: bool = False, files: Files | None = None):
         if ":" in address[0]:
             self.address_family = socket.AF_INET6
-        self.service, self.auth = service, auth
+        self.service, self.auth, self.files = service, auth, files      # (files None: no access to the disk at all)
         self.trust_proxy, self.max_body, self.verbose = trust_proxy, max_body, verbose
         # only these files are ever served: a name from the URL is looked up here, never turned into a path
         self.assets = {p.name: p for p in WEB_DIR.iterdir() if p.is_file() and p.suffix in STATIC_TYPES} \
@@ -362,13 +368,21 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, {"ok": True}, {"Set-Cookie": self._cookie("", 0)})
         if not self.server.auth.valid(self._token()):
             return self._fail(401, "not_logged_in", "enter the key first", close=True)
-        if name not in API_OPS:
+        if name not in API_OPS and name not in FILE_OPS:
             return self._fail(404, "unknown_operation", f"there is no operation '{name}'", close=True,
                               operation=name)
         payload = self._read_json()
         if payload is None:
             return
-        out = self.server.service.handle(name, payload)
+        if name in FILE_OPS:
+            if self.server.files is not None:
+                out = self.server.files.handle(name, payload)
+            elif name == "status":                      # (the page asks first, and learns that there is no disk to browse)
+                out = {"files": False, "roots": [], "limits": {}}
+            else:
+                out = {"error": "files_disabled", "message": "this server does not give access to files"}
+        else:
+            out = self.server.service.handle(name, payload)
         code = out.get("error")
         # an answer is an error when it carries an error CODE; job.status has an 'error' field of its own (null
         # while the job runs, the job's error object after it failed) and is an answer like any other
@@ -404,13 +418,16 @@ class Handler(BaseHTTPRequestHandler):
 
 def make_server(host: str = "127.0.0.1", port: int = DEFAULT_PORT, *, key: str | None = None,
                 key_path: Path | None = None, trust_proxy: bool = False, max_body: int = DEFAULT_MAX_BODY,
-                service: ServiceHost | None = None, verbose: bool = False) -> ServiceServer:
+                service: ServiceHost | None = None, verbose: bool = False, roots: list[str] | None = None,
+                files: bool = True) -> ServiceServer:
     """A server that is bound but not yet serving (``serve_forever()``); ``port=0`` takes a free port.  ``key``
-    (instead of the key file) is for tests."""
+    (instead of the key file) is for tests.  The page may open and save files inside ``roots`` (default: those of
+    ``IYICAM_ROOTS``, else the home folder); ``files=False`` gives no access to the disk at all."""
     keys = KeyStore(key_path, fixed=key)
     keys.get()                                   # the key file exists from now on
-    return ServiceServer((host, port), service or ServiceHost(), Auth(keys), trust_proxy=trust_proxy,
-                         max_body=max_body, verbose=verbose)
+    service = service or ServiceHost()
+    return ServiceServer((host, port), service, Auth(keys), trust_proxy=trust_proxy, max_body=max_body,
+                         verbose=verbose, files=Files(service, roots) if files else None)
 
 
 def lan_addresses() -> list[str]:
@@ -435,9 +452,11 @@ def lan_addresses() -> list[str]:
 
 
 def serve(host: str = "127.0.0.1", port: int = DEFAULT_PORT, *, trust_proxy: bool = False,
-          max_body: int = DEFAULT_MAX_BODY, verbose: bool = True) -> int:
+          max_body: int = DEFAULT_MAX_BODY, verbose: bool = True, roots: list[str] | None = None,
+          files: bool = True) -> int:
     try:
-        srv = make_server(host, port, trust_proxy=trust_proxy, max_body=max_body, verbose=verbose)
+        srv = make_server(host, port, trust_proxy=trust_proxy, max_body=max_body, verbose=verbose, roots=roots,
+                          files=files)
     except OSError as exc:
         print(f"error: cannot listen on {host}:{port}: {exc}", file=sys.stderr)
         return 1
@@ -453,6 +472,11 @@ def serve(host: str = "127.0.0.1", port: int = DEFAULT_PORT, *, trust_proxy: boo
         if not trust_proxy:
             print("  plain HTTP: use it on a network you trust, or behind an HTTPS proxy (docs/web.md)")
     print(f"  key file: {srv.auth.keys.path}")
+    if srv.files is None:
+        print("  files:    off (--no-files): the page cannot open or save files of this computer")
+    else:
+        shown_roots = srv.files.roots()
+        print("  files:    " + ("; ".join(shown_roots) if shown_roots else "no folder to open files from (see --root)"))
     if sys.stdout is not None and sys.stdout.isatty():       # (pythonw has no stdout at all)
         print(f"  key:      {srv.auth.keys.get()}")
     else:

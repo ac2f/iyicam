@@ -15,25 +15,33 @@ Environment=PYTHONDONTWRITEBYTECODE=1
 # real home directory, so libraries that look at HOME get the same place.
 Environment=IYICAM_HOME=/var/lib/iyicam
 Environment=HOME=/var/lib/iyicam
+# The folders of this computer in which the page may open and save files (separated by ":"); nothing else of
+# the disk is reachable. The default is /var/lib/iyicam/files, set at the installation (IYICAM_ROOTS=...).
+Environment=IYICAM_ROOTS=@ROOTS@
 
 # Runs with the venv python. By default it listens on 127.0.0.1 only and a reverse proxy adds HTTPS;
 # @PROXY@ is "--trust-proxy" exactly in that case (see docs/web.md before listening on another address).
+# @FILES@ is "--no-files" when the page is not to open or save files of this computer at all.
 # The key is made at the first start (/var/lib/iyicam/server.key) and stays valid until it is replaced
 # with:  iyicam serve --new-key  (a running server notices it at once).
-ExecStart=@APP@/venv/bin/python -m iyicam serve --host @HOST@ --port @PORT@ @PROXY@ --quiet
+ExecStart=@APP@/venv/bin/python -m iyicam serve --host @HOST@ --port @PORT@ @PROXY@ @FILES@ --quiet
 
 Restart=on-failure
 RestartSec=3
 StateDirectory=iyicam
 StateDirectoryMode=0700
-UMask=0077
+# The files the page writes are readable by the group of the service user (the state folder itself is 0700).
+UMask=0027
 # The engine can take a lot of memory for a big drawing or a big nesting; raise it with
 #   systemctl edit iyicam-web
 MemoryMax=2G
 
-# Hardening: the service needs the network and its own state directory, nothing else.
+# Hardening: the service needs the network, its own state directory and the folders it was given for files,
+# nothing else (the system is read-only to it; a "-" in front of a path lets a missing folder pass).
 NoNewPrivileges=yes
 ProtectSystem=strict
+ReadWritePaths=@RW_PATHS@
+# (a folder under /home needs ProtectHome=no, see docs/web.md)
 ProtectHome=yes
 PrivateTmp=yes
 PrivateDevices=yes

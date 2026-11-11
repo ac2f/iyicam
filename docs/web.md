@@ -1,8 +1,9 @@
 # iyiCAM in a browser (`iyicam serve`)
 
-A small web server with a page and a **key of its own**. It is a program by itself: CNC-Assistant is not needed, and it
-needs none of the files of the computer it runs on (the drawing is opened from the phone and the G-code is downloaded
-to it). Everything is the [service](service.md) behind a web page.
+A small web server with a page and a **key of its own**. It is a program by itself: CNC-Assistant is not needed. A
+drawing can be opened from the phone and the G-code downloaded to it, and the page can also **browse, open and save
+files of the computer the server runs on**, inside the folders you name ([below](#files-of-the-computer)). Everything
+is the [service](service.md) behind a web page.
 
 ```bash
 python -m pip install -e .    # in a checkout of this repository; no Qt needed
@@ -31,6 +32,8 @@ allow it for *private* networks.
 | `iyicam serve --new-key` | makes a new key; **every signed-in browser is signed out at once**, also in a running server |
 | `--trust-proxy` | behind a reverse proxy (below) |
 | `--max-upload-mb N` | largest request, default 64 (a drawing travels as base64) |
+| `--root FOLDER` | a folder in which the page may open and save files; repeat it for more (default: `IYICAM_ROOTS`, else the home folder) |
+| `--no-files` | the page cannot open or save files of this computer at all (it can still upload and download) |
 | `--quiet` | no line per request |
 
 User posts, tools and plugins are read from `~/.iyicam` (`IYICAM_HOME`), as in the program; `--no-plugins` or
@@ -53,6 +56,48 @@ The project lives in the browser (and is kept in its local storage, so a reload 
 nothing between requests. What is not in the page yet — moving, rotating or editing vectors, nesting — is there in the
 service (`command`, `nest`) and in the desktop program.
 
+## Files of the computer
+
+Besides uploading from the phone, the page can look into the folders of the computer the server runs on: **Open from
+the computer…** (Project tab) opens a drawing or a project from there, **Save to the computer…** writes the project as
+`.icam` (the same file again with *Save*, and the page notices when somebody changed the file meanwhile), and on the
+Output tab the G-code files and the exports can be written into a folder instead of being downloaded. A name that is
+taken is never replaced without asking. The file window has three modes (open, save as, choose a folder) and remembers
+the last folder.
+
+It is meant for the computer in the workshop: the drawings are on it, and the G-code goes where the machine's program
+reads it. What it may touch is limited on purpose:
+
+* only **inside the roots**: the folders named with `--root` (repeat it), or `IYICAM_ROOTS` (separated like `PATH`:
+  `;` on Windows, `:` elsewhere), or, with neither, the home folder of the user the server runs as. A path is turned into
+  its real path first, so a `..` or a symbolic link cannot lead out;
+* never anything below a **hidden** name (starting with a dot: `.ssh`, `.iyicam`), and never the folder in which iyiCAM
+  keeps its own state (the key, the user's posts and tools) — unless a root was put *inside* it on purpose, which is
+  what the Linux installation does;
+* only known kinds of files: drawings and projects (`.icam .dxf .svg .plt .hpgl .hpg .cdr`) are listed and opened;
+  `.icam`, `.dxf`, `.svg`, `.png`, the G-code extensions (`.nc .tap .ngc .cnc .gcode .mpf .txt`) and the extension of any
+  post are written. **Never** a program or a script (`.exe .bat .ps1 .py .sh .js …`), and a file name is only a name,
+  never a path;
+* a file that exists is replaced only when the page saw its latest state (a hash of it) or the person says so; every
+  write is made whole or not at all;
+* `--no-files` turns all of this off. Whoever has the key can reach the files of the roots, so keep the roots to the
+  folders that are meant for this.
+
+On a Windows computer at home the default (the home folder) is what the CNC-Assistant agent does too. For a server name
+the folders: `iyicam serve --root D:\Cam --root D:\Gcode`.
+
+The operations are `status`, `list`, `open`, `save` and `save_files` under `/api/` (after the login, like the others).
+They are the same, with the same answers, as the ones CNC-Assistant's mobile page calls on its agent
+(`/api/cam/list` and so on), so a page written for one works with the other; the code is this program's own, and the
+two projects share nothing but that interface (no code, no dependency). `status` answers
+`{"files": true, "roots": [...], "limits": {...}}` (`"files": false` with `--no-files`); `list` takes `{"path": ...}`
+(without it: the roots) and answers the folders and files of that folder with a `parent` to go up; `open` takes `path`
+(and `thickness`, or `project` to add a drawing to a project) and answers like `import` plus `path`, `hash`, `kind`;
+`save` takes `path`, `project` and `base_hash` (or `overwrite`); `save_files` takes `folder` and `files`
+(`{name, text}` or `{name, data_b64}`). Errors: `path_not_allowed` (HTTP 403), `folder_not_found` and `file_not_found`
+(404), `file_exists` and `file_changed` (409), `file_too_large` (413), `unsupported_file`, `invalid_name`, `invalid_path`
+(400), `files_disabled` (403). Tests: `tests/test_files.py`.
+
 ## The key and what protects it
 
 * The key is in `~/.iyicam/server.key`, made at the first start: 24 letters and digits (about 120 bits), without
@@ -60,18 +105,20 @@ service (`command`, `nest`) and in the desktop program.
 * The page asks for it once. The server answers with a session cookie (12 hours, `HttpOnly`, `SameSite=Strict`, and
   `Secure` behind an HTTPS proxy). Without it nothing but the page itself is reachable.
 * An address that gives 10 wrong keys within 5 minutes waits (HTTP 429, `Retry-After`).
-* Only the operations of the service can be called (`/api/<operation>`); nothing on the computer's disk is served, and
-  no path from a request is ever turned into a file name. A request that a page of another site sent is refused.
+* Only the operations of the service and the file operations can be called (`/api/<operation>`); the page itself is
+  served from a fixed list of files, never from a path of the request. The disk is reachable only through the file
+  operations and only inside the roots (above); `--no-files` closes that. A request that a page of another site sent is
+  refused.
 * The server speaks **plain HTTP**. On a home network that is acceptable; the key and the drawings can be read by anyone
   who can listen on that network. For anything else put HTTPS in front (below).
-* Whoever has the key can use the engine of this computer (CPU time, memory), not its files. Keep it private; a new key
-  (`--new-key`) is one command.
+* Whoever has the key can use the engine of this computer (CPU time, memory) and the files in the roots (not others).
+  Keep it private; a new key (`--new-key`) is one command.
 
 ## A server (Linux, systemd and HTTPS)
 
-The engine needs no files of the computer, so the service can run on **any** machine, a small Linux server for
-example, and be reached from anywhere. It is its own service: it needs nothing of the CNC-Assistant, and it can run
-on the same server next to it (other port, other host name).
+The engine needs no files of the computer (the project travels as data), so the service can run on **any** machine, a
+small Linux server for example, and be reached from anywhere. It is its own service: it needs nothing of the
+CNC-Assistant, and it can run on the same server next to it (other port, other host name).
 
 ```bash
 git clone <this repository> /opt/iyicam        # not under /root or /home: the service user must read it
@@ -83,12 +130,21 @@ with apt when it is missing), makes the service user `iyicam` and a venv in the 
 no Qt), and installs and starts the systemd service **`iyicam-web`**, which also starts at boot. It is safe to run
 again: after a `git pull` the same command updates it. Settings are environment variables:
 `sudo IYICAM_PORT=8301 bash ...` (port, default 8300), `IYICAM_HOST` (address, default `127.0.0.1`), `PYTHON`
-(for example `python3.12`).
+(for example `python3.12`), `IYICAM_ROOTS` (the folders of [the files of the computer](#files-of-the-computer),
+separated by `:`, default `/var/lib/iyicam/files`, which the installer makes) and `IYICAM_FILES=off` (no file access at
+all).
+
+The service runs as the user `iyicam` with the system read-only to it, so a folder of your own in `IYICAM_ROOTS` must
+be writable by that user (`chown iyicam: /srv/cam`, or `setfacl -m u:iyicam:rwx /srv/cam`; the installer makes a missing
+one and warns about one that cannot be written) and it must not be under `/home` or `/root` (the service cannot see
+those; `systemctl edit iyicam-web` with `ProtectHome=no` lifts that). Another folder can be added later by editing
+`IYICAM_ROOTS` and `ReadWritePaths` in the unit, or simply by running the installer again with the new list.
 
 | | |
 |---|---|
 | the key | `sudo cat /var/lib/iyicam/server.key` (made at the first start; this is the key typed on the page) |
 | a new key | `sudo -u iyicam IYICAM_HOME=/var/lib/iyicam /opt/iyicam/venv/bin/iyicam serve --new-key` (signed-in browsers are signed out at once) |
+| the files of the page | in `/var/lib/iyicam/files` (or your `IYICAM_ROOTS`); take G-code from there, or let the machine's folder be a root |
 | status, log | `systemctl status iyicam-web`, `journalctl -u iyicam-web -f` |
 | more memory | the service is limited to 2 GB; `systemctl edit iyicam-web` and set `MemoryMax=` |
 | remove | `sudo bash packaging/linux/uninstall.sh` (`--full` also deletes the key, the venv and the user) |
