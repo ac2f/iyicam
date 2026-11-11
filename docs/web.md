@@ -46,21 +46,56 @@ User posts, tools and plugins are read from `~/.iyicam` (`IYICAM_HOME`), as in t
 
 ## What the page does
 
-1. **Project** — open a drawing (`.icam`, DXF, SVG, HPGL, CorelDRAW `.cdr`, whatever the importers read), see the report
-   of what was read, the sheets, the material (thickness, safe Z, plunge clearance, Z zero, XY origin) and the layers.
-   *Save as .icam* downloads the project; it opens again in the desktop program or here.
-2. **Drawing** — the sheet and its vectors, pan with one finger, zoom with two (or the wheel); after *Calculate* the
-   toolpaths are drawn over it, coloured by depth, with the rapid moves dashed and drilled holes as dots.
-3. **Toolpaths** — add, edit, switch off or delete toolpaths. The form is built from the engine's own description of the
-   operation (profile, pocket, drill, engrave, V-carve, plugin operations too), so it offers exactly the settings the
-   desktop program has.
+1. **Project** — open a drawing (`.icam`, DXF, SVG, HPGL, CorelDRAW `.cdr`, whatever the importers read) or start an
+   empty project; see the report of what was read, the sheets (add, delete, rename, a thickness of their own), the
+   material (thickness, safe Z, plunge clearance, Z zero, XY origin, home position, rapid rate, rotary axis) and the
+   **layers** (add, rename, colour, hide, lock, delete, the one new vectors are drawn on). *Save as .icam* downloads the
+   project; it opens again in the desktop program or here.
+2. **Drawing** — the sheet and its vectors, with the tools of [editing the drawing](#editing-the-drawing) below; after
+   *Calculate* the toolpaths are drawn over it, coloured by depth, with the rapid moves dashed and drilled holes as dots,
+   and the cut order can be shown as numbers at the start of every cut.
+3. **Toolpaths** — add, edit, duplicate, move up and down, switch off or delete toolpaths. The form is built from the
+   engine's own description of the operation (profile, pocket, drill, engrave, V-carve, plugin operations too), so it
+   offers exactly the settings the desktop program has; a toolpath machines **layers** or **the vectors that are
+   selected** on the drawing, and has its **cut order and start point settings** (strategy, grouping, direction, smart
+   start points) like the desktop's Cut Order panel.
 4. **Output** — *Calculate* (time, length and warnings per toolpath), *Write G-code* for the post you pick (view it or
    download it), *Simulation* (the material-removal picture of the sheet) and *Export* (DXF, SVG, `.icam`).
 
 The project lives in the browser (and is kept in its local storage, so a reload does not lose it); the server remembers
-nothing between requests. What is not in the page yet — moving, rotating or editing vectors, nesting — is there in the
-service (`command`, `nest`) and in the desktop program.
+nothing between requests.
 
+### Editing the drawing
+
+The bar over the drawing has the tools (touch, or the mouse); every change can be undone (↶ / ↷, Ctrl+Z / Ctrl+Y, up to
+40 steps):
+
+| tool | what it does |
+|---|---|
+| 🖐 view | one finger pans, two zoom, **a tap selects** the vector under the finger (a tap on nothing clears the selection; *select several* or Shift adds and removes) |
+| ⬚ select | drag a box: left to right takes what is wholly inside, right to left everything it touches |
+| ✥ move | drag the selected vectors; they **cling** (rigidly: the corners, middles and centre of the selection) to the sheet and to the nodes of the other vectors, or to a grid (▦ 1 / 5 / 10 / 25 mm); 🧲 switches that off; the arrow keys nudge by 1 mm (10 with Shift) |
+| ／ ⌇ ▭ ◯ ⬭ ⬡ | draw a line, a polyline (tap the points, then ✓ or ▢ to close), a rectangle, a circle (from the centre), an ellipse, a regular polygon (the sides are set on the bar); the points cling like a moved selection |
+| ◇ nodes | the nodes of the one selected vector: drag a node or a bezier handle, tap a line to insert a node (＋), delete a node, start the cut here, break at the node, close, make a span a line or a curve |
+| ⚑ start point | tap on a closed vector: its cut starts there (a node is put in if needed, and the program keeps it: it is the hand-set start of the Cut Order panel) |
+
+With something selected the bar offers turn 90°, flip left/right and top/bottom, duplicate, copy, paste (also onto
+another sheet), delete and *move to layer*; ▣ selects all, ◫ inverts, ⊘ clears. **⋯ Commands** lists all the vector
+commands of the engine — the same menus as the desktop's — with their own forms: create (rectangle, circle, ellipse,
+polygon, star, slot, arc, spiral, bounding box, door / panel), edit (offset, weld, subtract, intersect, join, close,
+reverse, group, ungroup, explode, smooth, simplify, convert to polyline, centre line, vector doctor, delete duplicates),
+corners (fillet, chamfer, dog-bone), transform (move, position, rotate, scale, size, mirror, slant, turns, flips),
+arrange (align, centre on the sheet, distribute, rectangular and circular arrays, copy along a vector) and select (open
+vectors, similar), and **nesting** (plate size, border gap, spacing, rotation step, copies of each part, search
+effort, squeeze suggestion; the selected parts or all of them).
+
+Moving, turning, flipping, copying, deleting and the drawing and node tools are done in the browser, on the project
+itself; `geom.js` does them with the engine's own numbers (arcs stay arcs, beziers stay beziers; tried against the
+engine's `xform.*` commands: the same coordinates). Everything else is a call of `command` or `nest` with the project
+and the answer replaces it, so what the page does is what the desktop program does.
+
+Not in the page yet: the trim tool, text, bitmap tracing, the G-code backplot, snapping to crossings, the tool
+database and post-processor editors, tabs of several projects.
 ## Files of the computer
 
 Besides uploading from the phone, the page can look into the folders of the computer the server runs on: **Open from

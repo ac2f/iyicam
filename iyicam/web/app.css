@@ -111,3 +111,20 @@ pre.code {
 .empty { text-align: center; padding: 36px 12px; color: var(--muted); }
 .empty.bad { color: var(--bad); }
 .empty .big { font-size: 40px; }
+
+/* ---- editing the drawing (edit.js) ---- */
+.edstage { display: flex; flex-direction: column; height: calc(100vh - 56px - var(--tab-h) - env(safe-area-inset-bottom) - env(safe-area-inset-top)); min-height: 360px; }
+.edstage .stage { flex: 1; height: auto; min-height: 160px; }
+.edbars { background: var(--card); border-bottom: 1px solid var(--line); }
+.edrow { display: flex; gap: 4px; padding: 3px 8px; overflow-x: auto; align-items: center; scrollbar-width: none; }
+.edrow::-webkit-scrollbar { display: none; }
+.edrow > * { flex: none; }
+button.ed, select.ed { min-width: 40px; min-height: 40px; padding: 0 8px; font-size: 18px; }
+select.ed { font-size: 14px; max-width: 160px; }
+button.ed.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+.edrow .badge { white-space: nowrap; }
+.cmdlist details { border-top: 1px solid var(--line); }
+.cmdlist summary { min-height: 44px; display: flex; align-items: center; font-weight: 600; cursor: pointer; }
+.cmdgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px; padding: 4px 0 10px; }
+button.cmd { min-height: 42px; font-size: 14px; text-align: left; justify-content: flex-start; }
+button.cmd.off { opacity: .45; }

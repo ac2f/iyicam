@@ -258,34 +258,7 @@ function openSheet(title, body, onClose) {
 
 // ------------------------------------------------------------------------------------------ drawing
 const flatCache = new WeakMap();
-function arcPoints(x0, y0, x1, y1, bulge) {
-  const th = 4 * Math.atan(bulge), dx = x1 - x0, dy = y1 - y0, c = Math.hypot(dx, dy);
-  if (c < 1e-12 || Math.abs(th) < 1e-9) return [[x1, y1]];
-  const hh = (c / 2) / Math.tan(th / 2);                     // the centre, to the left of the chord for a counter-clockwise arc
-  const cx = (x0 + x1) / 2 - dy / c * hh, cy = (y0 + y1) / 2 + dx / c * hh;
-  const r = Math.hypot(x0 - cx, y0 - cy), a0 = Math.atan2(y0 - cy, x0 - cx);
-  const n = Math.max(2, Math.ceil(Math.abs(th) / 0.15)), out = [];
-  for (let k = 1; k < n; k++) out.push([cx + r * Math.cos(a0 + th * k / n), cy + r * Math.sin(a0 + th * k / n)]);
-  out.push([x1, y1]);
-  return out;
-}
-function flatten(c) {
-  const pts = [c.start.slice()];
-  let [x, y] = c.start;
-  for (const s of c.segs) {
-    if (s[0] === "L") { pts.push([s[1], s[2]]); x = s[1]; y = s[2]; }
-    else if (s[0] === "A") { pts.push(...arcPoints(x, y, s[1], s[2], s[3])); x = s[1]; y = s[2]; }
-    else if (s[0] === "C") {
-      for (let k = 1; k <= 12; k++) {
-        const u = k / 12, m = 1 - u;
-        pts.push([m * m * m * x + 3 * m * m * u * s[1] + 3 * m * u * u * s[3] + u * u * u * s[5],
-                  m * m * m * y + 3 * m * m * u * s[2] + 3 * m * u * u * s[4] + u * u * u * s[6]]);
-      }
-      x = s[5]; y = s[6];
-    }
-  }
-  return pts;
-}
+const flatten = IyiGeom.flatten;                           // (geom.js: the points of a contour as a polyline)
 const flatOf = v => { let f = flatCache.get(v); if (!f) { f = v.contours.map(c => ({ closed: c.closed, pts: flatten(c) })); flatCache.set(v, f); } return f; };
 
 function fitView(cv, sheet) {
@@ -294,7 +267,7 @@ function fitView(cv, sheet) {
   return { s, ox: (w - sheet.width * s) / 2, oy: (hgt + sheet.height * s) / 2 };
 }
 
-function drawScene(cv, sheet, view) {
+function drawScene(cv, sheet, view, extra) {
   const p = S.project, dpr = window.devicePixelRatio || 1, w = cv.clientWidth, hgt = cv.clientHeight;
   if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(hgt * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(hgt * dpr); }
   const ctx = cv.getContext("2d"), dark = matchMedia("(prefers-color-scheme: dark)").matches;
@@ -314,6 +287,7 @@ function drawScene(cv, sheet, view) {
   for (const v of sheet.vectors) {
     const l = layers.get(v.layer);
     if (l && !l.visible) continue;
+    if (extra && extra.skip && extra.skip.has(v.id)) continue;        // (the editor draws it itself while it is being changed)
     const col = (l && l.color) || "#1f77b4";
     let path = byColor.get(col);
     if (!path) byColor.set(col, path = new Path2D());
@@ -344,6 +318,7 @@ function drawScene(cv, sheet, view) {
     ctx.fillStyle = dark ? "#fbbf24" : "#b45309";
     for (const [x, y] of drills) { ctx.beginPath(); ctx.arc(x, y, 3 * px, 0, 7); ctx.fill(); }
   }
+  if (extra && extra.overlay) extra.overlay(ctx, view, px, dark);      // the selection, the nodes, what is being drawn
 }
 
 function drawStage(sheet) {
@@ -445,6 +420,20 @@ function paramsForm(params, vals, tools) {
 }
 
 // ------------------------------------------------------------------------------------------ toolpath editor
+/** the settings of the cut order (the engine's ``schema.sequence``) as a form */
+function sequenceParams() {
+  const q = S.schema.sequence, d = q.defaults || {};
+  return [
+    { name: "auto_order", label: t("seq.auto"), kind: "bool", default: d.auto_order !== false },
+    { name: "strategy", label: t("seq.strategy"), kind: "choice", choices: q.strategies, default: d.strategy },
+    { name: "grouping", label: t("seq.grouping"), kind: "choice", choices: q.groupings, default: d.grouping },
+    { name: "direction", label: t("seq.direction"), kind: "choice", choices: q.directions, default: d.direction },
+    { name: "band", label: t("seq.band"), kind: "length", default: d.band ?? 0, min: 0 },
+    { name: "smart_starts", label: t("seq.smart"), kind: "bool", default: !!d.smart_starts },
+    { name: "start_margin", label: t("seq.margin"), kind: "length", default: d.start_margin ?? 1, min: 0 },
+    { name: "corner_distance", label: t("seq.corner"), kind: "length", default: d.corner_distance ?? 0, min: 0 },
+  ];
+}
 const TOOL_FIELDS = ["diameter", "feed_rate", "plunge_rate", "spindle_speed", "stepdown", "stepover", "number"];
 
 function editToolpath(existing) {
@@ -454,6 +443,12 @@ function editToolpath(existing) {
     id: newId(), name: "", op: ops[0].id, tool: null, params: {}, enabled: true, sheets: null,
     selection: { mode: "layers", vectors: [], layers: p.layers.map(l => l.id) }, sequence: {}, safe_z: null, clearance: null };
   const chosen = new Set(tp.selection.mode === "layers" ? tp.selection.layers : p.layers.map(l => l.id));
+  // what it machines: whole layers, or the vectors that are selected on the drawing (edit.js keeps the selection)
+  const ed = window.IyiPage.editor, picked = ed ? [...ed.state.sel] : [];
+  let mode = tp.selection.mode === "vectors" ? "vectors" : "layers";
+  const vecIds = tp.selection.mode === "vectors" ? tp.selection.vectors.slice() : picked;
+  const modeSel = h("select", {}, h("option", { value: "layers" }, t("paths.bylayers")), h("option", { value: "vectors" }, t("paths.byvectors", vecIds.length)));
+  modeSel.value = mode;
   const opBox = h("div"), toolBox = h("div"), name = h("input", { type: "text", value: tp.name });
   const opSel = h("select", {}, ops.map(o => h("option", { value: o.id }, o.label)));
   opSel.value = tp.op;
@@ -496,18 +491,27 @@ function editToolpath(existing) {
     cb.onchange = () => cb.checked ? chosen.add(l.id) : chosen.delete(l.id);
     return h("label", { class: "chk" }, cb, h("span", { class: "dot", style: `background:${l.color}` }), l.name);
   }));
+  modeSel.onchange = () => { mode = modeSel.value; layerBox.hidden = mode !== "layers"; };
+  layerBox.hidden = mode !== "layers";
+  // the order of the cuts and where each one starts (the engine's own settings; shown when asked for, so that a
+  // toolpath that is only looked at is not changed)
+  const seqBox = h("div"), seqDet = h("details", {}, h("summary", { class: "group-h" }, t("paths.order")), seqBox);
+  seqDet.addEventListener("toggle", () => {
+    if (seqDet.open && !seqBox.firstChild) { tp.sequence = tp.sequence || {}; seqBox.append(paramsForm(sequenceParams(), tp.sequence, sc.tools)); }
+  });
   const body = h("div", {},
     h("label", { class: "f" }, h("span", {}, t("paths.op")), opSel),
     h("label", { class: "f" }, h("span", {}, t("paths.name")), name),
-    h("div", { class: "group-h" }, t("paths.layers")), layerBox,
-    toolBox, opBox);
+    h("div", { class: "group-h" }, t("paths.layers")), modeSel, layerBox,
+    toolBox, opBox, seqDet);
   buildOp();
   let close;
   const save = () => {
-    if (!chosen.size) return toast(t("paths.nolayer"), "warn");
+    if (mode === "vectors" ? !vecIds.length : !chosen.size) return toast(mode === "vectors" ? t("paths.novec") : t("paths.nolayer"), "warn");
     tp.name = name.value.trim() || opOf().label;
     tp.op = opSel.value;
-    tp.selection = { mode: "layers", vectors: [], layers: p.layers.filter(l => chosen.has(l.id)).map(l => l.id) };
+    tp.selection = mode === "vectors" ? { mode: "vectors", vectors: vecIds, layers: [] }
+      : { mode: "layers", vectors: [], layers: p.layers.filter(l => chosen.has(l.id)).map(l => l.id) };
     const i = p.toolpaths.findIndex(x => x.id === tp.id);
     if (i >= 0) p.toolpaths[i] = tp; else p.toolpaths.push(tp);
     close(); changed();
@@ -540,7 +544,7 @@ async function openFile(input, replace) {
     const out = await runJob("import", { name: file.name, data_b64, thickness: +($("#thk") && $("#thk").value) || 18, ...(add ? { project: S.project } : {}) });
     S.project = out.project; S.report = out.report;
     S.sheetId = S.project.sheets[0].id; S.views = {};
-    if (!add) { setFile(null); S.tab = out.project.toolpaths.length || out.report.errors.length ? "project" : "paths"; }
+    if (!add) { setFile(null); S.tab = out.project.toolpaths.length || out.report.errors.length ? "project" : "paths"; if (window.IyiPage.editor) window.IyiPage.editor.clear(); }
     changed();
     toast(t("open.done", file.name), "ok");
   } catch (e) { setBusy(null); fail(e); }
@@ -623,7 +627,7 @@ async function openPath(path, replace) {
     if (out.kind === "project") setFile({ path: out.path, hash: out.hash });
     else if (!add) setFile(null);                 // (a drawing added to a project leaves the file of that project as it was)
     store.set("iyicam.dir", dirOf(out.path));
-    if (!add) S.tab = out.project.toolpaths.length || out.report.errors.length ? "project" : "paths";
+    if (!add) { S.tab = out.project.toolpaths.length || out.report.errors.length ? "project" : "paths"; if (window.IyiPage.editor) window.IyiPage.editor.clear(); }
     changed();
     toast(t("files.opened", out.name), "ok");
   } catch (e) { fail(e); } finally { setBusy(null); }
@@ -688,7 +692,8 @@ function viewProject() {
     p ? h("label", { class: "chk" }, addToggle, t("open.add")) : null,
     h("div", { class: "row", style: "margin-top:12px" },
       h("button", { class: "primary grow", onclick: () => { pick.onchange = e => openFile(e.target, !addToggle.checked); pick.click(); } }, "📂 " + t("open.pick")),
-      hasFiles() ? h("button", { class: "grow", onclick: () => guarded(() => openFromComputer(!addToggle.checked)) }, "🖥 " + t("files.open")) : null), pick));
+      hasFiles() ? h("button", { class: "grow", onclick: () => guarded(() => openFromComputer(!addToggle.checked)) }, "🖥 " + t("files.open")) : null,
+      !p && window.IyiPage.editor ? h("button", { class: "grow", onclick: () => guarded(() => window.IyiPage.editor.newProject()) }, t("proj.new")) : null), pick));
   if (S.report) {
     const r = S.report;
     out.push(h("div", { class: "card" }, h("h2", {}, t("report.title")), h("div", {}, r.summary || ""),
@@ -710,8 +715,9 @@ function viewProject() {
       h("button", { class: "small" + (on ? " primary" : ""), onclick: () => { S.sheetId = s.id; render(); } }, on ? "✓" : "○"),
       h("div", { class: "grow" }, h("b", {}, s.name), h("div", { class: "muted small" }, t("proj.vectors", s.vectors.length))),
       h("div", { class: "grid2", style: "width:100%" },
-        h("label", { class: "f" }, h("span", {}, t("proj.width")), w), h("label", { class: "f" }, h("span", {}, t("proj.height")), hh)));
-  }))));
+        h("label", { class: "f" }, h("span", {}, t("proj.width")), w), h("label", { class: "f" }, h("span", {}, t("proj.height")), hh),
+        h("label", { class: "f" }, h("span", {}, t("proj.sheetthk")), thicknessOverride(s))));
+  })), window.IyiPage.editor ? window.IyiPage.editor.sheetTools() : null));
 
   // material
   const m = p.material, zz = h("select", {}, h("option", { value: "top" }, t("proj.top")), h("option", { value: "bottom" }, t("proj.bottom")));
@@ -723,12 +729,20 @@ function viewProject() {
     h("label", { class: "f" }, h("span", {}, t("proj.safez")), numberInput(m.safe_z, v => { m.safe_z = v; touch(); })),
     h("label", { class: "f" }, h("span", {}, t("proj.clear")), numberInput(m.clearance, v => { m.clearance = v; touch(); })),
     h("label", { class: "f" }, h("span", {}, t("proj.zzero")), zz)),
-    h("label", { class: "f" }, h("span", {}, t("proj.origin")), org)));
+    h("label", { class: "f" }, h("span", {}, t("proj.origin")), org),
+    h("div", { class: "group-h" }, t("proj.home")),
+    h("div", { class: "grid2" }, ["X", "Y", "Z"].map((a, i) => h("label", { class: "f" }, h("span", {}, "home " + a),
+      numberInput((m.home || [0, 0, 20])[i], v => { m.home = (m.home || [0, 0, 20]).slice(); m.home[i] = v; touch(); }))),
+      h("label", { class: "f" }, h("span", {}, t("proj.rapid")), numberInput(m.rapid_rate ?? 8000, v => { m.rapid_rate = v; touch(); }))),
+    h("div", { class: "grid2" },
+      (() => { const cb = h("input", { type: "checkbox", checked: !!m.rotary }); cb.onchange = () => { m.rotary = cb.checked; touch(); }; return h("label", { class: "chk" }, cb, t("proj.rotary")); })(),
+      h("label", { class: "f" }, h("span", {}, t("proj.rotdia")), numberInput(m.rotary_diameter ?? 100, v => { m.rotary_diameter = v; touch(); })))));
 
   // layers
   const count = new Map();
   for (const s of p.sheets) for (const v of s.vectors) count.set(v.layer, (count.get(v.layer) || 0) + 1);
-  out.push(h("div", { class: "card" }, h("h2", {}, t("proj.layers")), h("div", { class: "list" }, p.layers.map(l => {
+  if (window.IyiPage.editor) out.push(window.IyiPage.editor.layersCard());      // (edit.js: add, rename, colour, lock, delete)
+  else out.push(h("div", { class: "card" }, h("h2", {}, t("proj.layers")), h("div", { class: "list" }, p.layers.map(l => {
     const cb = h("input", { type: "checkbox", checked: l.visible });
     cb.onchange = () => { l.visible = cb.checked; persist(); };
     return h("label", { class: "item" }, h("span", { class: "dot", style: `background:${l.color}` }), h("span", { class: "grow" }, l.name), h("span", { class: "badge" }, count.get(l.id) || 0), cb);
@@ -739,8 +753,15 @@ function viewProject() {
     S.file ? h("button", { onclick: () => guarded(() => saveProject(true)) }, t("files.saveAs")) : null));
   out.push(h("div", { class: "row" },
     h("button", { class: "grow", onclick: () => download((p.name || "project").replace(/[^\w .-]+/g, "_") + ".icam", new Blob([JSON.stringify(p)], { type: "application/json" })) }, "💾 " + t("proj.save")),
-    h("button", { class: "danger", onclick: () => { if (confirm(t("proj.closeask"))) { S.project = null; S.report = null; S.views = {}; setFile(null); changed(); } } }, t("proj.close"))));
+    h("button", { class: "danger", onclick: () => { if (confirm(t("proj.closeask"))) { S.project = null; S.report = null; S.views = {}; setFile(null); if (window.IyiPage.editor) window.IyiPage.editor.clear(); changed(); } } }, t("proj.close"))));
   return h("div", {}, out);
+}
+
+/** the thickness of one sheet when it is not the material's (empty: the material's) */
+function thicknessOverride(s) {
+  const el = h("input", { type: "number", inputmode: "decimal", step: "any", value: s.thickness ?? "", placeholder: fmt(S.project.material.thickness, 2) });
+  el.addEventListener("input", () => { s.thickness = Number.isFinite(el.valueAsNumber) ? el.valueAsNumber : null; touch(); });
+  return el;
 }
 
 function viewDraw() {
@@ -751,8 +772,17 @@ function viewDraw() {
     sel.value = s.id; sel.onchange = () => { S.sheetId = sel.value; render(); };
     wrap.append(sel);
   }
-  wrap.append(s.vectors.length || S.results ? drawStage(s) : h("div", { class: "empty" }, t("draw.none")));
+  const ed = window.IyiPage.editor;
+  if (ed) wrap.append(ed.stage(s));                         // (edit.js: the drawing with its tools)
+  else wrap.append(s.vectors.length || S.results ? drawStage(s) : h("div", { class: "empty" }, t("draw.none")));
   return wrap;
+}
+
+function moveToolpath(tp, d) {                       // (the order of the toolpaths is the order in the G-code)
+  const list = S.project.toolpaths, i = list.indexOf(tp), j = i + d;
+  if (j < 0 || j >= list.length) return;
+  list.splice(i, 1); list.splice(j, 0, tp);
+  changed();
 }
 
 function viewPaths() {
@@ -763,6 +793,9 @@ function viewPaths() {
     cb.onchange = () => { tp.enabled = cb.checked; touch(); };
     return h("div", { class: "item" }, cb,
       h("div", { class: "grow" }, h("b", {}, tp.name), h("div", { class: "muted small" }, `${op ? op.label : tp.op} · ${tp.tool.name}`)),
+      h("button", { class: "small", title: t("paths.up"), "aria-label": t("paths.up"), onclick: () => moveToolpath(tp, -1) }, "↑"),
+      h("button", { class: "small", title: t("paths.down"), "aria-label": t("paths.down"), onclick: () => moveToolpath(tp, 1) }, "↓"),
+      h("button", { class: "small", title: t("paths.dup"), "aria-label": t("paths.dup"), onclick: () => { const c = JSON.parse(JSON.stringify(tp)); c.id = newId(); c.name = tp.name + " (2)"; if (c.sequence) delete c.sequence.order; p.toolpaths.splice(p.toolpaths.indexOf(tp) + 1, 0, c); changed(); } }, "⧉"),
       h("button", { class: "small", onclick: () => editToolpath(tp) }, "✎"));
   });
   return h("div", {}, h("div", { class: "card" },
@@ -914,6 +947,10 @@ async function start() {
   if (S.project) S.sheetId = S.project.sheets[0].id;
   mountApp();
 }
+
+// what edit.js (the drawing tools) needs of this file; it adds ``editor`` to it
+window.IyiPage = { S, h, $, t, TXT, api, runJob, toast, fail, openSheet, paramsForm, numberInput, fmt, store, guarded, render, touch,
+                   persist, changed, activeSheet, layerMap, flatOf, drawScene, fitView, setFile, editor: null };
 
 (async () => {
   let note;

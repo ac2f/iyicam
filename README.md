@@ -172,8 +172,9 @@ G-code, simulation and nesting, with the project passed as data and long work as
 [CNC-Assistant](https://github.com/ac2f/Cnc-Assistant) mobile page uses it to open the drawings on a computer from a
 phone; see [docs/service.md](docs/service.md).
 
-`iyicam serve` puts that service behind a web page of its own, with a key: open a drawing on a phone, add toolpaths,
-calculate, write G-code and download it, with nothing else installed (no Qt, no CNC-Assistant); the page can also
+`iyicam serve` puts that service behind a web page of its own, with a key: open a drawing on a phone, **edit it**
+(select, move, draw, edit nodes, every vector command of the program, nesting, undo), add toolpaths with their cut
+order, calculate, write G-code and download it, with nothing else installed (no Qt, no CNC-Assistant); the page can also
 browse, open and save files of the computer it runs on, inside the folders you name (`--root`); see
 [docs/web.md](docs/web.md). On a Linux server `packaging/linux/install.sh` installs it as a systemd service
 (`iyicam-web`), and ready-made Caddy, nginx and HAProxy examples put HTTPS in front of it

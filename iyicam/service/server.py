@@ -187,7 +187,22 @@ class Handler(BaseHTTPRequestHandler):
                 return value
         return None
 
+    def _drain(self) -> None:
+        """A request that is refused before its body was read: the little there is is read first, because closing a
+        connection with unread data resets it and the client would lose the answer (Windows does this at once)."""
+        if getattr(self, "_body_taken", False):
+            return
+        self._body_taken = True
+        try:
+            n = int(self.headers.get("Content-Length", "0") or 0)
+            if 0 < n <= 1 << 20:
+                self.rfile.read(n)
+        except (ValueError, OSError):
+            pass
+
     def _send(self, status: int, body: bytes, ctype: str, headers: dict | None = None, close: bool = False) -> None:
+        if close:
+            self._drain()
         if len(body) > 1024 and "gzip" in self.headers.get("Accept-Encoding", "") and \
                 (ctype.startswith(("text/", "application/json", "image/svg"))):
             body = gzip.compress(body, 5)
@@ -233,6 +248,7 @@ class Handler(BaseHTTPRequestHandler):
                        close=True, limit_bytes=self.server.max_body)
             return None
         raw = self.rfile.read(length) if length else b""
+        self._body_taken = True
         if len(raw) != length:
             self.close_connection = True
             return None
@@ -279,6 +295,7 @@ class Handler(BaseHTTPRequestHandler):
 
     # -- POST -----------------------------------------------------------------------------
     def do_POST(self) -> None:          # noqa: N802
+        self._body_taken = False
         path = urlsplit(self.path).path
         if path.startswith("/agent/"):
             return self._agent(path[len("/agent/"):])
