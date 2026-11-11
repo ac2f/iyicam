@@ -32,7 +32,6 @@ include = ["iyicam*"]
 
 [tool.setuptools.package-data]
 "iyicam.post" = ["builtin/*.toml"]
-"iyicam.web" = ["*.html", "*.js", "*.css", "*.svg"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
