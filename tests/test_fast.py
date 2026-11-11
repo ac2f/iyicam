@@ -264,6 +264,40 @@ def test_a_path_is_read_in_one_go_to_the_same_points():
         parser._points(cn._R(b"\0" * 7), 1)
 
 
+def test_an_agent_sends_plain_to_a_hub_that_does_not_know_gzip():
+    """A hub of the version before this one answers "not valid JSON" to a gzipped body: the agent tells it plain."""
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    seen = []
+
+    class Old(BaseHTTPRequestHandler):
+        def do_POST(self):                                              # noqa: N802
+            raw = self.rfile.read(int(self.headers["Content-Length"]))
+            seen.append(self.headers.get("Content-Encoding"))
+            try:
+                json.loads(raw.decode("utf-8"))
+                code, out = 200, b'{"ok":true}'
+            except (UnicodeDecodeError, ValueError):
+                code, out = 400, b'{"error":"bad_request","message":"the body is not valid JSON"}'
+            self.send_response(code)
+            self.send_header("Content-Length", str(len(out)))
+            self.end_headers()
+            self.wfile.write(out)
+
+        def log_message(self, *a):
+            pass
+
+    httpd = HTTPServer(("127.0.0.1", 0), Old)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    try:
+        a = agent_mod.Agent(f"http://127.0.0.1:{httpd.server_address[1]}", "K", uuid.uuid4().hex, "ABCDEF-GHJKMN-PQRSTU-VWXYZ2")
+        code, out = a.request("/agent/reply", {"pad": "x" * 10000}, 10)
+        assert (code, out) == (200, {"ok": True}) and seen == ["gzip", None] and a._gzip_ok is False
+        assert a.request("/agent/reply", {"pad": "y" * 10000}, 10)[0] == 200 and seen == ["gzip", None, None]   # (plain from now on)
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
 # -- a hub and an agent: big answers go gzipped ----------------------------------------------------------------------------------
 
 def test_a_big_answer_and_a_big_call_go_through_the_hub_gzipped(tmp_path, monkeypatch):

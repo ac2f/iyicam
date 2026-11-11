@@ -130,6 +130,7 @@ class Agent:
         self.echo = echo                                      # also print to the console
         self.max_body = 64 * 1024 * 1024                       # (the hub tells at registration)
         self._service, self._files, self._use_files, self._roots = service, files, use_files, roots
+        self._gzip_ok = True                                  # (until a hub shows that it does not take gzipped bodies)
         self._engine_lock = threading.Lock()
         self._state_lock = threading.Lock()
         self._lock = threading.Lock()
@@ -184,11 +185,22 @@ class Agent:
     # -- talking to the hub --------------------------------------------------------------------
     def _post(self, path: str, data: bytes, timeout: float) -> tuple[int, bytes]:
         """One call to the hub: a body over a few KB goes gzipped (a drawing is mostly numbers: a fifth of the size) and
-        the answer may come gzipped too."""
+        the answer may come gzipped too.  A hub of an older version does not take a gzipped body ("not valid JSON"): it
+        is told the same plainly, and plain from then on."""
+        if len(data) > GZIP_FROM and self._gzip_ok:
+            code, raw = self._send(path, gzip.compress(data, 3), timeout, True)
+            if code == 400 and b"not valid JSON" in raw:
+                self._gzip_ok = False
+                self.log("the hub does not take gzipped bodies (an older version): sending them plain")
+                return self._send(path, data, timeout, False)
+            return code, raw
+        return self._send(path, data, timeout, False)
+
+    def _send(self, path: str, data: bytes, timeout: float, gzipped: bool) -> tuple[int, bytes]:
         headers = {"Content-Type": "application/json", "X-Server-Key": self.server_key, "User-Agent": USER_AGENT,
                    "Accept-Encoding": "gzip"}
-        if len(data) > GZIP_FROM:
-            data, headers["Content-Encoding"] = gzip.compress(data, 3), "gzip"
+        if gzipped:
+            headers["Content-Encoding"] = "gzip"
         req = urllib.request.Request(self.server_url + path, data=data, method="POST", headers=headers)
         try:
             with urllib.request.urlopen(req, timeout=timeout) as r:
