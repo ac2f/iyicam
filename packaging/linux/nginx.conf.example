@@ -1,0 +1,50 @@
+# nginx example for the iyiCAM web service (HTTPS, host-based routing).
+#
+# The page uses root paths (/api/..., /static/...), so it needs its OWN host name
+# (iyicam.example.com); path based routing (example.com/iyicam/) does not work.
+#
+# Install:  sudo cp packaging/linux/nginx.conf.example /etc/nginx/sites-available/iyicam
+#           (edit the host name + certificate paths)
+#           sudo ln -s /etc/nginx/sites-available/iyicam /etc/nginx/sites-enabled/
+#           sudo nginx -t && sudo systemctl reload nginx
+# Certificate (Let's Encrypt), for example:
+#           sudo certbot certonly --webroot -w /var/www/html -d iyicam.example.com
+#
+# The iyiCAM service listens on 127.0.0.1:8300 only (packaging/linux/install.sh) and runs with
+# --trust-proxy: it believes the headers below, so they must be OVERWRITTEN here, never passed through.
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name iyicam.example.com;
+
+    location /.well-known/acme-challenge/ { root /var/www/html; }   # certbot
+    location / { return 301 https://$host$request_uri; }
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name iyicam.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/iyicam.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/iyicam.example.com/privkey.pem;
+
+    # A drawing travels as base64 in the request; the service accepts 64 MB by default (--max-upload-mb).
+    client_max_body_size 64m;
+
+    location / {
+        proxy_pass http://127.0.0.1:8300;
+        proxy_http_version 1.1;
+
+        proxy_set_header Host $host;
+        # With "https" the service marks the session cookie "Secure".
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # The service limits wrong keys per client address with this header.
+        proxy_set_header X-Forwarded-For $remote_addr;
+
+        # A big calculation or simulation can take a while.
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+    }
+}

@@ -5,9 +5,11 @@ needs none of the files of the computer it runs on (the drawing is opened from t
 to it). Everything is the [service](service.md) behind a web page.
 
 ```bash
-pip install iyicam            # no Qt needed
+python -m pip install -e .    # in a checkout of this repository; no Qt needed
 iyicam serve --host 0.0.0.0   # the computer and every phone on the same Wi-Fi
 ```
+
+(On Windows `packaging\web_windows.bat` does both. For a Linux server see [A server](#a-server-linux-systemd-and-https).)
 
 ```
 iyiCAM web service on port 8300
@@ -65,54 +67,49 @@ service (`command`, `nest`) and in the desktop program.
 * Whoever has the key can use the engine of this computer (CPU time, memory), not its files. Keep it private; a new key
   (`--new-key`) is one command.
 
-## From anywhere: HTTPS in front
+## A server (Linux, systemd and HTTPS)
 
-The engine needs no files of the computer, so the server can run on **any** machine, a small Linux server for example:
-`pip install iyicam`, then `iyicam serve --trust-proxy` (it listens on `127.0.0.1:8300` only) and a reverse proxy that
-adds HTTPS. With Caddy:
+The engine needs no files of the computer, so the service can run on **any** machine, a small Linux server for
+example, and be reached from anywhere. It is its own service: it needs nothing of the CNC-Assistant, and it can run
+on the same server next to it (other port, other host name).
 
-```
-iyicam.example.com {
-    reverse_proxy 127.0.0.1:8300
-}
+```bash
+git clone <this repository> /opt/iyicam        # not under /root or /home: the service user must read it
+sudo bash /opt/iyicam/packaging/linux/install.sh
 ```
 
-nginx needs the headers that `--trust-proxy` reads, and no buffering of big uploads:
+`packaging/linux/install.sh` finds Python 3.11 or newer (Debian 12 and Ubuntu 24.04 have it; the script installs it
+with apt when it is missing), makes the service user `iyicam` and a venv in the checkout, installs iyiCAM (core only,
+no Qt), and installs and starts the systemd service **`iyicam-web`**, which also starts at boot. It is safe to run
+again: after a `git pull` the same command updates it. Settings are environment variables:
+`sudo IYICAM_PORT=8301 bash ...` (port, default 8300), `IYICAM_HOST` (address, default `127.0.0.1`), `PYTHON`
+(for example `python3.12`).
 
-```
-server {
-    server_name iyicam.example.com;           # (certificate: certbot / your usual way)
-    client_max_body_size 64m;
-    location / {
-        proxy_pass http://127.0.0.1:8300;
-        proxy_set_header Host $host;
-        proxy_set_header X-Forwarded-For $remote_addr;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_read_timeout 300s;
-    }
-}
-```
+| | |
+|---|---|
+| the key | `sudo cat /var/lib/iyicam/server.key` (made at the first start; this is the key typed on the page) |
+| a new key | `sudo -u iyicam IYICAM_HOME=/var/lib/iyicam /opt/iyicam/venv/bin/iyicam serve --new-key` (signed-in browsers are signed out at once) |
+| status, log | `systemctl status iyicam-web`, `journalctl -u iyicam-web -f` |
+| more memory | the service is limited to 2 GB; `systemctl edit iyicam-web` and set `MemoryMax=` |
+| remove | `sudo bash packaging/linux/uninstall.sh` (`--full` also deletes the key, the venv and the user) |
+
+By default the service listens on `127.0.0.1:8300` **only** and runs with `--trust-proxy`; a reverse proxy in front adds
+HTTPS (the page needs a **host name of its own**, `iyicam.example.com` for example, because it uses root paths). Ready
+to copy, with the headers set the way `--trust-proxy` needs them:
+
+* `packaging/linux/Caddyfile.example` — Caddy (the shortest: certificate included)
+* `packaging/linux/nginx.conf.example` — nginx (+ certbot)
+* `packaging/linux/haproxy.cfg.example` — HAProxy (a host rule and a backend for an existing frontend)
 
 `--trust-proxy` makes the server believe `X-Forwarded-For` / `X-Forwarded-Proto`, so use it only when the server can be
 reached through the proxy alone (it listens on `127.0.0.1`). Without it a client could name any address to escape the
-limit on wrong keys.
+limit on wrong keys. For that reason the installer leaves `--trust-proxy` off when `IYICAM_HOST` is another address
+(`0.0.0.0`, say), and then the service speaks plain HTTP on that network.
 
-A service on Linux (`/etc/systemd/system/iyicam-web.service`):
-
-```
-[Unit]
-Description=iyiCAM web service
-After=network.target
-
-[Service]
-User=iyicam
-ExecStart=/opt/iyicam/venv/bin/iyicam serve --trust-proxy --quiet
-Restart=on-failure
-Environment=IYICAM_HOME=/var/lib/iyicam
-
-[Install]
-WantedBy=multi-user.target
-```
+When something is wrong: `curl http://127.0.0.1:8300/health` answers `ok` on the server itself; through the proxy
+`curl https://iyicam.example.com/health` does too. A page that loads but answers "the request came from another site"
+(403 `bad_origin`) when the key is typed means the proxy replaced the `Host` header: the page's address and the `Host`
+the service sees must be the same (nginx needs `proxy_set_header Host $host;`, as the example has).
 
 ## For programs
 

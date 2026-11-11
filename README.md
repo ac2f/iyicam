@@ -174,7 +174,9 @@ phone; see [docs/service.md](docs/service.md).
 
 `iyicam serve` puts that service behind a web page of its own, with a key: open a drawing on a phone, add toolpaths,
 calculate, write G-code and download it, with nothing else installed (no Qt, no CNC-Assistant); see
-[docs/web.md](docs/web.md).
+[docs/web.md](docs/web.md). On a Linux server `packaging/linux/install.sh` installs it as a systemd service
+(`iyicam-web`), and ready-made Caddy, nginx and HAProxy examples put HTTPS in front of it
+([how](docs/web.md#a-server-linux-systemd-and-https)).
 
 ## Installation
 

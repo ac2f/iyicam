@@ -1,0 +1,5 @@
+# Scripts and unit files run on Linux: keep LF even in a Windows checkout (autocrlf would make them CRLF and
+# "bash\r: command not found" follows when they are copied to a server).
+*.sh      text eol=lf
+*.service text eol=lf
+*.example text eol=lf

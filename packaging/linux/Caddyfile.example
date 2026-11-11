@@ -1,0 +1,17 @@
+# Caddy example for the iyiCAM web service: HTTPS (certificate included) in front of 127.0.0.1:8300.
+#
+# The page uses root paths (/api/..., /static/...), so it needs its OWN host name; path based routing does not work.
+# The service runs with --trust-proxy (packaging/linux/install.sh), so it reads X-Forwarded-For / -Proto from
+# Caddy, which sets them itself.
+#
+#   sudo cp packaging/linux/Caddyfile.example /etc/caddy/Caddyfile      (or add the block to yours)
+#   sudo systemctl reload caddy
+
+iyicam.example.com {
+    reverse_proxy 127.0.0.1:8300 {
+        # A big calculation or simulation can take a while.
+        transport http {
+            response_header_timeout 300s
+        }
+    }
+}

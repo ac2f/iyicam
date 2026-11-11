@@ -1,0 +1,25 @@
+# HAProxy example for the iyiCAM web service (host-based routing).
+# The page uses root paths (/api/..., /static/...), so DOMAIN-NAME based routing is
+# needed, not path based routing.
+#
+# --- add to your existing "frontend" block (next to the ACL lines) ---
+#     acl host_iyicam hdr(host),host_only -i iyicam.example.com
+#     use_backend be_iyicam if host_iyicam
+#   (if you have a rule that returns 404 for unknown hosts, also add host_iyicam
+#    to its "unless ... or host_iyicam" list)
+#
+# --- new backend ---
+backend be_iyicam
+    option httpchk
+    http-check send meth GET uri /health
+    http-check expect status 200
+    # A big calculation or simulation can take a while; the server timeout must be above that.
+    timeout server 300s
+    # The service (it runs with --trust-proxy, packaging/linux/install.sh) limits wrong keys per client address
+    # with X-Forwarded-For and marks the session cookie "Secure" when X-Forwarded-Proto is https. OVERWRITE them
+    # (never pass through what the client sent), otherwise a client could fake its address.
+    # (If TLS is terminated by something in front of HAProxy, set X-Forwarded-Proto there instead.)
+    http-request set-header X-Forwarded-For %[src]
+    http-request set-header X-Forwarded-Proto https if { ssl_fc }
+    http-request set-header X-Forwarded-Proto http unless { ssl_fc }
+    server iyicam 127.0.0.1:8300 check inter 5s fall 3 rise 2

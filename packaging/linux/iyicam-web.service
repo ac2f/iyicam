@@ -1,0 +1,54 @@
+# iyiCAM web service (systemd). packaging/linux/install.sh fills in this template
+# and installs it as /etc/systemd/system/iyicam-web.service.
+[Unit]
+Description=iyiCAM web service (the CAM engine behind a page for a phone or any browser)
+After=network.target
+
+[Service]
+Type=simple
+User=@SERVICE_USER@
+Group=@SERVICE_USER@
+WorkingDirectory=@APP@
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+# Everything iyiCAM keeps (the key in server.key, user posts, tools, plugins) lives here. The system user has no
+# real home directory, so libraries that look at HOME get the same place.
+Environment=IYICAM_HOME=/var/lib/iyicam
+Environment=HOME=/var/lib/iyicam
+
+# Runs with the venv python. By default it listens on 127.0.0.1 only and a reverse proxy adds HTTPS;
+# @PROXY@ is "--trust-proxy" exactly in that case (see docs/web.md before listening on another address).
+# The key is made at the first start (/var/lib/iyicam/server.key) and stays valid until it is replaced
+# with:  iyicam serve --new-key  (a running server notices it at once).
+ExecStart=@APP@/venv/bin/python -m iyicam serve --host @HOST@ --port @PORT@ @PROXY@ --quiet
+
+Restart=on-failure
+RestartSec=3
+StateDirectory=iyicam
+StateDirectoryMode=0700
+UMask=0077
+# The engine can take a lot of memory for a big drawing or a big nesting; raise it with
+#   systemctl edit iyicam-web
+MemoryMax=2G
+
+# Hardening: the service needs the network and its own state directory, nothing else.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target
