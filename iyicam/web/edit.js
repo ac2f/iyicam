@@ -63,6 +63,20 @@
     "seq.auto": "Sırayı otomatik düzenle", "seq.strategy": "Sıra stratejisi", "seq.grouping": "Gruplama", "seq.direction": "Kesim yönü",
     "seq.band": "Şerit genişliği (mm, 0 = otomatik)", "seq.smart": "Akıllı başlangıç noktaları", "seq.margin": "Başlangıç payı (mm)",
     "seq.corner": "Köşeden uzaklık (mm)",
+    "ed.shift": "Shift tuşu (taklit): seçime ekle / çıkar; çizerken merkezden çizer; kaydırma düğmeleri 10 kat",
+    "ed.ctrl": "Ctrl tuşu (taklit): seçime ekle / çıkar; taşırken yatay-dikey kilitler; çizerken düz tutar (kare, daire, 15° adım)",
+    "ed.alt": "Alt tuşu (taklit): dokununca altındaki vektörü seç; kutuyla değenleri seç; o hareket için yakalamayı kapatır",
+    "ed.s.shift": "Shift", "ed.s.ctrl": "Ctrl", "ed.s.alt": "Alt", "ed.mod.once": "{0}: bir sonraki işlem için basılı", "ed.mod.lock": "{0}: kilitli, kapatmak için bir daha dokun",
+    "ed.mod.off": "{0}: kapalı", "ed.s.fold": "Daralt", "ed.fold": "Düğme satırlarını daralt / aç", "ed.s.ref": "Nokta",
+    "ed.goto": "Seçimi yazdığın koordinata taşı", "ed.s.goto": "Taşı", "ed.coord": "Koordinat satırını aç / kapat", "ed.s.coord": "Konum",
+    "ed.ref": "Referans noktası: yazdığın koordinat seçimin bu noktasına gelir", "ed.step": "Kaydırma adımı (mm)", "ed.nudge": "Seçimi {0} mm kaydır (Shift ile 10 kat)",
+    "ref.tl": "↖ Sol-üst", "ref.tc": "↑ Üst orta", "ref.tr": "↗ Sağ-üst", "ref.ml": "← Sol orta", "ref.mc": "● Merkez", "ref.mr": "→ Sağ orta",
+    "ref.bl": "↙ Sol-alt", "ref.bc": "↓ Alt orta", "ref.br": "↘ Sağ-alt", "ed.moved": "Seçim ({0}, {1}) konumuna taşındı",
+    "ed.layers": "Katmanlar: sırala, tümünü seç, gizle, kilitle", "ed.s.layers": "Katman",
+    "lay.title": "Katmanlar", "lay.select": "Bu katmandaki tüm vektörleri seç", "lay.up": "Katmanı yukarı al", "lay.down": "Katmanı aşağı al",
+    "lay.selected": "{0} vektör seçildi ({1})", "lay.empty": "Bu sayfada bu katmanda vektör yok.", "lay.hidden": "Katman gizli ya da kilitli; önce göster / kilidini aç.",
+    "lay.vis": "Göster / gizle", "lay.hint": "◉ çizim katmanı: yeni vektörler buna çizilir. ↑ ↓ sırayı değiştirir, ◎ katmandaki tüm vektörleri seçer.",
+    "help.mods": "Shift / Ctrl / Alt (telefonda tuş yok: bir kez dokun = sonraki işlem için, iki kez = kilitli, üç kez = kapalı)", "help.coord": "Koordinat satırı (bir şey seçiliyken)",
   });
   Object.assign(TXT.en, {
     "ed.view": "View: drag to pan, tap to select", "ed.select": "Select with a box (left to right: only what is inside, right to left: what it touches)",
@@ -116,6 +130,20 @@
     "seq.auto": "Order the cuts automatically", "seq.strategy": "Order strategy", "seq.grouping": "Grouping", "seq.direction": "Cutting direction",
     "seq.band": "Band width (mm, 0 = automatic)", "seq.smart": "Smart start points", "seq.margin": "Start margin (mm)",
     "seq.corner": "Distance from a corner (mm)",
+    "ed.shift": "Shift key (emulated): add to / remove from the selection; draws from the centre; the nudge buttons go 10 times as far",
+    "ed.ctrl": "Ctrl key (emulated): add to / remove from the selection; keeps a move horizontal or vertical; keeps a shape regular (square, circle, 15° steps)",
+    "ed.alt": "Alt key (emulated): a tap picks the vector behind; a box takes what it touches; switches snapping off for that gesture",
+    "ed.s.shift": "Shift", "ed.s.ctrl": "Ctrl", "ed.s.alt": "Alt", "ed.mod.once": "{0}: held for the next action", "ed.mod.lock": "{0}: locked, tap again to release",
+    "ed.mod.off": "{0}: off", "ed.s.fold": "Fold", "ed.fold": "Fold / unfold the rows of buttons", "ed.s.ref": "Point",
+    "ed.goto": "Move the selection to the coordinates you typed", "ed.s.goto": "Move", "ed.coord": "Show / hide the coordinate row", "ed.s.coord": "Position",
+    "ed.ref": "Reference point: the coordinates you type are those of this point of the selection", "ed.step": "Nudge step (mm)", "ed.nudge": "Nudge the selection by {0} mm (10 times with Shift)",
+    "ref.tl": "↖ Top-left", "ref.tc": "↑ Top middle", "ref.tr": "↗ Top-right", "ref.ml": "← Left middle", "ref.mc": "● Centre", "ref.mr": "→ Right middle",
+    "ref.bl": "↙ Bottom-left", "ref.bc": "↓ Bottom middle", "ref.br": "↘ Bottom-right", "ed.moved": "The selection was moved to ({0}, {1})",
+    "ed.layers": "Layers: reorder, select all of one, show, lock", "ed.s.layers": "Layers",
+    "lay.title": "Layers", "lay.select": "Select all the vectors of this layer", "lay.up": "Move the layer up", "lay.down": "Move the layer down",
+    "lay.selected": "{0} vector(s) selected ({1})", "lay.empty": "This layer has no vectors on this sheet.", "lay.hidden": "The layer is hidden or locked; show it / unlock it first.",
+    "lay.vis": "Show / hide", "lay.hint": "◉ the drawing layer: new vectors go on it. ↑ ↓ change the order, ◎ selects every vector of the layer.",
+    "help.mods": "Shift / Ctrl / Alt (a phone has no keys: tap once = for the next action, twice = locked, three times = off)", "help.coord": "The coordinate row (with something selected)",
   });
 
   // ------------------------------------------------------------------------------------------ state
@@ -123,7 +151,22 @@
     tool: "view", sel: new Set(), multi: false, snap: true, grid: 0, sides: 6, layer: null, sheetId: null, order: false,
     labels: B.store.get("iyicam.labels") !== "0", tf: null,
     undo: [], redo: [], clip: null, pastes: 0, node: null, insert: false, poly: [], ghost: null, mark: null, rubber: null,
+    mod: { shift: 0, ctrl: 0, alt: 0 },            // the keys a phone does not have: 0 off, 1 held for the next action, 2 locked
+    coord: B.store.get("iyicam.coord") !== "0", ref: B.store.get("iyicam.ref") || "bl", step: +B.store.get("iyicam.step") || 1,
+    fold: B.store.get("iyicam.fold") === null ? innerHeight < 520 : B.store.get("iyicam.fold") === "1",       // (a phone on its side starts with the rows folded)
   };
+  // ---- Shift, Ctrl and Alt: the real keys (a mouse, a keyboard) and the buttons that stand for them (a phone)
+  const MODS = ["shift", "ctrl", "alt"];
+  /** which of the three keys count for this event: the key is down, or its button is on */
+  function mods(e) {
+    return { shift: E.mod.shift > 0 || !!(e && e.shiftKey), ctrl: E.mod.ctrl > 0 || !!(e && (e.ctrlKey || e.metaKey)), alt: E.mod.alt > 0 || !!(e && e.altKey) };
+  }
+  /** a button that was held for one action lets go of it (a locked one stays); true when something changed */
+  function releaseMods() {
+    let any = false;
+    for (const k of MODS) if (E.mod[k] === 1) { E.mod[k] = 0; any = true; }
+    return any;
+  }
   const sheet = () => B.activeSheet();
   const layerOf = v => B.layerMap(S.project).get(v.layer);
   const usable = v => { const l = layerOf(v); return !l || (l.visible && !l.locked); };      // (a hidden or locked layer is not touched)
@@ -160,7 +203,7 @@
     S.project.sheets.forEach((sh, i) => { sh.vectors = s.vec[i] || []; });
     S.sheetId = S.project.sheets.some(x => x.id === s.sheet) ? s.sheet : S.project.sheets[0].id;
     E.sel = new Set(s.sel); E.node = null; E.poly = [];
-    keepSelection(); B.changed();
+    keepSelection(); B.changed(); refreshLayers();
   }
   function undo() { const s = E.undo.pop(); if (!s) return; E.redo.push(snapshot()); restore(s); toast(t("ed.undone")); }
   function redo() { const s = E.redo.pop(); if (!s) return; E.undo.push(snapshot()); restore(s); toast(t("ed.redone")); }
@@ -389,7 +432,7 @@
       ctx.fillStyle = r.crossing ? "rgba(22,163,74,.12)" : "rgba(37,99,235,.12)";
       ctx.setLineDash(r.crossing ? [4 * px, 3 * px] : []);
       ctx.fillRect(r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0); ctx.strokeRect(r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0); ctx.setLineDash([]);
-    } else { ctx.strokeStyle = ACCENT; ctx.lineWidth = 2 * px; strokeContour(ctx, r.contour); }
+    } else if (r.contour) { ctx.strokeStyle = ACCENT; ctx.lineWidth = 2 * px; strokeContour(ctx, r.contour); }
   }
   function strokeContour(ctx, c) {
     ctx.beginPath();
@@ -410,7 +453,9 @@
     const cv = h("canvas", { "aria-label": "drawing" });
     const stageEl = h("div", { class: "stage" }, cv);
     const wrap = h("div", { class: "edstage" });
-    const bars = h("div", { class: "edbars" });
+    const bars = h("div", { class: "edbars" });         // (the tools and the switches: over the drawing)
+    const dock = h("div", { class: "eddock" });         // (what can be done to the selection, and its coordinates: under the drawing, near the thumb and the keyboard;
+                                                        //  when it comes and goes the drawing stays where it is)
     let view = S.views[sh.id], raf = 0;
     // A big drawing (tens of thousands of segments) is not drawn again at every frame of a gesture: the picture that was
     // on the screen is moved and scaled instead, and the drawing is made once more when the finger is up.
@@ -420,7 +465,7 @@
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(() => {
         if (!cv.isConnected) return;
-        if (!view) view = S.views[sh.id] = B.fitView(cv, sh);
+        if (!view) refit();
         if (gesturing && snap) return drawSnap();
         B.drawScene(cv, sh, view, { skip: skipIds(), overlay });
       });
@@ -439,6 +484,8 @@
       ctx.setTransform(dpr * view.s, 0, 0, -dpr * view.s, dpr * view.ox, dpr * view.oy);
       if (E.ghost || E.rubber || E.mark) overlay(ctx, view, 1 / view.s, false, cv.clientWidth, cv.clientHeight);          // (what is being drawn or moved goes on top)
     }
+    /** the whole sheet in the canvas; ``view.top`` is where the canvas was on the screen, to keep the drawing still when the bars above it change */
+    const refit = () => { view = S.views[sh.id] = B.fitView(cv, sh); view.top = cv.getBoundingClientRect().top; };
     const toWorld = (px, py) => [(px - view.ox) / view.s, (view.oy - py) / view.s];
     const tol = () => 14 / view.s;
     const zoomAt = (cx, cy, f) => { f = Math.min(40, Math.max(0.2, f)); view.ox = cx - (cx - view.ox) * f; view.oy = cy - (cy - view.oy) * f; view.s *= f; };
@@ -447,8 +494,11 @@
     let lastGhost = null;                          // where a move in progress would land
 
     const hitVector = (x, y, only) => G.hit(sh.vectors, B.flatOf, x, y, tol(), v => usable(v) && (!only || only(v)));
-    function tapSelect(x, y, additive) {
-      const id = hitVector(x, y);
+    /** every vector under the finger, the nearest first; Alt walks through them (the one behind the one that is selected) */
+    const hitStack = (x, y) => G.hitAll(sh.vectors, B.flatOf, x, y, tol(), usable);
+    function tapSelect(x, y, additive, behind) {
+      let id = hitVector(x, y);
+      if (id && behind) { const stack = hitStack(x, y); id = G.nextAfter(stack, [...E.sel].find(i => stack.includes(i))); }
       if (id) {
         if (additive) { if (E.sel.has(id)) E.sel.delete(id); else E.sel.add(id); } else E.sel = new Set([id]);
       } else if (!additive) E.sel = new Set();
@@ -456,17 +506,22 @@
       refresh();
     }
     function refresh() { fillBars(); redraw(); }
+    /** a point of the drawing: snapped to what is near, unless Alt is down (then exactly where the finger is) */
+    function pick(p, list, m) {
+      if (m.alt) { E.mark = null; return p; }
+      return snapPoint(p, list, tol());
+    }
 
     function start(e) {
-      const [x, y] = toWorld(e.offsetX, e.offsetY), tool = E.tool;
-      g = { tool, sx: e.offsetX, sy: e.offsetY, x0: x, y0: y, moved: false, pan: false, shift: e.shiftKey };
+      const [x, y] = toWorld(e.offsetX, e.offsetY), tool = E.tool, m = mods(e);
+      g = { tool, sx: e.offsetX, sy: e.offsetY, x0: x, y0: y, moved: false, pan: false };
       if (tool === "view" || tool === "start") g.pan = true;
       else if (tool === "select") { g.kind = "box"; E.rubber = { kind: "box", x0: x, y0: y, x1: x, y1: y, crossing: false }; }
       else if (tool === "move") {
         const id = hitVector(x, y);
-        if (id && !E.sel.has(id)) { if (!(e.shiftKey || E.multi)) E.sel = new Set([id]); else E.sel.add(id); fillBars(); }
+        if (id && !E.sel.has(id)) { if (!(m.shift || m.ctrl || E.multi)) E.sel = new Set([id]); else E.sel.add(id); }    // (the bars follow when the finger is up)
         if (id && E.sel.has(id)) { g.kind = "move"; g.cands = cands(E.sel); g.bb = selBox(); E.ghost = { dx: 0, dy: 0 }; lastGhost = null; } else g.pan = true;
-      } else if (DRAW_TOOLS.has(tool)) { g.kind = "draw"; g.cands = cands(null); g.p0 = snapPoint([x, y], g.cands, tol()); }
+      } else if (DRAW_TOOLS.has(tool)) { g.kind = "draw"; g.cands = cands(null); g.p0 = pick([x, y], g.cands, m); }
       else if (tool === "poly") { g.kind = "poly"; g.cands = cands(null); }
       else if (tool === "nodes") {
         const hit = nodeHit(x, y, tol());
@@ -477,49 +532,54 @@
       redraw();
     }
     function drag(e) {
-      const x = (e.offsetX - view.ox) / view.s, y = (view.oy - e.offsetY) / view.s;
+      const x = (e.offsetX - view.ox) / view.s, y = (view.oy - e.offsetY) / view.s, m = mods(e);
       if (Math.hypot(e.offsetX - g.sx, e.offsetY - g.sy) > 5) g.moved = true;
       if (g.pan) { return; }
-      if (g.kind === "box") { Object.assign(E.rubber, { x1: x, y1: y, crossing: x < g.x0 }); }
+      if (g.kind === "box") { Object.assign(E.rubber, { x1: x, y1: y, crossing: x < g.x0 || m.alt }); }
       else if (g.kind === "move") {
         let dx = x - g.x0, dy = y - g.y0;
         E.mark = null;
-        if (E.snap && g.bb) {
+        if (m.ctrl) [dx, dy] = G.axisLock(dx, dy);                  // (Ctrl: only along one axis)
+        if (E.snap && !m.alt && g.bb) {
           const feats = [];
           for (const fx of [g.bb.x0, (g.bb.x0 + g.bb.x1) / 2, g.bb.x1]) for (const fy of [g.bb.y0, (g.bb.y0 + g.bb.y1) / 2, g.bb.y1]) feats.push([fx, fy]);
           let best = null, bd = tol();
           for (const f of feats) { const s = G.snap([f[0] + dx, f[1] + dy], g.cands, bd); if (s) { const d = Math.hypot(s.p[0] - f[0] - dx, s.p[1] - f[1] - dy); if (d <= bd) { bd = d; best = { s, f }; } } }
           if (best) { dx = best.s.p[0] - best.f[0]; dy = best.s.p[1] - best.f[1]; E.mark = best.s; }
           else if (E.grid) { const q = gridPt([g.bb.x0 + dx, g.bb.y0 + dy]); dx = q[0] - g.bb.x0; dy = q[1] - g.bb.y0; }
+          if (m.ctrl) [dx, dy] = G.axisLock(dx, dy);
         }
         E.ghost = { dx, dy };
       } else if (g.kind === "draw") {
-        const p1 = snapPoint([x, y], g.cands, tol()), p0 = g.p0;
-        E.rubber = { kind: "shape", contour: shapeOf(E.tool, p0, p1) };
-      } else if (g.kind === "poly") { E.mark = null; snapPoint([x, y], g.cands, tol()); }
+        E.rubber = { kind: "shape", contour: shapeFrom(E.tool, g.p0, pick([x, y], g.cands, m), m) };
+      } else if (g.kind === "poly") { E.mark = null; if (!m.alt) snapPoint([x, y], g.cands, tol()); }
       else if (g.kind === "node") {
-        const p = snapPoint([x, y], g.cands, tol()), c = g.v.contours[g.hit.ci], q = G.nodes(c)[g.hit.k];
+        const c = g.v.contours[g.hit.ci], q = G.nodes(c)[g.hit.k];
+        let p = pick([x, y], g.cands, m);
+        if (m.ctrl) { const [lx, ly] = G.axisLock(p[0] - q[0], p[1] - q[1]); p = [q[0] + lx, q[1] + ly]; }
         const moved = G.moveNode(c, g.hit.k, p[0] - q[0], p[1] - q[1]);
         const cs = g.v.contours.slice(); cs[g.hit.ci] = moved;
         g.result = { ...g.v, contours: cs }; E.ghost = { vectors: [g.result] };
       } else if (g.kind === "handle") {
         const c = g.v.contours[g.hit.ci], s = c.segs[g.hit.i], cur = g.hit.which === 1 ? [s[1], s[2]] : [s[3], s[4]];
-        const moved = G.moveHandle(c, g.hit.i, g.hit.which, x - cur[0], y - cur[1]);
+        let hx = x - cur[0], hy = y - cur[1];
+        if (m.ctrl) [hx, hy] = G.axisLock(hx, hy);
+        const moved = G.moveHandle(c, g.hit.i, g.hit.which, hx, hy);
         const cs = g.v.contours.slice(); cs[g.hit.ci] = moved;
         g.result = { ...g.v, contours: cs }; E.ghost = { vectors: [g.result] };
       }
       redraw();
     }
-    function finish(e) {
+    function finish(e, m) {
       const gg = g; g = null;
       if (!gg) return;
       const x = (e.offsetX - view.ox) / view.s, y = (view.oy - e.offsetY) / view.s;
       E.rubber = null; E.ghost = null; E.mark = null;
-      const additive = gg.shift || E.multi;
+      const additive = m.shift || m.ctrl || E.multi;         // (Shift and Ctrl both add to the selection, as in most programs)
       if (gg.kind === "box") {
-        if (!gg.moved) tapSelect(gg.x0, gg.y0, additive);
+        if (!gg.moved) tapSelect(gg.x0, gg.y0, additive, m.alt);
         else {
-          const r = { x0: Math.min(gg.x0, x), y0: Math.min(gg.y0, y), x1: Math.max(gg.x0, x), y1: Math.max(gg.y0, y) }, crossing = x < gg.x0;
+          const r = { x0: Math.min(gg.x0, x), y0: Math.min(gg.y0, y), x1: Math.max(gg.x0, x), y1: Math.max(gg.y0, y) }, crossing = x < gg.x0 || m.alt;
           const hits = sh.vectors.filter(v => usable(v) && G.vInRect(v, B.flatOf, r, crossing)).map(v => v.id);
           E.sel = additive ? new Set([...E.sel, ...hits]) : new Set(hits); E.node = null; refresh();
         }
@@ -528,11 +588,15 @@
         if (gg.moved && d && (Math.abs(d.dx) > 1e-9 || Math.abs(d.dy) > 1e-9)) { moveSelected(d.dx, d.dy); return; }
         refresh();
       } else if (gg.kind === "draw") {
-        const p1 = snapPoint([x, y], gg.cands, tol()), c = shapeOf(E.tool, gg.p0, p1);
+        const p1 = pick([x, y], gg.cands, m), c = shapeFrom(E.tool, gg.p0, p1, m);
         E.mark = null;
         if (c && gg.moved && Math.hypot(p1[0] - gg.p0[0], p1[1] - gg.p0[1]) > 1e-6) addVector(c, shapeName(E.tool)); else refresh();
       } else if (gg.kind === "poly") {
-        if (!gg.moved) { E.poly.push(snapPoint([gg.x0, gg.y0], gg.cands, tol())); E.mark = null; }
+        if (!gg.moved) {
+          let p = pick([gg.x0, gg.y0], gg.cands, m);
+          if (m.ctrl && E.poly.length) { const q = E.poly[E.poly.length - 1], d = G.dragShape("line", q, p, { ctrl: true }); p = d.b; }     // (Ctrl: a side at a multiple of 15°)
+          E.poly.push(p); E.mark = null;
+        }
         fillBars(); redraw();
       } else if ((gg.kind === "node" || gg.kind === "handle") && gg.result) {
         if (gg.moved) replaceContours(gg.v, gg.result.contours); else refresh();
@@ -544,9 +608,14 @@
         const v = oneVector(), pt = [gg.x0, gg.y0];
         const onLine = v && E.insert && v.contours.map((c, ci) => ({ ci, q: G.nearest(c, pt[0], pt[1]) })).filter(o => o.q && o.q.d < tol()).sort((a, b) => a.q.d - b.q.d)[0];
         if (onLine) { const c = v.contours[onLine.ci], cs = v.contours.slice(); cs[onLine.ci] = G.insertNode(c, onLine.q.i, onLine.q.u); E.node = { ci: onLine.ci, k: onLine.q.i + 1 }; replaceContours(v, cs); }
-        else tapSelect(gg.x0, gg.y0, additive);
-      } else if (gg.pan && !gg.moved) tapSelect(gg.x0, gg.y0, additive);
+        else tapSelect(gg.x0, gg.y0, additive, m.alt);
+      } else if (gg.pan && !gg.moved) tapSelect(gg.x0, gg.y0, additive, m.alt);
       else redraw();
+    }
+    /** the shape of a drawing tool for a drag from a to b, as the keys change it (Ctrl: regular, Shift: from the centre) */
+    function shapeFrom(tool, a, b, m) {
+      const d = G.dragShape(tool, a, b, m);
+      return shapeOf(tool, d.a, d.b);
     }
     function shapeOf(tool, a, b) {
       const dx = b[0] - a[0], dy = b[1] - a[1], r = Math.hypot(dx, dy);
@@ -561,7 +630,7 @@
     const shapeName = tool => ({ line: "Line", rect: "Rectangle", circle: "Circle", ellipse: "Ellipse", polygon: "Polygon" }[tool] || "");
 
     cv.addEventListener("pointerdown", e => {
-      if (!view) view = S.views[sh.id] = B.fitView(cv, sh);
+      if (!view) refit();
       try { cv.setPointerCapture(e.pointerId); } catch { /* (a pointer that is not active any more) */ }
       ptrs.set(e.pointerId, { x: e.offsetX, y: e.offsetY });
       if (ptrs.size === 1) start(e);
@@ -589,15 +658,29 @@
       if (!ptrs.has(e.pointerId)) return;
       const one = ptrs.size === 1;
       ptrs.delete(e.pointerId);
-      if (one && g) finish(e);
-      else if (!ptrs.size) { g = null; }
+      if (one && g) {
+        const m = mods(e), released = releaseMods();              // (a key held for one action is let go before the drawing is made again)
+        finish(e, m);
+        if (released) fillBars();
+      } else if (!ptrs.size) { g = null; }
       if (!ptrs.size) endGesture();
     };
     cv.addEventListener("pointerup", up);
     cv.addEventListener("pointercancel", e => { ptrs.delete(e.pointerId); g = null; E.rubber = null; E.ghost = null; redraw(); endGesture(); });
     cv.addEventListener("wheel", e => { e.preventDefault(); if (view) { beginGesture(); zoomAt(e.offsetX, e.offsetY, Math.exp(-e.deltaY * 0.0015)); redraw(); endGesture(140); } }, { passive: false });
-    cv.addEventListener("dblclick", () => { if (E.tool === "poly") return; view = S.views[sh.id] = B.fitView(cv, sh); redraw(); });
-    new ResizeObserver(() => redraw()).observe(cv);
+    cv.addEventListener("dblclick", () => { if (E.tool === "poly") return; refit(); redraw(); });
+    // When the bars above the drawing grow or shrink (something is selected, the rows are folded) the drawing keeps its place on the
+    // screen: the view moves with the top of the canvas, so that it does not jump under the finger.
+    const watch = new ResizeObserver(() => {
+      if (!cv.isConnected) { watch.disconnect(); return; }          // (the page was made again: this canvas is gone and must not move the view)
+      const top = cv.getBoundingClientRect().top;
+      if (view) {                                                    // (the view is kept between one page and the next, so is ``top``)
+        if (view.top !== undefined && Math.abs(top - view.top) > 0.5) view.oy -= top - view.top;
+        view.top = top;
+      }
+      redraw();
+    });
+    watch.observe(cv);
 
     // ---- the bars
     const btn = (label, title, fn, on, short) => {
@@ -611,6 +694,44 @@
       return el;
     };
     const sh_ = k => t("ed.s." + k);              // the short name under a button
+    function cycleMod(k) { E.mod[k] = (E.mod[k] + 1) % 3; fillBars(); }                 // off -> held for one action -> locked -> off
+    function toggleCoord() { E.coord = !E.coord; B.store.set("iyicam.coord", E.coord ? "1" : "0"); fillBars(); }
+    /** the nine points of the box of the selection, to choose the one whose coordinates are typed */
+    function pickRef() {
+      let close = () => {};
+      const grid = h("div", { class: "refgrid big", role: "radiogroup", "aria-label": t("ed.ref") }, REFS.map(([id, ic]) => h("button", {
+        class: "ed" + (E.ref === id ? " on" : ""), title: t("ref." + id), "aria-label": t("ref." + id), "aria-checked": E.ref === id ? "true" : "false",
+        onclick: () => { E.ref = id; B.store.set("iyicam.ref", id); if (E.tf) E.tf.ref = id; close(); fillBars(); } }, ic)));
+      close = openSheet(t("ed.ref"), h("div", {}, grid, h("div", { class: "row", style: "margin-top:12px" }, h("button", { class: "grow", onclick: () => close() }, t("ed.close")))));
+    }
+    /** the row to type a coordinate in: where this point of the selection (a corner, a middle, the centre) goes */
+    function coordRow(sel) {
+      const bb = G.bbox(sel);
+      if (!bb) return null;
+      const [rx, ry] = refPoint(bb, E.ref);
+      const refBtn = btn(REFS.find(([id]) => id === E.ref)[1], t("ed.ref") + " · " + t("ref." + E.ref), pickRef, false, sh_("ref"));
+      const field = (label, v) => h("input", { type: "number", step: "any", class: "coordin", value: +v.toFixed(3), "aria-label": label, enterkeyhint: "go" });
+      const X = field("X", rx), Y = field("Y", ry);
+      const go = () => {
+        const nx = X.valueAsNumber, ny = Y.valueAsNumber;
+        if (!Number.isFinite(nx) || !Number.isFinite(ny)) return toast(t("tf.cant"), "warn");
+        releaseMods();
+        if (applyMap(shiftMap(nx - rx, ny - ry), 0)) toast(t("ed.moved", fmt(nx, 2), fmt(ny, 2)), "ok");
+      };
+      for (const el of [X, Y]) el.addEventListener("keydown", ev => { if (ev.key === "Enter") { ev.preventDefault(); go(); } });
+      const stepIn = h("input", { type: "number", step: "any", min: "0", class: "coordin step", value: E.step, "aria-label": t("ed.step"), title: t("ed.step") });
+      stepIn.addEventListener("input", () => { if (stepIn.valueAsNumber > 0) { E.step = stepIn.valueAsNumber; B.store.set("iyicam.step", String(E.step)); } });
+      const nudge = (icon, dx, dy) => btn(icon, t("ed.nudge", fmt(E.step, 3)), () => {
+        const k = (mods(null).shift ? 10 : 1) * E.step;           // (Shift: ten times as far)
+        releaseMods();
+        moveSelected(dx * k, dy * k);
+      });
+      const goBtn = btn("➜", t("ed.goto"), go, false, sh_("goto"));
+      goBtn.classList.add("goto");
+      return h("div", { class: "edrow coord" }, refBtn,
+        h("span", { class: "muted small" }, "X"), X, h("span", { class: "muted small" }, "Y"), Y, goBtn,
+        h("span", { class: "muted small" }, "Δ"), stepIn, nudge("◀", -1, 0), nudge("▲", 0, 1), nudge("▼", 0, -1), nudge("▶", 1, 0));
+    }
     function fillBars() {
       const sel = selected(), one = oneVector();
       const toolRow = h("div", { class: "edrow tools" }, TOOLS.map(([id, ic]) => btn(ic, t("ed." + id), () => { E.tool = id; E.poly = []; E.node = null; E.insert = false; E.rubber = null; fillBars(); redraw(); }, E.tool === id, sh_(id))));
@@ -631,50 +752,73 @@
           btn("—", t("ed.node.line"), () => nodeEdit((c, k) => (c.segs[k] ? G.convertSpan(c, k, "L") : null)), false, sh_("nl")),
           btn("〜", t("ed.node.curve"), () => nodeEdit((c, k) => (c.segs[k] ? G.convertSpan(c, k, "C") : null)), false, sh_("nc"))));
       }
-      const gen = h("div", { class: "edrow" },
-        btn("↶", t("ed.undo"), undo, false, sh_("undo")), btn("↷", t("ed.redo"), redo, false, sh_("redo")),
-        btn("＋", t("ed.multi"), () => { E.multi = !E.multi; fillBars(); }, E.multi, sh_("multi")),
-        btn("▣", t("ed.all"), selectAll, false, sh_("all")), btn("◫", t("ed.invert"), invert, false, sh_("invert")), btn("⊘", t("ed.none"), clear, false, sh_("none")),
-        btn("⌖", t("ed.transform"), openTransform, false, sh_("transform")),
-        btn("🧲", t("ed.snap"), () => { E.snap = !E.snap; fillBars(); }, E.snap, sh_("snap")),
-        btn("▦" + (E.grid ? E.grid : ""), t("ed.grid"), () => { const o = [0, 1, 5, 10, 25]; E.grid = o[(o.indexOf(E.grid) + 1) % o.length]; fillBars(); }, !!E.grid, sh_("grid")),
-        btn("⋯", t("ed.cmdsTitle"), openCommands, false, sh_("cmds")),
-        btn("?", t("ed.help"), openHelp, false, sh_("help")),
-        btn("Aa", t("ed.labels"), () => { E.labels = !E.labels; B.store.set("iyicam.labels", E.labels ? "1" : "0"); fillBars(); }, E.labels));
-      rows.push(gen);
-      if (sel.length) {
-        const bb = G.bbox(sel, B.flatOf);
-        rows.push(h("div", { class: "edrow sel" }, h("span", { class: "badge" }, t("ed.selected", sel.length) + (bb ? ` · ${fmt(bb.x1 - bb.x0, 1)}×${fmt(bb.y1 - bb.y0, 1)}` : "")),
-          btn("↻", t("ed.rot"), rot90, false, sh_("rot")), btn("⇆", t("ed.flipH"), flipH, false, sh_("flipH")), btn("⇅", t("ed.flipV"), flipV, false, sh_("flipV")), btn("⧉", t("ed.dup"), duplicate, false, sh_("dup")),
-          btn("📋", t("ed.copy"), copy, false, sh_("copy")), E.clip ? btn("📌", t("ed.paste"), paste, false, sh_("paste")) : null,
-          btn("🗑", t("ed.delete"), removeSelected, false, sh_("delete")), layerPicker()));
-      } else if (E.clip) rows.push(h("div", { class: "edrow" }, btn("📌", t("ed.paste"), paste, false, sh_("paste"))));
+      if (!E.fold) {
+        rows.push(h("div", { class: "edrow" },
+          btn("↶", t("ed.undo"), undo, false, sh_("undo")), btn("↷", t("ed.redo"), redo, false, sh_("redo")),
+          btn("▣", t("ed.all"), selectAll, false, sh_("all")), btn("◫", t("ed.invert"), invert, false, sh_("invert")), btn("⊘", t("ed.none"), clear, false, sh_("none")),
+          btn("⌖", t("ed.transform"), openTransform, false, sh_("transform")),
+          btn("▤", t("ed.layers"), openLayers, false, sh_("layers")),
+          btn("⋯", t("ed.cmdsTitle"), openCommands, false, sh_("cmds")),
+          btn("?", t("ed.help"), openHelp, false, sh_("help")),
+          btn("Aa", t("ed.labels"), () => { E.labels = !E.labels; B.store.set("iyicam.labels", E.labels ? "1" : "0"); fillBars(); }, E.labels)));
+        // the keys a phone does not have, and the switches that change how a finger works
+        const key = k => {
+          const name = t("ed.s." + k), st = E.mod[k], sym = { shift: "⇧", ctrl: "⌃", alt: "⌥" }[k];
+          const el = btn(E.labels ? sym : name, t("ed." + k) + " · " + t(st === 2 ? "ed.mod.lock" : st === 1 ? "ed.mod.once" : "ed.mod.off", name), () => cycleMod(k), st > 0, name);
+          el.setAttribute("aria-pressed", st > 0 ? "true" : "false");
+          if (st === 2) el.classList.add("lock");
+          return el;
+        };
+        rows.push(h("div", { class: "edrow keys" }, key("shift"), key("ctrl"), key("alt"),
+          btn("＋", t("ed.multi"), () => { E.multi = !E.multi; fillBars(); }, E.multi, sh_("multi")),
+          btn("🧲", t("ed.snap"), () => { E.snap = !E.snap; fillBars(); }, E.snap, sh_("snap")),
+          btn("▦" + (E.grid ? E.grid : ""), t("ed.grid"), () => { const o = [0, 1, 5, 10, 25]; E.grid = o[(o.indexOf(E.grid) + 1) % o.length]; fillBars(); }, !!E.grid, sh_("grid"))));
+      }
+      const low = [];                                // (the dock stays when the rows above are folded: it is only there while something is selected)
+      {
+        if (sel.length) {
+          const bb = G.bbox(sel);
+          low.push(h("div", { class: "edrow sel" }, h("span", { class: "badge" }, t("ed.selected", sel.length) + (bb ? ` · ${fmt(bb.x1 - bb.x0, 1)}×${fmt(bb.y1 - bb.y0, 1)}` : "")),
+            btn("📍", t("ed.coord"), toggleCoord, E.coord, sh_("coord")),
+            btn("↻", t("ed.rot"), rot90, false, sh_("rot")), btn("⇆", t("ed.flipH"), flipH, false, sh_("flipH")), btn("⇅", t("ed.flipV"), flipV, false, sh_("flipV")), btn("⧉", t("ed.dup"), duplicate, false, sh_("dup")),
+            btn("📋", t("ed.copy"), copy, false, sh_("copy")), E.clip ? btn("📌", t("ed.paste"), paste, false, sh_("paste")) : null,
+            btn("🗑", t("ed.delete"), removeSelected, false, sh_("delete")), layerPicker()));
+          if (E.coord) low.push(coordRow(sel));
+        } else if (E.clip) low.push(h("div", { class: "edrow" }, btn("📌", t("ed.paste"), paste, false, sh_("paste"))));
+      }
       bars.replaceChildren(...rows);
+      dock.replaceChildren(...low);
     }
     function layerPicker() {
       const sel = h("select", { class: "ed", title: t("ed.layer"), "aria-label": t("ed.layer") }, h("option", { value: "" }, "▤ " + t("ed.layer")), S.project.layers.map(l => h("option", { value: l.id }, l.name)));
       sel.onchange = () => { if (sel.value) toLayer(sel.value); };
       return sel;
     }
-    // desktop browser: the keys
+    // a keyboard (a computer, or a phone with one): Ctrl, Shift and Alt are the real keys or the buttons of the bar
     const onKey = e => {
       if (!cv.isConnected) { document.removeEventListener("keydown", onKey); return; }
       if (/INPUT|TEXTAREA|SELECT/.test((e.target.tagName || ""))) return;
       const k = e.key.toLowerCase();
-      if ((e.ctrlKey || e.metaKey) && k === "z") { e.preventDefault(); e.shiftKey ? redo() : undo(); }
-      else if ((e.ctrlKey || e.metaKey) && k === "y") { e.preventDefault(); redo(); }
-      else if ((e.ctrlKey || e.metaKey) && k === "c") copy();
-      else if ((e.ctrlKey || e.metaKey) && k === "v") paste();
-      else if ((e.ctrlKey || e.metaKey) && k === "d") { e.preventDefault(); duplicate(); }
-      else if ((e.ctrlKey || e.metaKey) && k === "a") { e.preventDefault(); selectAll(); }
-      else if (k === "delete" || k === "backspace") removeSelected();
-      else if (k === "escape") { E.poly = []; E.sel = new Set(); E.node = null; fillBars(); redraw(); }
-      else if (k.startsWith("arrow") && E.sel.size) { e.preventDefault(); const s = e.shiftKey ? 10 : 1; moveSelected(k === "arrowleft" ? -s : k === "arrowright" ? s : 0, k === "arrowup" ? s : k === "arrowdown" ? -s : 0); }
+      if (k === "shift" || k === "control" || k === "alt" || k === "meta") return;
+      const m = mods(e);
+      let done = true;
+      if (m.ctrl && k === "z") { e.preventDefault(); releaseMods(); m.shift ? redo() : undo(); }
+      else if (m.ctrl && k === "y") { e.preventDefault(); releaseMods(); redo(); }
+      else if (m.ctrl && k === "c") { releaseMods(); copy(); }
+      else if (m.ctrl && k === "v") { releaseMods(); paste(); }
+      else if (m.ctrl && k === "d") { e.preventDefault(); releaseMods(); duplicate(); }
+      else if (m.ctrl && k === "a") { e.preventDefault(); releaseMods(); selectAll(); }
+      else if (k === "delete" || k === "backspace") { releaseMods(); removeSelected(); }
+      else if (k === "escape") { releaseMods(); E.poly = []; E.sel = new Set(); E.node = null; }
+      else if (k.startsWith("arrow") && E.sel.size) { e.preventDefault(); releaseMods(); const s = m.shift ? 10 : 1; moveSelected(k === "arrowleft" ? -s : k === "arrowright" ? s : 0, k === "arrowup" ? s : k === "arrowdown" ? -s : 0); }
+      else done = false;
+      if (done) { fillBars(); redraw(); }                        // (what a key did shows in the bars and the drawing, and the keys held for it are let go)
     };
     document.addEventListener("keydown", onKey);
 
     const fitBtns = h("div", { class: "tools" },
-      btn("⤢", t("draw.fit"), () => { view = S.views[sh.id] = B.fitView(cv, sh); redraw(); }),
+      btn(E.fold ? "▾" : "▴", t("ed.fold"), () => { E.fold = !E.fold; B.store.set("iyicam.fold", E.fold ? "1" : "0"); fillBars(); fitBtns.firstChild.textContent = E.fold ? "▾" : "▴"; }),
+      btn("⤢", t("draw.fit"), () => { refit(); redraw(); }),
       btn("＋", "+", () => { zoomAt(cv.clientWidth / 2, cv.clientHeight / 2, 1.5); redraw(); }),
       btn("－", "−", () => { zoomAt(cv.clientWidth / 2, cv.clientHeight / 2, 1 / 1.5); redraw(); }));
     if (S.results) {
@@ -683,7 +827,7 @@
     }
     stageEl.append(fitBtns, h("div", { class: "legend" }, `${sh.name} · ${fmt(sh.width, 0)}×${fmt(sh.height, 0)} mm · ${t("proj.vectors", sh.vectors.length)}`));
     fillBars();
-    wrap.append(bars, stageEl);
+    wrap.append(bars, stageEl, dock);
     return wrap;
   }
 
@@ -723,7 +867,7 @@
 
   function openTransform() {
     if (!selected().length) return toast(t("tf.none"), "warn");
-    const st = E.tf || (E.tf = { ref: "mc", prop: true, copies: 0, about: "ref", px: 0, py: 0, angle: 90, ax: 15, ay: 0, sx: 100, sy: 100, dx: 0, dy: 0 });
+    const st = E.tf || (E.tf = { ref: E.ref, prop: true, copies: 0, about: "ref", px: 0, py: 0, angle: 90, ax: 15, ay: 0, sx: 100, sy: 100, dx: 0, dy: 0 });
     const body = h("div", { class: "tf" });
     let close = () => {};
     const num = (label, key, opts = {}) => h("label", { class: "f" }, h("span", {}, label), numberInput(opts.value !== undefined ? opts.value : st[key], v => { st[key] = v; if (opts.on) opts.on(v); }, opts.p));
@@ -738,8 +882,8 @@
       const sel = selected();
       if (!sel.length) { close(); return; }
       const bb = G.bbox(sel), w = bb.x1 - bb.x0, hh = bb.y1 - bb.y0, [rx, ry] = refPoint(bb, st.ref);
-      const refGrid = h("div", { class: "refgrid", role: "radiogroup", "aria-label": t("tf.ref") }, REFS.map(([id, ic]) => h("button", { class: "ed" + (st.ref === id ? " on" : ""), title: t("tf.ref"), "aria-label": id, onclick: () => { st.ref = id; build(); } }, ic)));
-      const X = h("input", { type: "number", step: "any", inputmode: "decimal", value: +rx.toFixed(4) }), Y = h("input", { type: "number", step: "any", inputmode: "decimal", value: +ry.toFixed(4) });
+      const refGrid = h("div", { class: "refgrid", role: "radiogroup", "aria-label": t("tf.ref") }, REFS.map(([id, ic]) => h("button", { class: "ed" + (st.ref === id ? " on" : ""), title: t("tf.ref"), "aria-label": id, onclick: () => { st.ref = id; E.ref = id; B.store.set("iyicam.ref", id); build(); } }, ic)));
+      const X = h("input", { type: "number", step: "any", value: +rx.toFixed(4) }), Y = h("input", { type: "number", step: "any", value: +ry.toFixed(4) });      // (no "decimal" keypad: it has no minus sign on some phones)
       const W = h("input", { type: "number", step: "any", inputmode: "decimal", value: +w.toFixed(4) }), H = h("input", { type: "number", step: "any", inputmode: "decimal", value: +hh.toFixed(4) });
       W.addEventListener("input", () => { if (st.prop && w > 1e-9 && Number.isFinite(W.valueAsNumber)) H.value = +(W.valueAsNumber * hh / w).toFixed(4); });
       H.addEventListener("input", () => { if (st.prop && hh > 1e-9 && Number.isFinite(H.valueAsNumber)) W.value = +(H.valueAsNumber * w / hh).toFixed(4); });
@@ -795,14 +939,16 @@
 
   // ------------------------------------------------------------------------------------------ what every button is
   function openHelp() {
-    const item = (ic, key) => h("div", { class: "helprow" }, h("span", { class: "helpic" }, ic), h("span", {}, t(key)));
-    const sec = (title, items) => h("div", {}, h("div", { class: "group-h" }, title), items.map(([ic, key]) => item(ic, key)));
+    const item = (ic, key, ...a) => h("div", { class: "helprow" }, h("span", { class: "helpic" }, ic), h("span", {}, t(key, ...a)));
+    const sec = (title, items) => h("div", {}, h("div", { class: "group-h" }, title), items.map(([ic, key, ...a]) => item(ic, key, ...a)));
     let close;
     close = openSheet(t("help.title"), h("div", { class: "help" },
       h("div", { class: "muted small" }, t("help.tip")),
       sec(t("help.tools"), TOOLS.map(([id, ic]) => [ic, "ed." + id])),
-      sec(t("help.general"), [["↶", "ed.undo"], ["↷", "ed.redo"], ["＋", "ed.multi"], ["▣", "ed.all"], ["◫", "ed.invert"], ["⊘", "ed.none"], ["⌖", "ed.transform"],
-        ["🧲", "ed.snap"], ["▦", "ed.grid"], ["⋯", "ed.cmdsTitle"], ["?", "ed.help"], ["Aa", "ed.labels"]]),
+      sec(t("help.general"), [["↶", "ed.undo"], ["↷", "ed.redo"], ["▣", "ed.all"], ["◫", "ed.invert"], ["⊘", "ed.none"], ["⌖", "ed.transform"],
+        ["▤", "ed.layers"], ["⋯", "ed.cmdsTitle"], ["?", "ed.help"], ["Aa", "ed.labels"], ["▴", "ed.fold"]]),
+      sec(t("help.mods"), [["⇧", "ed.shift"], ["⌃", "ed.ctrl"], ["⌥", "ed.alt"], ["＋", "ed.multi"], ["🧲", "ed.snap"], ["▦", "ed.grid"]]),
+      sec(t("help.coord"), [["📍", "ed.coord"], ["↙", "ed.ref"], ["➜", "ed.goto"], ["◀▲", "ed.nudge", "1"], ["Δ", "ed.step"]]),
       sec(t("help.selection"), [["↻", "ed.rot"], ["⇆", "ed.flipH"], ["⇅", "ed.flipV"], ["⧉", "ed.dup"], ["📋", "ed.copy"], ["📌", "ed.paste"], ["🗑", "ed.delete"], ["▤", "ed.layer"]]),
       sec(t("help.nodes"), [["＋", "ed.node.insert"], ["🗑", "ed.node.del"], ["⚑", "ed.node.start"], ["✂", "ed.node.break"], ["▢", "ed.node.close"], ["—", "ed.node.line"], ["〜", "ed.node.curve"]]),
       sec(t("help.poly"), [["✓", "ed.done"], ["⌫", "ed.last"], ["✕", "ed.cancel"]]),
@@ -896,39 +1042,91 @@
       h("div", { class: "row", style: "margin-top:16px" }, h("button", { class: "primary grow", onclick: () => { close(); run(); } }, t("nest.run")), h("button", { onclick: () => close() }, t("ed.cancel")))));
   }
 
-  // ------------------------------------------------------------------------------------------ layers and sheets (Project tab)
+  // ------------------------------------------------------------------------------------------ layers (Project tab and the window of the drawing)
+  const LAYER_VIEWS = new Set();                    // (every list of layers that is on the page: the card, the window; all follow a change)
+  function refreshLayers() {
+    for (const v of [...LAYER_VIEWS]) { if (v.el.isConnected) v.build(); else LAYER_VIEWS.delete(v); }
+  }
+  /** What a change of a layer needs besides the project: the drawing is made again (the Project tab shows none) and the other lists follow. */
+  function layerChanged(redraw) {
+    B.persist();
+    if (redraw && S.tab === "draw") B.render();
+    refreshLayers();
+  }
+  /** all the vectors of a layer on this sheet become the selection (Shift, Ctrl or the multi button add to what was selected); the drawing is shown */
+  function selectLayer(l) {
+    if (!l.visible || l.locked) return toast(t("lay.hidden"), "warn");
+    const ids = sheet().vectors.filter(v => v.layer === l.id).map(v => v.id);
+    if (!ids.length) return toast(t("lay.empty"), "warn");
+    const m = mods(null), add = m.shift || m.ctrl || E.multi;
+    releaseMods();
+    E.sel = new Set(add ? [...E.sel, ...ids] : ids); E.node = null;
+    E.sheetId = sheet().id;                          // (a drawing that is opened for the first time on this sheet would clear the selection)
+    toast(t("lay.selected", ids.length, l.name), "ok");
+    S.tab = "draw"; B.render();
+    return true;
+  }
+  /** a layer one place up (d = -1) or down (d = 1) in the list, as the desktop's up and down buttons do */
+  function moveLayer(l, d) {
+    const ls = S.project.layers, i = ls.indexOf(l), j = i + d;
+    if (i < 0 || j < 0 || j >= ls.length) return;
+    remember(); [ls[i], ls[j]] = [ls[j], ls[i]];
+    layerChanged(true);
+  }
+  function addLayer() {
+    const p = S.project;
+    remember();
+    const palette = S.schema.layer_colors || ["#1f77b4", "#d62728", "#2ca02c", "#9467bd", "#ff7f0e"];
+    p.layers.push({ id: G.newId(), name: `${t("lay.name")} ${p.layers.length + 1}`, color: palette[p.layers.length % palette.length], visible: true, locked: false });
+    B.changed(); refreshLayers();
+  }
+  /** the list of layers: what is drawn on, name, colour, show, lock, select all of it, up, down, delete.  ``after`` runs when a layer was selected. */
+  function layerList(after) {
+    const el = h("div", { class: "list layers" });
+    function build() {
+      const p = S.project, here = new Map(), all = new Map(), act = activeLayer().id;
+      for (const v of sheet().vectors) here.set(v.layer, (here.get(v.layer) || 0) + 1);
+      for (const s of p.sheets) for (const v of s.vectors) all.set(v.layer, (all.get(v.layer) || 0) + 1);
+      el.replaceChildren(...p.layers.map((l, i) => {
+        const vis = h("button", { class: "small tgl" + (l.visible ? " on" : ""), title: t("lay.vis"), "aria-label": t("lay.vis"), "aria-pressed": l.visible ? "true" : "false" }, l.visible ? "👁" : "🚫");
+        vis.onclick = () => { l.visible = !l.visible; if (!l.visible) for (const id of [...E.sel]) { const v = sheet().vectors.find(q => q.id === id); if (v && v.layer === l.id) E.sel.delete(id); } layerChanged(true); };
+        const name = h("input", { type: "text", value: l.name, "aria-label": t("lay.name") });
+        name.addEventListener("change", () => { if (name.value.trim()) { remember(); l.name = name.value.trim(); layerChanged(true); } });
+        const color = h("input", { type: "color", value: /^#[0-9a-f]{6}$/i.test(l.color) ? l.color : "#1f77b4", "aria-label": "color", class: "swatch" });
+        color.onchange = () => { remember(); l.color = color.value; layerChanged(true); };
+        const lock = h("button", { class: "small tgl" + (l.locked ? " on" : ""), title: t("lay.lock"), "aria-label": t("lay.lock"), "aria-pressed": l.locked ? "true" : "false" }, l.locked ? "🔒" : "🔓");
+        lock.onclick = () => { l.locked = !l.locked; for (const id of [...E.sel]) { const v = sheet().vectors.find(q => q.id === id); if (v && v.layer === l.id && l.locked) E.sel.delete(id); } layerChanged(true); };
+        const del = h("button", { class: "small danger", title: t("lay.del"), "aria-label": t("lay.del"), onclick: () => {
+          if (p.layers.length < 2) return toast(t("lay.last"), "warn");
+          if (all.get(l.id)) return toast(t("lay.notEmpty"), "warn");
+          remember(); p.layers = p.layers.filter(x => x.id !== l.id);
+          for (const tp of p.toolpaths) if (tp.selection && tp.selection.layers) tp.selection.layers = tp.selection.layers.filter(x => x !== l.id);
+          B.changed(); refreshLayers();
+        } }, "🗑");
+        const pick = h("button", { class: "small", title: t("lay.select"), "aria-label": t("lay.select"), onclick: () => { if (selectLayer(l) && after) after(); } }, "◎");
+        const up = h("button", { class: "small", title: t("lay.up"), "aria-label": t("lay.up"), disabled: i === 0, onclick: () => moveLayer(l, -1) }, "↑");
+        const down = h("button", { class: "small", title: t("lay.down"), "aria-label": t("lay.down"), disabled: i === p.layers.length - 1, onclick: () => moveLayer(l, 1) }, "↓");
+        const on = h("input", { type: "radio", name: "activelayer", checked: l.id === act, title: t("lay.active"), "aria-label": t("lay.active") });
+        on.onchange = () => { E.layer = l.id; };
+        return h("div", { class: "lay", "data-layer": l.id },
+          h("div", { class: "l1" }, on, color, h("div", { class: "grow" }, name), h("span", { class: "badge", title: t("proj.vectors", all.get(l.id) || 0) }, here.get(l.id) || 0)),
+          h("div", { class: "l2" }, vis, lock, h("span", { class: "grow" }), pick, up, down, del));
+      }));
+    }
+    const view = { el, build };
+    LAYER_VIEWS.add(view);
+    build();
+    return el;
+  }
   function layersCard() {
-    const p = S.project, count = new Map();
-    for (const s of p.sheets) for (const v of s.vectors) count.set(v.layer, (count.get(v.layer) || 0) + 1);
-    const act = activeLayer().id;
-    const rows = p.layers.map(l => {
-      const vis = h("input", { type: "checkbox", checked: l.visible, title: t("paths.on"), "aria-label": "visible" });
-      vis.onchange = () => { l.visible = vis.checked; B.persist(); };
-      const name = h("input", { type: "text", value: l.name, "aria-label": t("lay.name") });
-      name.addEventListener("change", () => { if (name.value.trim()) { remember(); l.name = name.value.trim(); B.persist(); } });
-      const color = h("input", { type: "color", value: /^#[0-9a-f]{6}$/i.test(l.color) ? l.color : "#1f77b4", "aria-label": "color", style: "width:40px;min-height:36px;padding:0" });
-      color.onchange = () => { remember(); l.color = color.value; B.persist(); B.render(); };
-      const lock = h("input", { type: "checkbox", checked: l.locked, title: t("lay.lock"), "aria-label": t("lay.lock") });
-      lock.onchange = () => { l.locked = lock.checked; for (const id of [...E.sel]) { const v = sheet().vectors.find(q => q.id === id); if (v && v.layer === l.id && l.locked) E.sel.delete(id); } B.persist(); };
-      const del = h("button", { class: "small danger", title: t("lay.del"), "aria-label": t("lay.del"), onclick: () => {
-        if (p.layers.length < 2) return toast(t("lay.last"), "warn");
-        if (count.get(l.id)) return toast(t("lay.notEmpty"), "warn");
-        remember(); p.layers = p.layers.filter(x => x.id !== l.id);
-        for (const tp of p.toolpaths) if (tp.selection && tp.selection.layers) tp.selection.layers = tp.selection.layers.filter(i => i !== l.id);
-        B.changed();
-      } }, "🗑");
-      const on = h("input", { type: "radio", name: "activelayer", checked: l.id === act, title: t("lay.active"), "aria-label": t("lay.active") });
-      on.onchange = () => { E.layer = l.id; };
-      return h("div", { class: "item", style: "flex-wrap:wrap;gap:6px" }, on, color, h("div", { class: "grow" }, name), h("span", { class: "badge" }, count.get(l.id) || 0),
-        h("label", { class: "chk", style: "min-height:36px" }, vis, "👁"), h("label", { class: "chk", style: "min-height:36px" }, lock, "🔒"), del);
-    });
-    const add = h("button", { class: "small", onclick: () => {
-      remember();
-      const palette = S.schema.layer_colors || ["#1f77b4", "#d62728", "#2ca02c", "#9467bd", "#ff7f0e"];
-      p.layers.push({ id: G.newId(), name: `${t("lay.name")} ${p.layers.length + 1}`, color: palette[p.layers.length % palette.length], visible: true, locked: false });
-      B.changed();
-    } }, "＋ " + t("lay.add"));
-    return h("div", { class: "card" }, h("h2", {}, t("proj.layers")), h("div", { class: "muted small" }, "◉ " + t("lay.active")), h("div", { class: "list" }, rows), h("div", { class: "row", style: "margin-top:10px" }, add));
+    return h("div", { class: "card" }, h("h2", {}, t("proj.layers")), h("div", { class: "muted small" }, t("lay.hint")), layerList(),
+      h("div", { class: "row", style: "margin-top:10px" }, h("button", { class: "small", onclick: addLayer }, "＋ " + t("lay.add"))));
+  }
+  /** the layers over the drawing: the same list as the Project tab has, so that a layer can be selected or moved without leaving the drawing */
+  function openLayers() {
+    let close = () => {};
+    close = openSheet(t("lay.title"), h("div", {}, h("div", { class: "muted small" }, t("lay.hint")), layerList(() => close()),
+      h("div", { class: "row", style: "margin-top:10px" }, h("button", { onclick: addLayer }, "＋ " + t("lay.add")), h("button", { class: "grow", onclick: () => close() }, t("ed.close")))));
   }
   function sheetTools() {
     const p = S.project;
@@ -955,5 +1153,5 @@
     S.tab = "draw"; B.changed();
   }
 
-  B.editor = { stage, layersCard, sheetTools, newProject, undo, redo, openCommands, nestDialog, state: E, clear: () => { E.undo = []; E.redo = []; E.sel = new Set(); E.node = null; } };
+  B.editor = { stage, layersCard, sheetTools, newProject, undo, redo, openCommands, nestDialog, openLayers, selectLayer, moveLayer, mods, state: E, clear: () => { E.undo = []; E.redo = []; E.sel = new Set(); E.node = null; } };
 })();

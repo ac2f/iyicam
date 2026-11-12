@@ -264,10 +264,36 @@ function applyPatch(patch) {
   persist();
 }
 
+// ------------------------------------------------------------------------------------------ the screen of a phone
+/** The page is as high as what can be seen.  The bar of the browser that comes and goes and the keyboard change the screen, and
+ *  a page that is "100vh" high then reaches below it: its buttons at the bottom are out of sight.  The visual viewport says what
+ *  is really there; the css (``html.vv``) puts the page, the windows and the messages into it, and while a field is being typed
+ *  in (``html.kbd``) the bars of the page give their room back. */
+let screenH = 0, screenW = 0;                       // (the highest the screen has been at this width: what it is without a keyboard)
+function fitScreen() {
+  const vv = window.visualViewport, root = document.documentElement;
+  if (!vv || vv.scale > 1.02) { root.classList.remove("vv", "kbd"); return; }           // (zoomed in by the person: the browser is left to it)
+  root.style.setProperty("--vv-h", Math.round(vv.height) + "px");
+  root.style.setProperty("--vv-top", Math.round(vv.offsetTop) + "px");
+  root.classList.add("vv");
+  if (Math.abs(innerWidth - screenW) > 40) { screenW = innerWidth; screenH = 0; }       // (turned round: start again)
+  screenH = Math.max(screenH, vv.height);
+  const a = document.activeElement;
+  const typing = !!a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && a.type !== "checkbox" && a.type !== "radio" && a.type !== "color";
+  root.classList.toggle("kbd", typing && vv.height < screenH - 140);
+}
+if (window.visualViewport) for (const ev of ["resize", "scroll"]) window.visualViewport.addEventListener(ev, fitScreen);
+addEventListener("resize", fitScreen);
+addEventListener("orientationchange", () => setTimeout(fitScreen, 150));         // (turning the phone round changes the width: ``fitScreen`` starts the height again)
+addEventListener("focusin", fitScreen);
+addEventListener("focusout", () => setTimeout(fitScreen, 60));
+fitScreen();
+
 // ------------------------------------------------------------------------------------------ toasts, busy, sheets
 function toast(text, kind = "") {
-  const box = $("#toasts") || document.body.appendChild(h("div", { id: "toasts", style: "position:fixed;left:12px;right:12px;bottom:calc(var(--tab-h) + 12px + env(safe-area-inset-bottom));z-index:30;display:flex;flex-direction:column;gap:6px;pointer-events:none" }));
-  const el = h("div", { class: "msg " + kind, style: "background:var(--card);box-shadow:0 4px 18px rgba(0,0,0,.25);pointer-events:auto" }, text);
+  const box = $("#toasts") || document.body.appendChild(h("div", { id: "toasts" }));
+  const el = h("div", { class: "msg toast " + kind }, text);
+  while (box.children.length >= 3) box.firstChild.remove();               // (a pile of messages must not cover the drawing)
   box.append(el);
   setTimeout(() => el.remove(), kind === "bad" ? 9000 : 4500);
 }
@@ -487,7 +513,9 @@ const NUMERIC = new Set(["float", "length", "int", "angle", "feed", "percent"]);
 const visibleParam = (p, vals) => !p.visible || Object.entries(p.visible).every(([k, want]) => Array.isArray(want) ? want.includes(vals[k]) : vals[k] === want);
 
 function numberInput(value, onSet, p = {}) {
-  const el = h("input", { type: "number", inputmode: "decimal", step: p.kind === "int" ? "1" : "any", value: value ?? "" });
+  // (the "decimal" keypad of a phone has no minus sign, so it is asked for only where a number cannot be negative)
+  const el = h("input", { type: "number", step: p.kind === "int" ? "1" : "any", value: value ?? "" });
+  if (p.min != null && p.min >= 0) el.setAttribute("inputmode", p.kind === "int" ? "numeric" : "decimal");
   if (p.min != null) el.min = p.min;
   if (p.max != null) el.max = p.max;
   el.addEventListener("input", () => { if (Number.isFinite(el.valueAsNumber)) onSet(el.valueAsNumber); });
@@ -946,9 +974,9 @@ function thicknessOverride(s) {
 
 function viewDraw() {
   const s = activeSheet(), p = S.project;
-  const wrap = h("div");
+  const wrap = h("div", { class: "drawview" });
   if (p.sheets.length > 1) {
-    const sel = h("select", { style: "margin:8px 16px;width:calc(100% - 32px)" }, p.sheets.map(x => h("option", { value: x.id }, x.name)));
+    const sel = h("select", { class: "sheetpick" }, p.sheets.map(x => h("option", { value: x.id }, x.name)));
     sel.value = s.id; sel.onchange = () => { S.sheetId = sel.value; render(); };
     wrap.append(sel);
   }
@@ -1067,9 +1095,10 @@ function render() {
   const v = $("#view");
   if (!v) return;
   v.className = S.tab === "draw" && S.project ? "wide" : "";
+  $("#app").dataset.tab = S.tab;                                // (the css gives the drawing the room of the header on a low screen)
   v.replaceChildren(view());
   document.querySelectorAll("nav.tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === S.tab));
-  window.scrollTo(0, 0);
+  v.scrollTop = 0; window.scrollTo(0, 0);
 }
 
 function mountApp() {
@@ -1083,7 +1112,7 @@ function mountApp() {
       h("div", { class: "row sp" }, h("span", { class: "lab" }, t("busy")), h("button", { class: "small", onclick: () => { if (S.busy) S.busy.stop = true; } }, t("cancel"))),
       h("div", { class: "progress" }, h("i"))),
     h("main", { id: "view" }),
-    h("nav", { class: "tabs" }, TABS.map(([id, ic, k]) => h("button", { "data-tab": id, onclick: () => { S.tab = id; render(); } }, h("span", { class: "ic" }, ic), t(k)))));
+    h("nav", { class: "tabs" }, TABS.map(([id, ic, k]) => h("button", { "data-tab": id, onclick: () => { S.tab = id; render(); } }, h("span", { class: "ic" }, ic), h("span", { class: "tx" }, t(k))))));
   setBusy(S.busy);
   render();
 }

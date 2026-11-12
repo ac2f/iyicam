@@ -80,3 +80,39 @@ def test_edit_js_is_an_extension_not_a_requirement():
     app = (WEB / "app.js").read_text(encoding="utf-8")
     assert "window.IyiPage = {" in app and "editor: null" in app
     assert "window.IyiPage.editor" in app
+
+
+def test_the_texts_that_are_made_from_a_name_exist_in_both_languages():
+    """``t("ed.s." + key)``, ``t("ed." + key)`` and ``t("ref." + id)`` are not found by the pattern above: ask for them by name."""
+    _, tr, en = _texts()
+    names = {f"ed.s.{k}" for k in ("shift", "ctrl", "alt", "goto", "coord", "ref", "layers", "fold", "multi", "snap", "grid")}
+    names |= {f"ed.{k}" for k in ("shift", "ctrl", "alt")} | {f"ref.{r}" for r in ("tl", "tc", "tr", "ml", "mc", "mr", "bl", "bc", "br")}
+    names |= {"ed.mod.once", "ed.mod.lock", "ed.mod.off", "help.mods", "help.coord", "lay.select", "lay.up", "lay.down", "lay.hidden"}
+    assert not sorted(names - tr), f"missing in Turkish: {sorted(names - tr)}"
+    assert not sorted(names - en), f"missing in English: {sorted(names - en)}"
+
+
+def test_the_page_fits_what_can_be_seen():
+    """A page that is ``100vh`` high reaches below the screen of a phone while the bar of the browser is there, and a bar of tabs
+    that is ``position: fixed`` slides about when the keyboard comes: the page is fixed to the visual viewport instead, the tabs
+    are the last thing of its column, and the view in the middle scrolls by itself."""
+    css = (WEB / "app.css").read_text(encoding="utf-8")
+    js = (WEB / "app.js").read_text(encoding="utf-8")
+    assert "100vh" not in css
+    assert re.search(r"#app \{[^}]*position: fixed", css)
+    nav = re.search(r"nav\.tabs \{([^}]*)\}", css).group(1)
+    assert "position: fixed" not in nav
+    assert "visualViewport" in js and "--vv-h" in css
+    assert re.search(r"main \{[^}]*overflow-y: auto", css)
+    html = (WEB / "index.html").read_text(encoding="utf-8")
+    assert "maximum-scale=1" in html                      # (a field the page zooms into would push the tabs off the screen)
+    edit = (WEB / "edit.js").read_text(encoding="utf-8")
+    assert "select.ed { font-size: 16px" in css           # (a field under 16 px makes a phone zoom in)
+    assert 'class: "eddock"' in edit                      # (what is done to a selection is under the drawing: the drawing does not jump when it appears)
+
+
+def test_shift_ctrl_and_alt_are_buttons_of_the_bars_and_count_like_the_keys():
+    edit = (WEB / "edit.js").read_text(encoding="utf-8")
+    assert "function mods(e)" in edit and "function releaseMods()" in edit
+    assert 'key("shift"), key("ctrl"), key("alt")' in edit
+    assert "e.shiftKey ||" not in edit.replace("!!(e && e.shiftKey)", "")        # (a gesture asks ``mods(e)``, never the event alone)

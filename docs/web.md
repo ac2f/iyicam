@@ -83,8 +83,9 @@ The bar over the drawing has the tools (touch, or the mouse); every change can b
 | ◇ nodes | the nodes of the one selected vector: drag a node or a bezier handle, tap a line to insert a node (＋), delete a node, start the cut here, break at the node, close, make a span a line or a curve |
 | ⚑ start point | tap on a closed vector: its cut starts there (a node is put in if needed, and the program keeps it: it is the hand-set start of the Cut Order panel) |
 
-With something selected the bar offers turn 90°, flip left/right and top/bottom, duplicate, copy, paste (also onto
-another sheet), delete and *move to layer*; ▣ selects all, ◫ inverts, ⊘ clears. **⋯ Commands** lists all the vector
+With something selected a **dock under the drawing** (so that the drawing does not jump when it appears) offers turn 90°,
+flip left/right and top/bottom, duplicate, copy, paste (also onto another sheet), delete and *move to layer*; ▣ selects
+all, ◫ inverts, ⊘ clears. **⋯ Commands** lists all the vector
 commands of the engine — the same menus as the desktop's — with their own forms: create (rectangle, circle, ellipse,
 polygon, star, slot, arc, spiral, bounding box, door / panel), edit (offset, weld, subtract, intersect, join, close,
 reverse, group, ungroup, explode, smooth, simplify, convert to polyline, centre line, vector doctor, delete duplicates),
@@ -93,10 +94,57 @@ arrange (align, centre on the sheet, distribute, rectangular and circular arrays
 vectors, similar), and **nesting** (plate size, border gap, spacing, rotation step, copies of each part, search
 effort, squeeze suggestion; the selected parts or all of them).
 
+#### Move to a coordinate you type
+
+Select something: the dock under the drawing has a **coordinate row** (📍 *Konum* shows or hides it). Choose which point of
+the selection the numbers are about with the first button (*Nokta*: the four corners, the four middles and the centre; the
+choice is remembered), type **X** and **Y** (a minus sign is possible: these fields do not ask the phone for the "decimal"
+keypad, which has none) and press **➜ Taşı** or Enter on the keyboard: that point of the selection goes there, in
+millimetres on the sheet (the lower left corner of the sheet is 0, 0). The fields show where the selection is now. **Δ** is
+a step (default 1 mm) for the four arrows ◀ ▲ ▼ ▶ next to it, which nudge the selection by it (ten times as far with Shift,
+below). The same and more (size, scale, angle, mirror, slant, copies) is in the **⌖ Dönüş.** window.
+
+#### Shift, Ctrl and Alt on a phone
+
+A phone has no keys, so the second row of the bars has three buttons that stand for them (**⇧ Shift, ⌃ Ctrl, ⌥ Alt**).
+Tap once: the key is *held for the next action* and is let go after it; tap twice: it is *locked*; a third tap lets go
+(a long press tells which state it is in). The real keys of a keyboard do the same; both count together. With a keyboard,
+the Ctrl button also stands for Ctrl in Ctrl+Z / Y / C / V / D / A.
+
+| | selecting (tap, box) | moving a selection or a node | drawing |
+|---|---|---|---|
+| **Shift** | adds to the selection, or takes a tapped one out | | from the **centre** (line, rectangle, ellipse); the nudge arrows go ten times as far |
+| **Ctrl** | adds / takes out, like Shift | keeps the move **horizontal or vertical** | keeps it regular: a **square**, a **circle**, a line or a polygon at a multiple of **15°**, a polyline side at 15° |
+| **Alt** | a tap picks the vector **behind** (again: the next one under the finger); a box takes **what it touches**, in whichever direction it is drawn | no snapping for this gesture | no snapping: the point is exactly where the finger is |
+
+(＋ *Çoklu* is the same as a locked Shift for selecting; 🧲 and ▦ are the snapping and the grid.)
+
 Moving, turning, flipping, copying, deleting and the drawing and node tools are done in the browser, on the project
 itself; `geom.js` does them with the engine's own numbers (arcs stay arcs, beziers stay beziers; tried against the
 engine's `xform.*` commands: the same coordinates). Everything else is a call of `command` or `nest` with the project
 and the answer replaces it, so what the page does is what the desktop program does.
+
+### Layers
+
+The **Project** tab and the **▤ Katman** button of the drawing show the same list: the layer new vectors are drawn on (◉),
+its colour, name and the number of vectors on this sheet, **👁 show**, **🔒 lock**, **◎ select all the vectors of the layer**
+on this sheet (the drawing is shown; with Shift or ＋ held they are added to what was selected; a hidden or locked layer
+cannot be selected), **↑ ↓ the order of the layers** (as the desktop's ▲ ▼; it is the order of the list and of the saved
+project, and can be undone) and delete (only an empty layer).
+
+### A screen that changes
+
+A phone's screen is not as high as `100vh`: the bar of the browser comes and goes and the keyboard covers a third of it, and
+a page that goes by `100vh` or a bar of tabs that is `position: fixed` slides below the edge. So the page is fixed to the
+**visual viewport** (`visualViewport`, `--vv-h` / `--vv-top` in the css): the bar of tabs is the last thing of its column,
+the view in the middle scrolls by itself, windows (`sheet`) are as high as what can be seen and their buttons at the end
+stay at the bottom of them however long the form is, and while a field is being typed in (the keyboard is up) the header
+and the tabs give their room back (`html.kbd`). Fields are 16 px so that a phone does not zoom the page in, `maximum-scale=1`
+stops the page itself from being pinched (the drawing zooms in the page's own way), messages let a finger through to the
+drawing, and the bars above the drawing keep it where it is on the screen when they grow or shrink. On a low screen (a phone
+on its side: under 520 px) the header is left out on the drawing tab, the names under the buttons go, and the rows of
+buttons start **folded** (▴ / ▾ at the side of the drawing). Tested in a browser at 390×844, 360×640, and 844×390 and
+568×320 on their side, with the keyboard up and with windows open (`tests/test_page.py` keeps the rules that matter).
 
 Not in the page yet: the trim tool, text, bitmap tracing, the G-code backplot, snapping to crossings, the tool
 database and post-processor editors, tabs of several projects.

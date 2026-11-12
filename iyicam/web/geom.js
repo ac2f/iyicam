@@ -229,6 +229,50 @@
     }
     return best;
   };
+  /** the ids of every vector whose line is nearer than ``tol`` to the point, the nearest first (the later one first when
+   *  they tie); ``hit`` is the first of them.  A tap with Alt walks through this list: the vector behind the one on top. */
+  G.hitAll = (vectors, flatOf, x, y, tol, ok = () => true) => {
+    const found = [];
+    for (let i = vectors.length - 1; i >= 0; i--) {
+      const v = vectors[i], b = G.vbox(v);
+      if (!b || x < b.x0 - tol || x > b.x1 + tol || y < b.y0 - tol || y > b.y1 + tol) continue;
+      if (!ok(v)) continue;
+      const d = G.distance(flatOf(v), x, y);
+      if (d < tol) found.push({ id: v.id, d, i });
+    }
+    found.sort((a, b) => a.d - b.d || b.i - a.i);
+    return found.map(f => f.id);
+  };
+  /** the item after ``current`` in a list (the first one when ``current`` is not in it or is the last): what a tap with
+   *  Alt picks, so that every vector under the finger can be reached by tapping again */
+  G.nextAfter = (list, current) => {
+    if (!list.length) return null;
+    const i = list.indexOf(current);
+    return list[i < 0 ? 0 : (i + 1) % list.length];
+  };
+  /** a move (dx, dy) kept to one direction: the one it is going more in (what Ctrl does to a moved selection or node) */
+  G.axisLock = (dx, dy) => (Math.abs(dx) >= Math.abs(dy) ? [dx, 0] : [0, dy]);
+  /** The two points of a shape that is drawn with a drag from ``a`` to ``b``, as the keys change it: ``ctrl`` keeps it
+   *  regular (a line or a polygon at a multiple of 15 degrees, a square, a circle), ``shift`` draws it from the centre
+   *  ``a`` (a line, a rectangle, an ellipse; a circle and a polygon are drawn from the centre anyway). */
+  G.dragShape = (tool, a, b, keys = {}) => {
+    let bx = b[0], by = b[1];
+    const dx = bx - a[0], dy = by - a[1];
+    if (keys.ctrl) {
+      if (tool === "line" || tool === "polygon") {
+        const step = Math.PI / 12, ang = Math.round(Math.atan2(dy, dx) / step) * step, r = hyp(dx, dy);
+        let c = Math.cos(ang), s = Math.sin(ang);
+        if (Math.abs(c) < 1e-12) c = 0;
+        if (Math.abs(s) < 1e-12) s = 0;
+        bx = a[0] + r * c; by = a[1] + r * s;
+      } else if (tool === "rect" || tool === "ellipse") {
+        const m = Math.max(Math.abs(dx), Math.abs(dy));
+        bx = a[0] + (dx < 0 ? -m : m); by = a[1] + (dy < 0 ? -m : m);
+      }
+    }
+    const from = keys.shift && (tool === "line" || tool === "rect" || tool === "ellipse") ? [2 * a[0] - bx, 2 * a[1] - by] : [a[0], a[1]];
+    return { a: from, b: [bx, by] };
+  };
   const boxes = new WeakMap();
   /** the exact box of one vector, made once (a vector object is never changed: a changed vector is a new object) */
   G.vbox = v => {

@@ -14,30 +14,42 @@
   --brand: #1f7a43; --accent: #4ade80; --warn: #fbbf24; --bad: #f87171; --ok: #4ade80; --canvas: #0b100d;
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-html, body { margin: 0; height: 100%; }
+/* The page is as high as what can be seen: it is fixed to the screen, the view in the middle scrolls by itself and the bar of tabs
+   is the last thing in the column, so nothing can slide below the edge when the bar of the browser or the keyboard comes and goes
+   (app.js ``fitScreen`` gives --vv-h and --vv-top, the visual viewport, and sets html.vv). */
+html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; }
 body {
   background: var(--bg); color: var(--ink);
   font: 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  -webkit-text-size-adjust: 100%;
+  -webkit-text-size-adjust: 100%; touch-action: pan-x pan-y;
 }
-#app { min-height: 100%; display: flex; flex-direction: column; }
+#app { position: fixed; left: 0; right: 0; top: 0; bottom: 0; display: flex; flex-direction: column; }
+html.vv #app { bottom: auto; top: var(--vv-top, 0px); height: var(--vv-h, 100%); }
+html.kbd { --tab-h: 0px; }
+html.kbd nav.tabs, html.kbd header.top { display: none; }
 header.top {
-  position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 8px;
-  padding: calc(8px + env(safe-area-inset-top)) 16px 8px; background: var(--brand); color: var(--brand-ink);
+  flex: none; z-index: 5; display: flex; align-items: center; gap: 8px;
+  padding: calc(8px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) 8px calc(16px + env(safe-area-inset-left));
+  background: var(--brand); color: var(--brand-ink);
 }
 header.top h1 { font-size: 18px; margin: 0; flex: 1; font-weight: 650; letter-spacing: .2px; }
 header.top .sub { font-size: 12px; opacity: .8; font-weight: 400; margin-left: 6px; }
 header.top button { background: transparent; color: inherit; border: 1px solid rgba(255,255,255,.4); }
-main { flex: 1; padding: 12px 16px calc(var(--tab-h) + 24px + env(safe-area-inset-bottom)); max-width: 880px; width: 100%; margin: 0 auto; }
-main.wide { max-width: none; padding: 0 0 calc(var(--tab-h) + env(safe-area-inset-bottom)); }
+main {
+  flex: 1 1 auto; min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
+  padding: 12px calc(16px + env(safe-area-inset-right)) 24px calc(16px + env(safe-area-inset-left));
+}
+main:not(.wide) > * { max-width: 880px; margin-left: auto; margin-right: auto; }
+main.wide { padding: 0; overflow: hidden; display: flex; flex-direction: column; }
 nav.tabs {
-  position: fixed; left: 0; right: 0; bottom: 0; z-index: 6; display: flex; background: var(--card);
-  border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom);
+  flex: none; z-index: 6; display: flex; background: var(--card); border-top: 1px solid var(--line);
+  padding: 0 env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
 }
 nav.tabs button {
-  flex: 1; height: var(--tab-h); background: none; border: 0; color: var(--muted); font-size: 12px;
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; border-radius: 0;
+  flex: 1; min-width: 0; height: var(--tab-h); background: none; border: 0; color: var(--muted); font-size: 12px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; border-radius: 0; padding: 0 4px;
 }
+nav.tabs button .tx { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 nav.tabs button .ic { font-size: 20px; line-height: 1; }
 nav.tabs button.on { color: var(--accent); font-weight: 650; }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; margin: 0 0 12px; }
@@ -78,20 +90,26 @@ pre.code {
   margin: 8px 0 0; padding: 10px; border-radius: 10px; background: var(--bg); border: 1px solid var(--line);
   font: 12px/1.4 ui-monospace, Consolas, monospace; max-height: 260px; overflow: auto; white-space: pre;
 }
-.stage { position: relative; height: calc(100vh - 56px - var(--tab-h) - env(safe-area-inset-bottom) - env(safe-area-inset-top)); min-height: 280px; background: var(--canvas); }
+.stage { position: relative; flex: 1 1 auto; min-height: 72px; background: var(--canvas); }
 .stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; display: block; }
-.stage .tools { position: absolute; right: 10px; top: 10px; display: flex; flex-direction: column; gap: 8px; }
+.stage .tools { position: absolute; right: 10px; top: 10px; max-height: calc(100% - 20px); display: flex; flex-direction: column; flex-wrap: wrap-reverse; align-content: flex-start; gap: 8px; }
 .stage .tools button { min-width: 44px; padding: 0 10px; opacity: .92; }
-.stage .legend { position: absolute; left: 10px; bottom: 10px; font-size: 12px; color: var(--muted); background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; max-width: 70%; }
+.stage .legend { pointer-events: none; position: absolute; left: 10px; bottom: 10px; font-size: 12px; color: var(--muted); background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; max-width: 70%; }
 .sim { width: 100%; image-rendering: auto; border-radius: 10px; border: 1px solid var(--line); margin-top: 8px; background: var(--canvas); }
 .progress { height: 8px; background: var(--bg); border-radius: 99px; overflow: hidden; border: 1px solid var(--line); margin-top: 8px; }
 .progress > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
-.sheet-bg { position: fixed; inset: 0; z-index: 20; background: rgba(0,0,0,.45); display: flex; align-items: flex-end; justify-content: center; }
+.sheet-bg { position: fixed; left: 0; right: 0; top: 0; bottom: 0; z-index: 20; background: rgba(0,0,0,.45); display: flex; align-items: flex-end; justify-content: center; }
+html.vv .sheet-bg { bottom: auto; top: var(--vv-top, 0px); height: var(--vv-h, 100%); }
 .sheet-pane {
-  background: var(--bg); width: 100%; max-width: 720px; max-height: 92vh; overflow: auto; border-radius: 18px 18px 0 0;
-  padding: 16px 16px calc(20px + env(safe-area-inset-bottom));
+  background: var(--bg); width: 100%; max-width: 720px; max-height: 94%; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; border-radius: 18px 18px 0 0;
+  padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
 }
-.sheet-pane h3 { margin: 0 0 4px; font-size: 18px; }
+.sheet-pane h3 { margin: -16px -16px 4px; padding: 14px 16px 8px; font-size: 18px; position: sticky; top: -16px; z-index: 2; background: var(--bg); }      /* (sticky offsets are measured inside the padding: -16px is the edge of the window) */
+/* the buttons at the end of a window stay at the bottom of what can be seen, however long the form is */
+.sheet-pane > :last-child > .row:last-child {
+  position: sticky; bottom: calc(-16px - env(safe-area-inset-bottom)); z-index: 2; background: var(--bg); border-top: 1px solid var(--line);
+  margin: 14px -16px calc(-16px - env(safe-area-inset-bottom)) !important; padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
+}
 .group-h { margin: 16px 0 0; font-size: 13px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); font-weight: 650; }
 .login { max-width: 420px; margin: 0 auto; padding: 18vh 20px 20px; width: 100%; }
 .login h1 { margin: 0 0 4px; font-size: 28px; color: var(--accent); }
@@ -113,14 +131,19 @@ pre.code {
 .empty .big { font-size: 40px; }
 
 /* ---- editing the drawing (edit.js) ---- */
-.edstage { display: flex; flex-direction: column; height: calc(100vh - 56px - var(--tab-h) - env(safe-area-inset-bottom) - env(safe-area-inset-top)); min-height: 360px; }
-.edstage .stage { flex: 1; height: auto; min-height: 160px; }
-.edbars { background: var(--card); border-bottom: 1px solid var(--line); }
+.drawview { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.sheetpick { flex: none; margin: 8px 16px; width: calc(100% - 32px); }
+.edstage { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.edbars { flex: 0 1 auto; min-height: 0; max-height: 45%; overflow-y: auto; background: var(--card); border-bottom: 1px solid var(--line); }
+.eddock { flex: 0 1 auto; min-height: 0; max-height: 40%; overflow-y: auto; background: var(--card); border-top: 1px solid var(--line); }
+.eddock:empty { display: none; }
+.refgrid.big { grid-template-columns: repeat(3, 64px); gap: 8px; justify-content: center; margin: 14px 0 4px; }
+.refgrid.big button.ed { min-height: 64px; font-size: 26px; }
 .edrow { display: flex; gap: 4px; padding: 3px 8px; overflow-x: auto; align-items: center; scrollbar-width: none; }
 .edrow::-webkit-scrollbar { display: none; }
 .edrow > * { flex: none; }
 button.ed, select.ed { min-width: 40px; min-height: 40px; padding: 0 8px; font-size: 18px; }
-select.ed { font-size: 14px; max-width: 160px; }
+select.ed { font-size: 16px; max-width: 150px; }                  /* (16px: a smaller one makes a phone zoom the page in when it is touched) */
 button.ed.on { background: var(--accent); color: #fff; border-color: var(--accent); }
 .edrow .badge { white-space: nowrap; }
 .cmdlist details { border-top: 1px solid var(--line); }
@@ -137,4 +160,42 @@ button.ed .l { font-size: 10px; line-height: 1.1; opacity: .85; white-space: now
 .refgrid { display: grid; grid-template-columns: repeat(3, 44px); gap: 4px; margin: 4px 0 8px; }
 .helprow { display: flex; gap: 12px; align-items: center; min-height: 40px; border-bottom: 1px solid var(--line); }
 .helpic { flex: none; width: 44px; text-align: center; font-size: 20px; }
-.fsort { gap: 6px; margin: 6px 0; }
+.fsort { gap: 6px; margin: 6px 0; }/* ---- Shift / Ctrl / Alt buttons, the coordinate row, the list of layers, messages, a low screen (edit.js) ---- */
+button.ed.on.lock { outline: 2px solid var(--accent); outline-offset: 1px; background: var(--brand); border-color: var(--brand); }
+button.ed.goto { background: var(--brand); color: #fff; border-color: var(--brand); }
+.edrow .coordin { width: 88px; min-height: 40px; padding: 0 6px; font-size: 16px; flex: none; }
+.edrow .coordin.step { width: 64px; }
+.lay { padding: 10px 0; border-top: 1px solid var(--line); }
+.lay:first-child { border-top: 0; }
+.lay .l1, .lay .l2 { display: flex; align-items: center; gap: 8px; }
+.lay .l2 { margin-top: 6px; }
+.lay .swatch { width: 40px; min-height: 36px; padding: 0; flex: none; }
+.lay input[type=text] { min-height: 40px; }
+.lay button.tgl { opacity: .55; }
+.lay button.tgl.on { opacity: 1; border-color: var(--accent); }
+.lay .l2 button.small { min-width: 40px; padding: 0 10px; flex: none; }
+#toasts {
+  position: fixed; left: 12px; right: 12px; top: 0; bottom: 0; z-index: 30; display: flex; flex-direction: column; justify-content: flex-end; gap: 6px;
+  padding-bottom: calc(var(--tab-h) + 12px + env(safe-area-inset-bottom)); pointer-events: none;
+}
+html.vv #toasts { bottom: auto; top: var(--vv-top, 0px); height: var(--vv-h, 100%); }
+html.kbd #toasts { padding-bottom: 12px; }
+.msg.toast { background: var(--card); box-shadow: 0 4px 18px rgba(0,0,0,.25); pointer-events: none; }      /* (a finger goes through it to the drawing) */
+.login { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+/* a low screen (a phone on its side): everything gives room to the drawing */
+@media (max-height: 520px) {
+  :root { --tab-h: 42px; }
+  header.top { padding-top: calc(4px + env(safe-area-inset-top)); padding-bottom: 4px; }
+  header.top h1 { font-size: 16px; }
+  header.top .sub { display: none; }
+  #app[data-tab="draw"] header.top { display: none; }          /* (the drawing gets the room of the header; the other tabs keep it for the sign-out button) */
+  header.top button.small { min-height: 32px; }
+  nav.tabs button { flex-direction: row; gap: 6px; font-size: 13px; }
+  nav.tabs button .ic { font-size: 17px; }
+  button.ed.lbl { min-height: 38px; padding: 2px 6px; }
+  button.ed .l { display: none; }
+  button.ed, select.ed, .edrow .coordin { min-height: 36px; }
+  .stage .tools button { min-height: 36px; }
+  .edbars { max-height: 32%; }
+  .eddock { max-height: 32%; }
+}
