@@ -139,16 +139,25 @@
   const nodesOf = c => G.nodes(c);
 
   // ------------------------------------------------------------------------------------------ undo
-  const MAX_UNDO = 40, MAX_BYTES = 60e6;
-  const snapshot = () => ({ p: JSON.stringify(S.project), sel: [...E.sel], sheet: S.sheetId });
+  const MAX_UNDO = 40;
+  /** What undo keeps: the project without its vectors (small) and, for each sheet, the list of its vector OBJECTS.  A
+   *  vector is never changed, a changed one is a new object, so the objects can be kept as they are: a step costs a list of
+   *  references, not a copy of a drawing of tens of megabytes. */
+  const snapshot = () => ({ meta: JSON.stringify(S.project, (k, v) => (k === "vectors" ? undefined : v)),
+                            vec: S.project.sheets.map(s => s.vectors.slice()), sel: [...E.sel], sheet: S.sheetId });
+  /** how many steps are kept: 40, and 3 for a big drawing (a step that comes from the engine keeps the whole old drawing) */
+  function trimUndo() {
+    const cap = S.project && S.project.sheets.some(sh => B.sceneSegs(sh) > 30000) ? 3 : MAX_UNDO;
+    while (E.undo.length > cap) E.undo.shift();
+  }
   function remember() {
     E.undo.push(snapshot());
     E.redo = [];
-    let total = E.undo.reduce((n, s) => n + s.p.length, 0);
-    while (E.undo.length > MAX_UNDO || (total > MAX_BYTES && E.undo.length > 1)) total -= E.undo.shift().p.length;
+    trimUndo();
   }
   function restore(s) {
-    S.project = JSON.parse(s.p);
+    S.project = JSON.parse(s.meta);
+    S.project.sheets.forEach((sh, i) => { sh.vectors = s.vec[i] || []; });
     S.sheetId = S.project.sheets.some(x => x.id === s.sheet) ? s.sheet : S.project.sheets[0].id;
     E.sel = new Set(s.sel); E.node = null; E.poly = [];
     keepSelection(); B.changed();
@@ -290,23 +299,27 @@
 
   // ------------------------------------------------------------------------------------------ the drawing and its overlay
   const ACCENT = "#f97316";
-  function strokeVectors(ctx, vectors, dx, dy) {
-    const path = new Path2D();
-    for (const v of vectors) for (const c of B.flatOf(v)) {
-      c.pts.forEach(([x, y], i) => i ? path.lineTo(x + dx, y + dy) : path.moveTo(x + dx, y + dy));
-      if (c.closed) path.closePath();
-    }
-    ctx.stroke(path);
+  /** the vectors, moved by (dx, dy), as lines: only what is on the screen and as much detail as its size asks for
+   *  (the same rule as the drawing itself, so that a selection of all of a big drawing is as cheap as the drawing) */
+  function strokeVectors(ctx, vectors, dx, dy, view, w, h) {
+    const shifted = { s: view.s, ox: view.ox + dx * view.s, oy: view.oy - dy * view.s };     // (the screen, as the moved vectors see it)
+    const g = B.lodGroups(vectors, shifted, w, h, () => "all").get("all");
+    if (!g) return;
+    ctx.save();
+    if (dx || dy) ctx.translate(dx, dy);
+    ctx.fillStyle = ctx.strokeStyle;
+    ctx.stroke(g.lines); ctx.fill(g.dots);
+    ctx.restore();
   }
-  function overlay(ctx, view, px) {
+  function overlay(ctx, view, px, dark, w, h) {
     const sel = selected(), g = E.ghost;
     ctx.lineJoin = "round"; ctx.lineCap = "round";
     ctx.strokeStyle = ACCENT; ctx.lineWidth = 2.6 * px;
-    if (sel.length && !(g && g.vectors)) strokeVectors(ctx, sel, 0, 0);
+    if (sel.length && !(g && g.vectors)) strokeVectors(ctx, sel, 0, 0, view, w, h);
     if (g && g.dx !== undefined) {                 // a move in progress: where it will land
-      ctx.setLineDash([5 * px, 4 * px]); strokeVectors(ctx, sel, g.dx, g.dy); ctx.setLineDash([]);
+      ctx.setLineDash([5 * px, 4 * px]); strokeVectors(ctx, sel, g.dx, g.dy, view, w, h); ctx.setLineDash([]);
     }
-    if (g && g.vectors) strokeVectors(ctx, g.vectors, 0, 0);
+    if (g && g.vectors) strokeVectors(ctx, g.vectors, 0, 0, view, w, h);
     const bb = sel.length ? G.bbox(sel, B.flatOf) : null;
     if (bb && E.tool !== "nodes") {
       const ox = g && g.dx !== undefined ? g.dx : 0, oy = g && g.dx !== undefined ? g.dy : 0;
@@ -424,7 +437,7 @@
       ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, cv.width, cv.height);
       ctx.drawImage(snap.c, (view.ox - snap.v.ox * f) * dpr, (view.oy - snap.v.oy * f) * dpr, snap.c.width * f, snap.c.height * f);
       ctx.setTransform(dpr * view.s, 0, 0, -dpr * view.s, dpr * view.ox, dpr * view.oy);
-      if (E.ghost || E.rubber || E.mark) overlay(ctx, view, 1 / view.s);          // (what is being drawn or moved goes on top)
+      if (E.ghost || E.rubber || E.mark) overlay(ctx, view, 1 / view.s, false, cv.clientWidth, cv.clientHeight);          // (what is being drawn or moved goes on top)
     }
     const toWorld = (px, py) => [(px - view.ox) / view.s, (view.oy - py) / view.s];
     const tol = () => 14 / view.s;
@@ -801,8 +814,8 @@
   async function exec(cmd, values) {
     const before = snapshot();
     const r = await runJob("command", { project: S.project, command: cmd.id, sheet: sheet().id, selection: [...E.sel], values, active_layer: activeLayer().id });
-    if (!r.changed && JSON.stringify(r.project) === before.p) { E.sel = new Set(r.selection); toast(r.messages[0] || t("ed.nochange"), "warn"); B.render(); return; }
-    E.undo.push(before); E.redo = [];
+    if (!r.changed) { E.sel = new Set(r.selection); toast(r.messages[0] || t("ed.nochange"), "warn"); B.render(); return; }
+    E.undo.push(before); E.redo = []; trimUndo();
     S.project = r.project; S.sheetId = S.project.sheets.some(x => x.id === S.sheetId) ? S.sheetId : S.project.sheets[0].id;
     E.sel = new Set(r.selection); E.node = null;
     B.changed();
@@ -868,7 +881,7 @@
       const before = snapshot();
       const r = await runJob("nest", { project: S.project, objects: ids, quantities,
         settings: { width: s.width, height: s.height, margin: s.margin, spacing: s.spacing, rotation: s.rotation, iterations: s.iterations, squeeze_angle: s.squeeze || 0 } });
-      E.undo.push(before); E.redo = [];
+      E.undo.push(before); E.redo = []; trimUndo();
       S.project = r.project; S.sheetId = S.project.sheets[0].id; E.sel = new Set(); S.views = {};
       B.changed();
       const n = x => (Array.isArray(x) ? x.length : (+x || 0));

@@ -188,14 +188,18 @@
   };
   const mod = a => ((a % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
   /** the exact box of some vectors (``flatOf`` is not needed any more; it is accepted so that old calls work) */
-  G.bbox = vectors => {
+  const unionBox = boxes_ => {
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-    for (const v of vectors) for (const c of v.contours) {
-      const b = G.contourBBox(c);
+    for (const b of boxes_) {
+      if (!b) continue;
       if (b.x0 < x0) x0 = b.x0; if (b.x1 > x1) x1 = b.x1; if (b.y0 < y0) y0 = b.y0; if (b.y1 > y1) y1 = b.y1;
     }
     return x0 <= x1 ? { x0, y0, x1, y1 } : null;
   };
+  /** the box of one vector worked out from its contours (see ``vbox`` for the one that is kept) */
+  const boxOfVector = v => unionBox(v.contours.map(G.contourBBox));
+  /** the exact box of some vectors: from the box each vector keeps (a drawing of thousands is not measured again) */
+  G.bbox = vectors => unionBox(vectors.map(G.vbox));
 
   const segDist = (px, py, ax, ay, bx, by) => {
     const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
@@ -229,7 +233,7 @@
   /** the exact box of one vector, made once (a vector object is never changed: a changed vector is a new object) */
   G.vbox = v => {
     let b = boxes.get(v);
-    if (b === undefined) { b = G.bbox([v]); boxes.set(v, b); }
+    if (b === undefined) { b = boxOfVector(v); boxes.set(v, b); }
     return b;
   };
   /** whether a vector is taken by a window (wholly inside) or a crossing (touching) of a rectangle */

@@ -19,6 +19,7 @@ adds HTTPS (``--trust-proxy`` then takes the client address and the scheme from 
 """
 from __future__ import annotations
 
+import base64
 import gzip
 import hashlib
 import hmac
@@ -32,7 +33,7 @@ import time
 import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from .api import API_OPS, ERROR_STATUS, call, status_of  # noqa: F401  (API_OPS, ERROR_STATUS: part of this module's face)
 from .files import FILE_OPS, Files
@@ -343,6 +344,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, {"ok": True}, {"Set-Cookie": self._cookie("", 0)})
         if not self.server.auth.valid(self._token()):
             return self._fail(401, "not_logged_in", "enter the key first", close=True)
+        if name == "import_file":
+            return self._import_file()
         if name not in API_OPS and name not in FILE_OPS:
             return self._fail(404, "unknown_operation", f"there is no operation '{name}'", close=True,
                               operation=name)
@@ -356,6 +359,39 @@ class Handler(BaseHTTPRequestHandler):
             status, out = self.server.hub.submit(agent_id, name, payload)
         else:
             status, out = call(self.server.service, self.server.files, name, payload)
+        self._json(status, out)
+
+    def _import_file(self) -> None:
+        """``POST /api/import_file?name=...&thickness=...``: the bytes of a drawing as the body, answered like ``import``.
+        A phone that opens a big file this way does not make a base64 copy of it (and a JSON copy of that, and a gzipped
+        copy of that) in its memory: the file is sent as it is."""
+        query = parse_qs(urlsplit(self.path).query)
+        name = (query.get("name") or ["file"])[0][:255]
+        payload: dict = {"name": name}
+        try:
+            if query.get("thickness"):
+                payload["thickness"] = float(query["thickness"][0])
+            length = int(self.headers.get("Content-Length", ""))
+        except ValueError:
+            return self._fail(400, "bad_request", "thickness must be a number and Content-Length is required", close=True)
+        if length <= 0 or length > self.server.max_body:
+            return self._fail(413 if length > 0 else 400, "too_large" if length > 0 else "empty_file",
+                              f"the file is larger than {self.server.max_body // (1024 * 1024)} MB" if length > 0 else "the file is empty",
+                              close=True, limit_bytes=self.server.max_body)
+        raw = self.rfile.read(length)
+        self._body_taken = True
+        if len(raw) != length:
+            self.close_connection = True
+            return None
+        if self.server.hub is not None:                 # a hub passes jobs as JSON: the bytes go as base64 from here
+            agent_id = self.server.auth.agent_of(self._token())
+            if agent_id is None:
+                return self._fail(401, "not_logged_in", "enter the key first", close=True)
+            payload["data_b64"] = base64.b64encode(raw).decode("ascii")
+            status, out = self.server.hub.submit(agent_id, "import", payload)
+        else:
+            payload["data"] = raw
+            status, out = call(self.server.service, self.server.files, "import", payload)
         self._json(status, out)
 
     # -- the agents of a hub ---------------------------------------------------------------------

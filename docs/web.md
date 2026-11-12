@@ -164,11 +164,22 @@ of JSON):
 * **one call for a quick job**: `job.start` takes `wait` (milliseconds); a job that is over by then answers in the same
   call (`state: "done"`, `result`) instead of three calls through the hub; a longer one is polled as before, quickly at
   first;
-* **drawn from curves, not from points**: the page makes one path per colour with the arcs and beziers as arcs and
-  beziers (a quarter of a million curves in 0.2 s, 100 MB of memory) and only strokes it at every frame; while a finger
-  moves a big drawing the picture that is on the screen is moved and scaled, and the drawing is made again when the finger
-  is up; a tap looks at the few vectors whose box is under the finger; the project is kept in the browser's storage
-  after the last change (not at every one) and not at all when it is too big for it;
+* **drawn by what can be seen**: stroking one path of 264 000 curves took 25 s (a phone gives up), and at the size of a
+  phone most of the 14 000 vectors are smaller than a pixel. So the page draws only what is on the screen, a vector under
+  1.2 px as a dot, one under 60 px as a line through at most 32 of its points, and only a bigger one with its curves (at most
+  2500 curves per frame, the biggest first); the paths of a vector are made when they are first wanted. The first frame of
+  this file now takes 0.09 s and the next ones 3 to 5 ms; the selection is drawn the same way (select all is as cheap as the
+  drawing). While a finger moves a big drawing the picture that is on the screen is moved and scaled and the drawing is
+  made again when the finger is up; a tap looks at the few vectors whose box is under the finger;
+* **a file from the phone is sent as it is**: `POST /api/import_file?name=...&thickness=...` with the bytes as the body
+  (`application/octet-stream`), answered like `import`. The page no longer makes a base64 copy of a 25 MB file, a JSON copy
+  of that and a gzipped copy of that in the memory of the phone (it still does when a drawing is added to a project, which
+  goes with it as JSON). Opening the file *from the computer* sends nothing at all, which is the way for a big one;
+* **undo keeps references, not copies**: a vector is never changed (a changed one is a new object), so a step of undo is the
+  project without its vectors and a list of the vector objects of each sheet, not a JSON copy of tens of megabytes; a step
+  that comes from the engine (a command, nesting) keeps the whole old drawing, so a big drawing keeps 3 steps and a small one
+  40. The project is kept in the browser's storage after the last change (not at every one) and not at all when it is too
+  big for it;
 * **the schema and the folders together**: the two calls of the start go at the same time.
 
 What is still heavy: every call that needs the project (a command, *Calculate*, *Write G-code*) sends the whole project and

@@ -232,6 +232,25 @@ def test_the_files_of_the_page_come_with_an_etag_and_then_as_not_modified(web):
     assert call(web, "GET", "/static/app.js", headers={"If-None-Match": '"other"'})[0] == 200
 
 
+def test_a_file_can_be_sent_as_it_is_and_is_read_like_any_import(web):
+    cookie = sign_in(web)
+    status, _, data = call(web, "POST", "/api/import_file?name=plate%20%C3%A7.svg&thickness=12", SVG,
+                           {"Content-Type": "application/octet-stream"}, cookie)
+    out = json.loads(data)
+    assert status == 200 and out["project"]["name"] == "plate ç" and out["project"]["material"]["thickness"] == 12.0
+    assert len(out["project"]["sheets"][0]["vectors"]) == 1
+    same = ServiceHost().handle("import", {"name": "plate ç.svg", "data": SVG, "thickness": 12})
+    assert same["project"]["sheets"][0]["width"] == out["project"]["sheets"][0]["width"]
+    # what is not right is refused, not swallowed
+    h = {"Content-Type": "application/octet-stream"}
+    assert call(web, "POST", "/api/import_file?name=a.svg", b"", h, cookie)[0] == 400
+    assert call(web, "POST", "/api/import_file?name=a.svg&thickness=abc", SVG, h, cookie)[0] == 400
+    assert call(web, "POST", "/api/import_file?name=a.svg", b"x" * ((1 << 20) + 1), h, cookie)[0] == 413          # (the limit of this server)
+    status, _, data = call(web, "POST", "/api/import_file?name=a.dxf", b"nonsense", h, cookie)
+    assert status == 400 and json.loads(data)["error"]
+    assert call(web, "POST", "/api/import_file?name=a.svg", SVG, h)[0] == 401                                      # (no key, no import)
+
+
 # -- the reader of CorelDRAW files ---------------------------------------------------------------------------------------
 
 def test_the_reader_reads_its_numbers_as_it_did_and_stops_at_the_end():
@@ -321,5 +340,10 @@ def test_a_big_answer_and_a_big_call_go_through_the_hub_gzipped(tmp_path, monkey
         status, out = c.api("validate", {"project": project})
         assert status == 200 and out["counts"]["vectors"] == 400
         assert len(json.dumps(out)) > agent_mod.GZIP_FROM and sent and max(sent) > agent_mod.GZIP_FROM       # (the answer went gzipped)
+        # a file sent as it is is passed on to the agent (as base64 between the hub and the agent) and read there
+        status, _, data = call(s.server, "POST", "/api/import_file?name=plate.svg&thickness=15", SVG,
+                               {"Content-Type": "application/octet-stream"}, c.cookie)
+        got = json.loads(data)
+        assert status == 200 and got["project"]["material"]["thickness"] == 15.0 and len(got["project"]["sheets"][0]["vectors"]) == 1
     finally:
         s.close()

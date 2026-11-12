@@ -192,6 +192,18 @@ async function api(op, payload) {
   return body;
 }
 
+/** a file as the body of a request (``application/octet-stream``), answered like any call */
+async function apiRaw(path, file) {
+  let r;
+  try { r = await fetch(path, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/octet-stream" }, body: file }); }
+  catch { throw new ApiError({ error: "network" }, 0); }
+  let body;
+  try { body = await r.json(); } catch { body = { error: "bad_answer", message: "HTTP " + r.status }; }
+  if (r.status === 401 && body.error === "not_logged_in") signedOut();
+  if (body.error) throw new ApiError(body, r.status);
+  return body;
+}
+
 async function runJob(op, payload) {
   const first = await api("job.start", { op, payload, wait: 1500 });       // (a job that is over within 1.5 s answers right here)
   if (first.state === "done") return first.result;
@@ -287,22 +299,39 @@ const flatCache = new WeakMap();
 const flatten = IyiGeom.flatten;                           // (geom.js: the points of a contour as a polyline)
 const flatOf = v => { let f = flatCache.get(v); if (!f) { f = v.contours.map(c => ({ closed: c.closed, pts: flatten(c) })); flatCache.set(v, f); } return f; };
 
-/** The drawing of a sheet as one Path2D per colour, with the arcs and beziers as arcs and beziers (no thousands of little
- *  lines, no arrays of points).  Made when the project changed (``S.rev``) or a layer was shown, hidden or coloured. */
-const scenes = new Map();
-function sceneOf(sheet) {
-  const layers = layerMap(S.project);
-  const key = `${S.rev}|${sheet.id}|${sheet.vectors.length}|${S.project.layers.map(l => `${l.id}${l.color}${l.visible ? 1 : 0}`).join()}`;
-  let sc = scenes.get(sheet.id);
-  if (sc && sc.key === key) return sc;
-  const paths = new Map();
-  let segs = 0;
-  for (const v of sheet.vectors) {
-    const l = layers.get(v.layer);
-    if (l && !l.visible) continue;
-    const col = (l && l.color) || "#1f77b4";
-    let path = paths.get(col);
-    if (!path) paths.set(col, path = new Path2D());
+/** How a drawing is drawn by what can be seen of it.  A stroked path of a quarter of a million curves takes tens of
+ *  seconds to draw (and a phone gives up), and at the size of a phone most of the vectors of a big drawing are smaller
+ *  than a pixel.  So: what is outside the screen is not drawn; a vector under 1.2 px is a dot; one under 60 px is a line
+ *  through (at most) 32 of its points; only a bigger one is drawn with its curves (a budget of curves per frame, the
+ *  biggest first).  The paths of a vector are made when they are first wanted and kept with the vector. */
+const LOD_DOT_PX = 1.2, LOD_FULL_PX = 60, LOD_FULL_BUDGET = 2500;
+const lodInfo = new WeakMap();
+function lodOf(v) {
+  let i = lodInfo.get(v);
+  if (!i) lodInfo.set(v, i = { simple: null, full: null, segs: v.contours.reduce((n, c) => n + c.segs.length, 0) });
+  return i;
+}
+const segEnd = s => (s[0] === "C" ? 5 : 1);
+function simplePathOf(v) {
+  const i = lodOf(v);
+  if (!i.simple) {
+    const p = new Path2D();
+    for (const c of v.contours) {
+      const stride = Math.max(1, Math.ceil((c.segs.length + 1) / 32));
+      p.moveTo(c.start[0], c.start[1]);
+      for (let k = stride - 1; k < c.segs.length - 1; k += stride) { const s = c.segs[k], e = segEnd(s); p.lineTo(s[e], s[e + 1]); }
+      const last = c.segs[c.segs.length - 1];
+      if (last) { const e = segEnd(last); p.lineTo(last[e], last[e + 1]); }
+      if (c.closed) p.closePath();
+    }
+    i.simple = p;
+  }
+  return i.simple;
+}
+function fullPathOf(v) {
+  const i = lodOf(v);
+  if (!i.full) {
+    const path = new Path2D();
     for (const c of v.contours) {
       let [x, y] = c.start;
       path.moveTo(x, y);
@@ -315,12 +344,43 @@ function sceneOf(sheet) {
         } else { path.bezierCurveTo(s[1], s[2], s[3], s[4], s[5], s[6]); x = s[5]; y = s[6]; }
       }
       if (c.closed) path.closePath();
-      segs += c.segs.length;
     }
+    i.full = path;
   }
-  sc = { key, paths, segs };
-  scenes.set(sheet.id, sc);
-  return sc;
+  return i.full;
+}
+/** The vectors that can be seen in a screen of w x h (css pixels) with this view, as {lines, dots} Path2D per colour
+ *  (``colorOf`` gives null for a vector that is not drawn). */
+function lodGroups(vectors, view, w, h, colorOf) {
+  const s = view.s, vx0 = -view.ox / s, vx1 = (w - view.ox) / s, vy1 = view.oy / s, vy0 = (view.oy - h) / s;
+  const groups = new Map(), big = [];
+  for (const v of vectors) {
+    const col = colorOf(v);
+    if (col === null) continue;
+    const b = IyiGeom.vbox(v);
+    if (!b || b.x1 < vx0 || b.x0 > vx1 || b.y1 < vy0 || b.y0 > vy1) continue;
+    let g = groups.get(col);
+    if (!g) groups.set(col, g = { lines: new Path2D(), dots: new Path2D() });
+    const size = Math.max(b.x1 - b.x0, b.y1 - b.y0) * s;
+    if (size < LOD_DOT_PX) g.dots.rect((b.x0 + b.x1) / 2 - 0.5 / s, (b.y0 + b.y1) / 2 - 0.5 / s, 1 / s, 1 / s);
+    else if (size >= LOD_FULL_PX) big.push([size, v, g]);
+    else g.lines.addPath(simplePathOf(v));
+  }
+  big.sort((a, b) => b[0] - a[0]);
+  let budget = LOD_FULL_BUDGET;
+  for (const [, v, g] of big) {
+    const n = lodOf(v).segs;
+    if (budget >= n) { budget -= n; g.lines.addPath(fullPathOf(v)); } else g.lines.addPath(simplePathOf(v));
+  }
+  return groups;
+}
+/** how many segments a sheet has (for deciding how to draw it), counted once per change of the project */
+const segCounts = new Map();
+function sceneSegs(sheet) {
+  const key = S.rev + "|" + sheet.vectors.length;
+  let c = segCounts.get(sheet.id);
+  if (!c || c.key !== key) segCounts.set(sheet.id, c = { key, n: sheet.vectors.reduce((n, v) => n + lodOf(v).segs, 0) });
+  return c.n;
 }
 /** the toolpaths that were calculated, as paths per depth: made once for a calculation */
 const previews = new WeakMap();
@@ -367,7 +427,10 @@ function drawScene(cv, sheet, view, extra) {
   ctx.lineWidth = 1.5 * px; ctx.strokeStyle = dark ? "#4b6455" : "#9db2a5"; ctx.stroke();
   // the vectors: their paths are made once (with the curves as curves) and only stroked at every frame
   ctx.lineWidth = 1.6 * px; ctx.lineJoin = "round";
-  for (const [col, path] of sceneOf(sheet).paths) { ctx.strokeStyle = col; ctx.stroke(path); }
+  const layers = layerMap(p);
+  for (const [col, g] of lodGroups(sheet.vectors, view, w, hgt, v => { const l = layers.get(v.layer); return l && !l.visible ? null : (l && l.color) || "#1f77b4"; })) {
+    ctx.strokeStyle = col; ctx.stroke(g.lines); ctx.fillStyle = col; ctx.fill(g.dots);
+  }
   // the toolpaths
   if (S.showPaths && S.results) {
     const th = Math.max(sheetThickness(p, sheet), 0.01), { buckets, rapid, drills } = previewOf(sheet, th);
@@ -377,7 +440,7 @@ function drawScene(cv, sheet, view, extra) {
     ctx.fillStyle = dark ? "#fbbf24" : "#b45309";
     for (const [x, y] of drills) { ctx.beginPath(); ctx.arc(x, y, 3 * px, 0, 7); ctx.fill(); }
   }
-  if (extra && extra.overlay) extra.overlay(ctx, view, px, dark);      // the selection, the nodes, what is being drawn
+  if (extra && extra.overlay) extra.overlay(ctx, view, px, dark, w, hgt);      // the selection, the nodes, what is being drawn
 }
 
 function drawStage(sheet) {
@@ -597,10 +660,17 @@ async function openFile(input, replace) {
   if (!file || S.busy) return;
   try {
     setBusy({ label: t("busy"), k: 0, n: 0 });
-    const data_b64 = await fileToB64(file);
-    setBusy(null);
     const add = !replace && S.project;
-    const out = await runJob("import", { name: file.name, data_b64, thickness: +($("#thk") && $("#thk").value) || 18, ...(add ? { project: S.project } : {}) });
+    const thickness = +($("#thk") && $("#thk").value) || 18;
+    let out;
+    if (add) {                                       // (added to a project: the project goes with it, as JSON)
+      const data_b64 = await fileToB64(file);
+      setBusy(null);
+      out = await runJob("import", { name: file.name, data_b64, thickness, project: S.project });
+    } else {                                         // a new project: the file is sent as it is (no copy of it in this phone's memory)
+      out = await apiRaw(`/api/import_file?name=${encodeURIComponent(file.name)}&thickness=${thickness}`, file);
+      setBusy(null);
+    }
     S.project = out.project; S.report = out.report;
     S.sheetId = S.project.sheets[0].id; S.views = {};
     if (!add) { setFile(null); S.tab = out.project.toolpaths.length || out.report.errors.length ? "project" : "paths"; if (window.IyiPage.editor) window.IyiPage.editor.clear(); }
@@ -1061,7 +1131,7 @@ async function start() {
 // what edit.js (the drawing tools) needs of this file; it adds ``editor`` to it
 window.IyiPage = { S, h, $, t, TXT, api, runJob, toast, fail, openSheet, paramsForm, numberInput, fmt, store, guarded, render, touch,
                    persist, changed, activeSheet, layerMap, flatOf, drawScene, fitView, setFile, editor: null,
-                   sceneSegs: sheet => sceneOf(sheet).segs };
+                   sceneSegs, lodGroups };
 
 (async () => {
   let note;
