@@ -161,6 +161,10 @@ of JSON):
   Encoding: gzip`, unpacked up to the size limit, a "zip bomb" is refused), the server and the hub answer gzipped, and an
   agent talks to the hub gzipped both ways. The files of the page come with an `ETag`: a phone that has them is answered
   `304` without a body and the page opens from its own copy;
+* **the hub does not read an agent's answer**: the agent writes it as one piece of JSON text (`out_json` in `/agent/reply`)
+  and the hub sends those bytes on to the browser as they are. A drawing is millions of numbers; reading them and writing
+  them again took about 3 s and a quarter of a gigabyte on the server. The hub says `raw_out` when an agent registers; an
+  agent that meets a hub without it (an older one) sends the object as before;
 * **one call for a quick job**: `job.start` takes `wait` (milliseconds); a job that is over by then answers in the same
   call (`state: "done"`, `result`) instead of three calls through the hub; a longer one is polled as before, quickly at
   first;

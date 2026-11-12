@@ -131,6 +131,7 @@ class Agent:
         self.max_body = 64 * 1024 * 1024                       # (the hub tells at registration)
         self._service, self._files, self._use_files, self._roots = service, files, use_files, roots
         self._gzip_ok = True                                  # (until a hub shows that it does not take gzipped bodies)
+        self._raw_out = False                                 # (until the hub says at the registration that it takes JSON text)
         self._engine_lock = threading.Lock()
         self._state_lock = threading.Lock()
         self._lock = threading.Lock()
@@ -235,6 +236,7 @@ class Agent:
             raise ServerError(f"registration refused ({code}): {g.get('message') or g.get('error')}")
         if isinstance(g.get("max_body"), int) and g["max_body"] > 0:
             self.max_body = g["max_body"]
+        self._raw_out = g.get("raw_out") is True              # (only a hub that says so gets the answers as JSON text)
 
     # -- doing what was asked ------------------------------------------------------------------------
     def _engine(self) -> tuple[ServiceHost, Files | None]:
@@ -264,8 +266,12 @@ class Agent:
 
     def _reply_body(self, job_id: object, status: int, out: dict) -> bytes:
         def encode(st: int, o: dict) -> bytes:
-            return json.dumps({"agent_id": self.agent_id, "job_id": job_id, "status": st, "out": o},
-                              separators=(",", ":"), allow_nan=False).encode("utf-8")
+            head = {"agent_id": self.agent_id, "job_id": job_id, "status": st}
+            if self._raw_out:        # the answer as one piece of JSON text: the hub passes it on without reading it
+                head["out_json"] = json.dumps(o, separators=(",", ":"), allow_nan=False)
+            else:                    # (a hub of an older version wants the object)
+                head["out"] = o
+            return json.dumps(head, separators=(",", ":"), allow_nan=False).encode("utf-8")
         try:
             data = encode(status, out)
         except (TypeError, ValueError) as exc:

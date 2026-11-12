@@ -359,6 +359,13 @@ class Handler(BaseHTTPRequestHandler):
             status, out = self.server.hub.submit(agent_id, name, payload)
         else:
             status, out = call(self.server.service, self.server.files, name, payload)
+        self._answer(status, out)
+
+    def _answer(self, status: int, out) -> None:
+        """An answer of the service; or of an agent, which comes as the JSON the agent wrote: a drawing is millions of
+        numbers and the hub would only read them and write them again."""
+        if isinstance(out, (bytes, bytearray)):
+            return self._send(status, bytes(out), "application/json", {"Cache-Control": "no-store"})
         self._json(status, out)
 
     def _import_file(self) -> None:
@@ -392,7 +399,7 @@ class Handler(BaseHTTPRequestHandler):
         else:
             payload["data"] = raw
             status, out = call(self.server.service, self.server.files, "import", payload)
-        self._json(status, out)
+        self._answer(status, out)
 
     # -- the agents of a hub ---------------------------------------------------------------------
     def _agent(self, action: str) -> None:
@@ -419,11 +426,13 @@ class Handler(BaseHTTPRequestHandler):
             if action == "register":
                 hub.register(body.get("agent_id"), body.get("token"), body.get("name"))
                 self.server.log(f"{ip} agent {str(body.get('name') or '')[:30]!r} registered")
-                return self._json(200, {"ok": True, "max_body": self.server.max_body, "api": API_VERSION})
+                return self._json(200, {"ok": True, "max_body": self.server.max_body, "api": API_VERSION, "raw_out": True})
             if action == "poll":
                 job = hub.poll(body.get("agent_id"))
                 return self._json(200, {"job": job} if job else {})
-            taken = hub.reply(body.get("agent_id"), body.get("job_id"), body.get("status"), body.get("out"))
+            raw_json = body.get("out_json")
+            taken = hub.reply(body.get("agent_id"), body.get("job_id"), body.get("status"), body.get("out"),
+                              raw=raw_json.encode("utf-8") if isinstance(raw_json, str) else None)
             return self._json(200, {"ok": taken})
         except HubError as exc:
             return self._fail(exc.status, exc.code, exc.message)

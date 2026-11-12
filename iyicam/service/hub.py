@@ -60,7 +60,7 @@ class _Job:
         self.id = secrets.token_hex(8)
         self.op, self.payload = op, payload
         self.done = threading.Event()
-        self.status, self.out = 0, {}
+        self.status, self.out = 0, {}                   # (``out``: the answer, a dict or, as it came from the agent, its JSON as bytes)
 
 
 class _Agent:
@@ -204,7 +204,7 @@ class Hub:
                     return None
                 self._cv.wait(min(left, 5.0))
 
-    def reply(self, agent_id: object, job_id: object, status: object, out: object) -> bool:
+    def reply(self, agent_id: object, job_id: object, status: object, out: object, raw: bytes | None = None) -> bool:
         """The agent's answer to a call it took.  ``False`` when nobody waits for it any more (the call timed out)."""
         with self._cv:
             agent = self._agents.get(agent_id) if isinstance(agent_id, str) else None
@@ -214,8 +214,10 @@ class Hub:
             job = agent.inflight.pop(job_id, None) if isinstance(job_id, str) else None
         if job is None:
             return False
+        if raw is not None:                             # the answer as the agent wrote it: it goes on as it is, not parsed here
+            out = raw if raw[:1] == b"{" and raw[-1:] == b"}" else None
         if not (isinstance(status, int) and not isinstance(status, bool) and 100 <= status <= 599) \
-                or not isinstance(out, dict):
+                or not isinstance(out, (dict, bytes)):
             status, out = 502, {"error": "bad_agent_answer", "message": "the agent's answer could not be read"}
         job.status, job.out = status, out
         job.done.set()

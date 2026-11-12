@@ -317,6 +317,53 @@ def test_an_agent_sends_plain_to_a_hub_that_does_not_know_gzip():
         httpd.server_close()
 
 
+def test_an_answer_as_json_text_is_passed_on_by_the_hub_as_it_is(tmp_path, monkeypatch):
+    from test_hub import SERVER_KEY, TOKEN, Client, Setup
+    monkeypatch.setenv("IYICAM_HOME", str(tmp_path / "home"))
+    folder = tmp_path / "files"
+    folder.mkdir()
+    s = Setup(tmp_path, folder)
+    try:
+        raw = Client(s.port)
+        agent_id = uuid.uuid4().hex
+        status, reg = raw.agent_call("register", {"agent_id": agent_id, "token": TOKEN})
+        assert status == 200 and reg["raw_out"] is True                    # (the hub says that it takes JSON text)
+        c = s.browser()
+
+        def ask(out_json, code=200):
+            got = {}
+            t = threading.Thread(target=lambda: got.update(r=call(s.server, "POST", "/api/ping", b"{}", {"Content-Type": "application/json"}, c.cookie)))
+            t.start()
+            job = None
+            for _ in range(40):
+                job = raw.agent_call("poll", {"agent_id": agent_id})[1].get("job")
+                if job:
+                    break
+            assert job
+            raw.agent_call("reply", {"agent_id": agent_id, "job_id": job["id"], "status": code, "out_json": out_json})
+            t.join(10)
+            return got["r"]
+        text = '{"project":{"n":1.0000000001,"s":"ü \\u00e7"},"a":[1,2,3]}'
+        status, _, body = ask(text)
+        assert status == 200 and body == text.encode("utf-8")                # (byte for byte what the agent wrote)
+        status, _, body = ask('{"error":"path_not_allowed","message":"no"}', 403)
+        assert status == 403 and json.loads(body)["error"] == "path_not_allowed"
+        status, _, body = ask("[1, 2]")                                      # (not an object: refused, not passed on)
+        assert status == 502 and json.loads(body)["error"] == "bad_agent_answer"
+    finally:
+        s.close()
+
+
+def test_an_agent_writes_its_answer_as_text_only_for_a_hub_that_takes_it():
+    a = agent_mod.Agent("http://127.0.0.1:1", "K", uuid.uuid4().hex, "ABCDEF-GHJKMN-PQRSTU-VWXYZ2")
+    out = {"project": {"n": [1.5, 2]}, "ok": True}
+    old = json.loads(a._reply_body("j", 200, out))
+    assert old["out"] == out and "out_json" not in old                      # (a hub of the version before: the object)
+    a._raw_out = True
+    new = json.loads(a._reply_body("j", 200, out))
+    assert json.loads(new["out_json"]) == out and "out" not in new
+
+
 # -- a hub and an agent: big answers go gzipped ----------------------------------------------------------------------------------
 
 def test_a_big_answer_and_a_big_call_go_through_the_hub_gzipped(tmp_path, monkeypatch):
