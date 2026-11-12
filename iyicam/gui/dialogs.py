@@ -6,6 +6,7 @@ import json
 import math
 import shutil
 import threading
+import tomllib
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, QUrl
@@ -26,9 +27,11 @@ from ..nesting.nest import NestCancelled, NestSettings
 from ..nesting.parts import (ROTATION_MODES, RULE_USES_VALUE, apply_nesting, parse_angles, prepare_nesting,
                              run_nesting, squeeze_lines)
 from ..nesting.stock import leftover_of_sheet, stock_from_vectors, use_up
+from ..post import editing
 from .files import open_file, save_file
 from .material_info import material_summary
 from .forms import ParamForm
+from .posts import BlocksEditor, ExplainedGcode, OptionsForm
 
 
 class RemembersSize:
@@ -1343,12 +1346,16 @@ class ExportDialog(RemembersSize, QDialog):
         lay = QVBoxLayout(self)
         form = QFormLayout()
         self.post = QComboBox()
-        for p in sorted(ctrl.registry.posts.values(), key=lambda p: p.name.lower()):
-            self.post.addItem(p.name, p.id)
-        i = self.post.findData(ctrl.settings.last_post)
-        self.post.setCurrentIndex(max(0, i))
+        self._fill_posts(ctrl.settings.last_post)
         self.post.currentIndexChanged.connect(self.preview)
-        form.addRow("Post-processor", self.post)
+        post_row = QHBoxLayout()
+        post_row.addWidget(self.post, 1)
+        edit_post = QPushButton("Edit post...")
+        edit_post.setToolTip("Change this post-processor or make your own from it: a field for every option, the "
+                             "blocks of text, and a preview")
+        edit_post.clicked.connect(self._edit_post)
+        post_row.addWidget(edit_post)
+        form.addRow("Post-processor", post_row)
         self.sheets = QComboBox()
         self.sheets.addItem("Current sheet", "current")
         self.sheets.addItem("All sheets (one file per sheet)", "all")
@@ -1407,10 +1414,9 @@ class ExportDialog(RemembersSize, QDialog):
         self.list.itemChanged.connect(self.preview)
         self.list.setMaximumHeight(140)
         lay.addWidget(self.list)
-        self.text = QPlainTextEdit()
-        self.text.setReadOnly(True)
-        self.text.setFont(QFontDatabase.systemFont(QFontDatabase.FixedFont))
-        lay.addWidget(self.text, 1)
+        self.view = ExplainedGcode()          # (click a line to read what it says: G2 X20 Y0 I5 J0 ...)
+        self.text = self.view.text
+        lay.addWidget(self.view, 1)
         bb = QDialogButtonBox()
         save = bb.addButton("Save...", QDialogButtonBox.AcceptRole)
         save.clicked.connect(self.save)
@@ -1423,6 +1429,21 @@ class ExportDialog(RemembersSize, QDialog):
 
     def _material_setup(self) -> None:
         MaterialDialog(self.ctrl, self).exec()
+        self.preview()
+
+    def _fill_posts(self, select: str | None) -> None:
+        self.post.blockSignals(True)
+        self.post.clear()
+        for p in sorted(self.ctrl.registry.posts.values(), key=lambda p: p.name.lower()):
+            self.post.addItem(p.name, p.id)
+        self.post.setCurrentIndex(max(0, self.post.findData(select)))
+        self.post.blockSignals(False)
+
+    def _edit_post(self) -> None:
+        """The post editor on the post chosen; what was made or changed there is in the list when it closes."""
+        dlg = PostEditorDialog(self.ctrl, self, select=self.post.currentData())
+        dlg.exec()
+        self._fill_posts(dlg.selected_id() or self.post.currentData())
         self.preview()
 
     def current_post(self):
@@ -1457,7 +1478,7 @@ class ExportDialog(RemembersSize, QDialog):
                              f"{u.fmt(m.home[2])}")
         jobs = self.jobs(self.ctrl.sheet)
         if not jobs:
-            self.text.setPlainText("(no calculated toolpaths on this sheet)")
+            self.view.show_message("(no calculated toolpaths on this sheet)")
             return
         files = []
         try:
@@ -1465,14 +1486,14 @@ class ExportDialog(RemembersSize, QDialog):
                 files += [(tile + sfx, text) for sfx, text in post_toolpaths(self.ctrl.project, sheet, tps, post,
                                                                             "preview" + tile)]
         except Exception as exc:  # broken user posts must not take the app down
-            self.text.setPlainText(f"Post-processor error:\n{type(exc).__name__}: {exc}")
+            self.view.show_message(f"Post-processor error:\n{type(exc).__name__}: {exc}")
             return
         out = []
         for suffix, text in files:
             if len(files) > 1:
                 out.append(f";---------- file *{suffix}.{post.extension} ----------")
             out.append(text.replace("\r\n", "\n"))
-        self.text.setPlainText("\n".join(out))
+        self.view.set_gcode("\n".join(out), post.options["units"] == "inch", post.options["ijk"] == "absolute")
 
     def save(self) -> None:
         from ..post.export import write_gcode
@@ -1614,68 +1635,103 @@ class PluginsDialog(RemembersSize, QDialog):
             self.parent().rebuild_plugin_ui()
 
 
-POST_TEMPLATE = """# Custom post-processor.  Every option / block of the parent post can be overridden.
-# Documentation: docs/postprocessors.md
-id = "{id}"
-extends = "{base}"
-name = "{name}"
-description = "Based on {base_name}"
-
-[options]
-# decimals = 3
-# line_numbers = true
-# arcs = "ijk"          # ijk | r | none
-
-[blocks]
-# header = \"\"\"
-# %
-# ({{file_name}})
-# G90 G17 {{unit_code}}
-# \"\"\"
-"""
-
-
 class PostEditorDialog(RemembersSize, QDialog):
-    """Create and edit user post-processors (TOML) with a live preview."""
+    """Create and change user post-processors: a form for every option, a text for every block, the file itself and
+    a live preview (on a sample part, or on the current sheet) that can be clicked to read what each line says.
 
-    def __init__(self, ctrl, parent=None):
+    The form and the file (TOML) are one thing seen two ways: a change in either shows in the other.  Only what
+    differs from the post a post is based on is written."""
+
+    def __init__(self, ctrl, parent=None, select: str | None = None):
         super().__init__(parent)
         self.ctrl = ctrl
+        self.current = None            # the PostProcessor shown (None: nothing, or a file that cannot be loaded)
+        self.broken_path: Path | None = None
+        self.draft: dict | None = None
+        self.orig: dict | None = None
+        self._syncing = False
+        self._from = "form"            # which of the two was changed last: "form" or "text"
         self.setWindowTitle("Post-processors")
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.setInterval(300)
+        self._timer.timeout.connect(self._settle)
         lay = QHBoxLayout(self)
         left = QVBoxLayout()
         self.list = QListWidget()
         self.list.currentRowChanged.connect(self._load)
         left.addWidget(self.list)
-        for text, slot in (("New from selected...", self.new), ("Open folder", self.open_folder),
-                           ("Reload posts", self.reload)):
+        for text, slot, tip in (
+                ("New from selected...", self.new, "Make your own post-processor from the one selected, then change it"),
+                ("Delete", self.delete, "Delete the selected post-processor (only the ones you made)"),
+                ("Open folder", self.open_folder, "The folder of your post-processor files"),
+                ("Reload posts", self.reload, "Read the files again")):
             b = QPushButton(text)
+            b.setToolTip(tip)
             b.clicked.connect(slot)
             left.addWidget(b)
+            if text == "Delete":
+                self.delete_btn = b
         lay.addLayout(left, 1)
         right = QVBoxLayout()
         self.path_label = QLabel()
+        self.path_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         right.addWidget(self.path_label)
+        self.tabs = QTabWidget()
+        settings = QWidget()
+        sl = QVBoxLayout(settings)
+        sl.setContentsMargins(0, 6, 0, 0)
+        top = QFormLayout()
+        self.name_edit, self.desc_edit, self.ext_edit = QLineEdit(), QLineEdit(), QLineEdit()
+        self.ext_edit.setMaxLength(8)
+        self.ext_edit.setToolTip("The ending of the files, like nc or tap")
+        top.addRow("Name", self.name_edit)
+        top.addRow("Description", self.desc_edit)
+        top.addRow("File extension", self.ext_edit)
+        sl.addLayout(top)
+        self.options = OptionsForm()
+        sl.addWidget(self.options, 1)
+        self.tabs.addTab(settings, "Settings")
+        self.blocks = BlocksEditor()
+        self.tabs.addTab(self.blocks, "Blocks of text")
         self.edit = QPlainTextEdit()
         self.edit.setFont(QFontDatabase.systemFont(QFontDatabase.FixedFont))
-        right.addWidget(self.edit, 2)
+        self.edit.setLineWrapMode(QPlainTextEdit.NoWrap)
+        self.tabs.addTab(self.edit, "File (TOML)")
+        right.addWidget(self.tabs, 3)
+        self.status = QLabel()
+        self.status.setWordWrap(True)
+        right.addWidget(self.status)
         row = QHBoxLayout()
-        self.save_btn = QPushButton("Save && test")
+        self.save_btn = QPushButton("Save")
         self.save_btn.clicked.connect(self.save)
         row.addWidget(self.save_btn)
         row.addStretch(1)
+        row.addWidget(QLabel("Preview on"))
+        self.source = QComboBox()
+        self.source.addItem("a sample part", "sample")
+        self.source.addItem("the current sheet", "sheet")
+        self.source.setToolTip("The sample part has a rounded plate, a hole to drill and a round pocket: arcs, "
+                               "drilling and two tools. The sheet needs calculated toolpaths.")
+        self.source.currentIndexChanged.connect(lambda _i: self._settle())
+        row.addWidget(self.source)
         close = QPushButton("Close")
         close.clicked.connect(self.accept)
         row.addWidget(close)
         right.addLayout(row)
-        self.out = QPlainTextEdit()
-        self.out.setReadOnly(True)
-        self.out.setFont(QFontDatabase.systemFont(QFontDatabase.FixedFont))
-        right.addWidget(self.out, 1)
+        self.view = ExplainedGcode(note_height=100)
+        self.out = self.view.text
+        right.addWidget(self.view, 2)
         lay.addLayout(right, 3)
-        self.refresh()
-        self.keep_size(ctrl, "posts", 980, 680)
+        for w in (self.name_edit, self.desc_edit, self.ext_edit):
+            w.textEdited.connect(self._form_changed)
+        self.options.changed.connect(self._form_changed)
+        self.blocks.changed.connect(self._form_changed)
+        self.edit.textChanged.connect(self._text_changed)
+        self.refresh(select)
+        self.keep_size(ctrl, "posts", 1100, 780)
 
+    # -- the list ------------------------------------------------------------------------------
     def refresh(self, select: str | None = None) -> None:
         from ..builtins import USER_POST_ERRORS
         self.list.blockSignals(True)
@@ -1684,8 +1740,7 @@ class PostEditorDialog(RemembersSize, QDialog):
         self.broken = sorted(USER_POST_ERRORS.items())   # files that could not be loaded, still to be mended here
         row = 0
         for i, p in enumerate(self.posts):
-            user = p.path is not None and paths.posts_dir() in Path(p.path).parents
-            it = QListWidgetItem(("✎ " if user else "") + p.name)
+            it = QListWidgetItem(("✎ " if editing.is_user_post(p) else "") + p.name)
             self.list.addItem(it)
             if p.id == select:
                 row = i
@@ -1696,18 +1751,57 @@ class PostEditorDialog(RemembersSize, QDialog):
         self.list.blockSignals(False)
         self.list.setCurrentRow(row)
 
+    def selected_id(self) -> str | None:
+        """The id of the post that is shown (``None`` for a file that cannot be loaded)."""
+        return self.current.id if self.current is not None else None
+
+    # -- showing a post --------------------------------------------------------------------------
+    def _say(self, text: str, kind: str = "") -> None:
+        color = {"bad": "#b91c1c", "warn": "#b45309"}.get(kind)
+        self.status.setStyleSheet(f"color:{color}" if color else "")
+        self.status.setText(text)
+
+    def _set_text(self, text: str) -> None:
+        self._syncing = True
+        try:
+            self.edit.setPlainText(text)
+        finally:
+            self._syncing = False
+
+    def _fill(self, draft: dict, original: dict, editable: bool) -> None:
+        """The form shows a draft (the marks show what differs from ``original``)."""
+        self._syncing = True
+        try:
+            self.name_edit.setText(draft.get("name", ""))
+            self.desc_edit.setText(draft.get("description", ""))
+            self.ext_edit.setText(draft.get("extension", ""))
+            for w in (self.name_edit, self.desc_edit, self.ext_edit):
+                w.setEnabled(editable)
+            self.options.load(draft["options"], original["options"], editable)
+            self.blocks.load(draft["blocks"], original["blocks"], editable)
+        finally:
+            self._syncing = False
+
     def _load_broken(self, path: str, error: str) -> None:
         """A post file that could not be loaded: its text can be edited, and the mistake is shown."""
+        self._timer.stop()
         self.current = None
+        self.draft = self.orig = None
         self.broken_path = Path(path)
         self.path_label.setText(f"{path}   [cannot be loaded]")
         try:
-            self.edit.setPlainText(Path(path).read_text(encoding="utf-8"))
+            text = Path(path).read_text(encoding="utf-8")
         except OSError as exc:
-            self.edit.setPlainText(f"# {exc}")
+            text = f"# {exc}"
+        self._set_text(text)
         self.edit.setReadOnly(False)
+        self.tabs.setCurrentWidget(self.edit)
+        self.tabs.setTabEnabled(0, False)
+        self.tabs.setTabEnabled(1, False)
         self.save_btn.setEnabled(True)
-        self.out.setPlainText(f"This post-processor cannot be loaded:\n{error}\n\nCorrect it and save.")
+        self.delete_btn.setEnabled(True)
+        self._say("")
+        self.view.show_message(f"This post-processor cannot be loaded:\n{error}\n\nCorrect it and save.")
 
     def _load(self, row: int) -> None:
         if len(self.posts) <= row < len(self.posts) + len(self.broken):
@@ -1715,57 +1809,163 @@ class PostEditorDialog(RemembersSize, QDialog):
             return
         if not 0 <= row < len(self.posts):
             return
+        self._timer.stop()
         self.broken_path = None
         p = self.posts[row]
         self.current = p
-        user = p.path is not None and paths.posts_dir() in Path(p.path).parents
+        self.draft = editing.draft_of(p)
+        self.orig = copy.deepcopy(self.draft)
+        user = editing.is_user_post(p)
         self.path_label.setText(str(p.path or "(defined by a plugin)") + ("" if user else "   [read only]"))
         text = Path(p.path).read_text(encoding="utf-8") if p.path and Path(p.path).exists() else \
             json.dumps(p.definition, indent=2)
-        self.edit.setPlainText(text)
+        self._set_text(text)
         self.edit.setReadOnly(not user)
+        self.tabs.setTabEnabled(0, True)
+        self.tabs.setTabEnabled(1, True)
         self.save_btn.setEnabled(user)
+        self.delete_btn.setEnabled(user)
+        self._fill(self.draft, self.orig, user)
+        self._say("" if user else "This post-processor comes with the program and cannot be changed. "
+                                  "Use \u201cNew from selected...\u201d to make your own from it.")
         self._test(p)
 
-    def _test(self, post) -> None:
-        from ..post.export import post_toolpaths
-        tps = self.ctrl.sheet_toolpaths()
-        if not tps:
-            self.out.setPlainText("(calculate a toolpath to see a preview)")
+    # -- the form and the file are one thing --------------------------------------------------------
+    def _form_changed(self, *_args) -> None:
+        """A field of the form was changed by a person: the file is written again from the form."""
+        if self._syncing or self.draft is None or self.current is None:
             return
-        try:
-            files = post_toolpaths(self.ctrl.project, self.ctrl.sheet, tps, post, "preview")
-            self.out.setPlainText("\n".join(t for _, t in files).replace("\r\n", "\n")[:20000])
-        except Exception as exc:
-            self.out.setPlainText(f"Error: {type(exc).__name__}: {exc}")
+        self.draft["name"], self.draft["description"] = self.name_edit.text(), self.desc_edit.text()
+        self.draft["extension"] = self.ext_edit.text().strip().lstrip(".").lower() or "nc"
+        self.draft["options"] = dict(self.options.options)
+        self.draft["blocks"] = dict(self.blocks.blocks)
+        self._from = "form"
+        if self._write_toml():
+            self._timer.start()
 
+    def _write_toml(self) -> bool:
+        try:
+            clean, warnings = editing.clean_draft(self.draft)
+        except editing.PostEditError as exc:
+            self._say(str(exc), "bad")
+            return False
+        clean["id"] = self.current.id
+        parent = editing.parent_of(clean["extends"], self.ctrl.registry.posts, self.current.id)
+        if parent is None:
+            clean["extends"] = ""
+        self._set_text(editing.dump_toml(editing.own_definition(clean, parent)))
+        self._say("\n".join(warnings), "warn" if warnings else "")
+        return True
+
+    def _text_changed(self) -> None:
+        """The file was typed in: the form follows it (after a short pause, when what was typed makes sense)."""
+        if self._syncing:
+            return
+        self._from = "text"
+        self._timer.start()
+
+    def _post_of_text(self, text: str):
+        """``(PostProcessor, parsed TOML)`` of the text of the file; raises what is wrong with it."""
+        from ..post.engine import PostProcessor
+        from ..post.loader import merge
+        d = tomllib.loads(text)
+        pid = str(d.get("id") or (self.current.id if self.current is not None else "draft"))
+        known = {p.id: p.definition for p in self.ctrl.registry.posts.values() if p.id != pid}
+        parent = known.get(d.get("extends")) if d.get("extends") else None
+        full = merge(parent, d) if parent else dict(d)
+        full["id"] = pid
+        return PostProcessor(full, self.current.path if self.current is not None else None), d
+
+    def _settle(self) -> None:
+        """Whatever was changed, the file is the truth: it is read, the form follows (when the file was typed in) and
+        the preview is made again."""
+        if self.current is not None and not editing.is_user_post(self.current):
+            self._test(self.current)               # (a post that is read only: there is no file text to read again)
+            return
+        text = self.edit.toPlainText()
+        try:
+            post, parsed = self._post_of_text(text)
+        except Exception as exc:  # noqa: BLE001  (a file that is wrong while it is being typed is not an error)
+            self._say(f"{type(exc).__name__}: {exc}", "bad")
+            self.view.show_message(f"This file cannot be used yet:\n{type(exc).__name__}: {exc}")
+            return
+        if self.current is not None and self.draft is not None:
+            if self._from == "text":
+                self.draft = editing.draft_of(post, str(parsed.get("extends") or ""))
+                self._fill(self.draft, self.orig, editing.is_user_post(self.current))
+            try:
+                warnings = editing.clean_draft(self.draft)[1]
+            except editing.PostEditError as exc:
+                self._say(str(exc), "bad")
+            else:
+                self._say("\n".join(warnings), "warn" if warnings else "")
+        self._test(post)
+
+    def _test(self, post) -> None:
+        """The preview: the G-code of a sample part (or of the current sheet) written with ``post``."""
+        from ..post.export import post_toolpaths
+        try:
+            tps = self.ctrl.sheet_toolpaths() if self.source.currentData() == "sheet" else []
+            if self.source.currentData() == "sheet" and not tps:
+                self.view.show_message("(calculate a toolpath to see a preview of the sheet)")
+                return
+            files = post_toolpaths(self.ctrl.project, self.ctrl.sheet, tps, post, "preview") if tps \
+                else editing.sample_files(post)
+        except Exception as exc:  # noqa: BLE001  (a post that fails while it is being made is told, not raised)
+            self.view.show_message(f"Error: {type(exc).__name__}: {exc}")
+            return
+        self.view.set_gcode("\n".join(t for _, t in files)[:300000], post.options["units"] == "inch",
+                            post.options["ijk"] == "absolute")
+
+    # -- making, saving, deleting ----------------------------------------------------------------------
     def new(self) -> None:
-        base = getattr(self, "current", None)
+        base = self.current
         if base is None:
             return
         name, ok = QInputDialog.getText(self, "New post-processor", "Name:", text=base.name + " (custom)")
         if not ok or not name:
             return
-        pid = "".join(ch if ch.isalnum() else "_" for ch in name.lower()).strip("_") or "custom"
-        f = paths.ensure(paths.posts_dir()) / f"{pid}.toml"
-        f.write_text(POST_TEMPLATE.format(id=pid, base=base.id, name=name.replace('"', "'"),
-                                          base_name=base.name), encoding="utf-8")
-        self.reload(select=pid)
+        d = editing.draft_of(base, extends=base.id)
+        d.update(id="", name=name.strip(), description=f"Based on {base.name}")
+        try:
+            target, _warnings = editing.save_user_post(d, self.ctrl.registry.posts)
+        except (editing.PostEditError, OSError) as exc:
+            QMessageBox.warning(self, "Post-processors", str(exc))
+            return
+        from ..post.loader import read_definition
+        self.reload(select=str(read_definition(target).get("id") or target.stem))
 
     def save(self) -> None:
-        broken = getattr(self, "broken_path", None)
+        self._timer.stop()
+        broken = self.broken_path
         if broken is not None:
             broken.write_text(self.edit.toPlainText(), encoding="utf-8")
             self.reload(select=broken.stem)
             return
         p = self.current
-        if p is None:
+        if p is None or not editing.is_user_post(p):
             return
         Path(p.path).write_text(self.edit.toPlainText(), encoding="utf-8")
         self.reload(select=p.id)
 
+    def delete(self) -> None:
+        p, broken = self.current, self.broken_path
+        target = Path(p.path) if p is not None and editing.is_user_post(p) else broken
+        if target is None:
+            return
+        name = p.name if p is not None else target.name
+        if QMessageBox.question(self, "Post-processors", f"Delete \u201c{name}\u201d?") != QMessageBox.Yes:
+            return
+        try:
+            target.unlink(missing_ok=True)
+        except OSError as exc:
+            QMessageBox.warning(self, "Post-processors", str(exc))
+            return
+        self.reload()
+
     def reload(self, select: str | None = None) -> None:
         from ..builtins import load_user_posts
+        self._timer.stop()
         reg = self.ctrl.registry
         reg.remove_source("user-posts")
         try:
@@ -1776,6 +1976,10 @@ class PostEditorDialog(RemembersSize, QDialog):
 
     def open_folder(self) -> None:
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(paths.ensure(paths.posts_dir()))))
+
+    def done(self, result: int) -> None:
+        self._timer.stop()
+        super().done(result)
 
 
 # ---------------------------------------------------------------------------

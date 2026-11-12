@@ -110,7 +110,10 @@ def good(**kw):
     (good(blocks={"header": "}"}), "brace"), (good(blocks={"header": "{0}"}), "name of a variable"),
     (good(blocks={"header": "{file_name.__class__}"}), "name of a variable"),
     (good(blocks={"header": "{a[0]}"}), "name of a variable"), (good(blocks={"header": 5}), "text"),
-    (good(id="Not A Slug"), "id"), ("a string", "object"), (good(options=[1]), "options"),
+    (good(id="Not A Slug"), "id"), (good(id="../x"), "id"), (good(id="a" * 61), "id"), ("a string", "object"),
+    (good(options=[1]), "options"), (good(options={"bad key\nnewline": 1}), "name of an option"),
+    (good(options={"plugin_option": [1]}), "plugin_option"), (good(blocks={"a b": "x"}), "name of a block"),
+    (good(blocks={f"b{i}": "x" for i in range(101)}), "too many"),
     (good(blocks={"header": "x" * 9000}), "long"),
 ])
 def test_a_draft_that_cannot_be_used_says_why(draft, word):
@@ -352,7 +355,6 @@ def test_garbage_does_not_raise():
 
 
 def _posts_that_write_arcs():
-    base = {"line_numbers": False, "comments": False, "modal_motion": True}
     return [{"arcs": "ijk", "ijk": "incremental"}, {"arcs": "ijk", "ijk": "absolute"}, {"arcs": "r"},
             {"arcs": "ijk", "units": "inch", "decimals": 4}, {"arcs": "ijk", "modal_coords": False, "modal_motion": False},
             {"arcs": "ijk", "line_numbers": True, "g_leading_zero": True, "integer_point": True},
@@ -412,3 +414,43 @@ def test_a_saved_post_is_in_the_schema_and_makes_gcode(host):
     add_tp(p, "profile", end_mill(6), {"through": True}, objs)
     out = host.handle("gcode", {"project": p.to_dict(), "post": "shop"})
     assert out["ok"] and out["files"][0]["name"].endswith(".tap")
+
+
+def test_the_explainer_of_a_long_program_gives_what_a_fresh_read_gives():
+    prog = ["G21 G90 G91.1", "G0 X0 Y0"]
+    for i in range(1, 700):
+        prog += [f"G1 X{i}", f"G2 X{i + 0.5} Y0 I0.25 J0" if i % 3 == 0 else f"G1 Y{i % 7}"]
+    ex = guide.Explainer(prog, "en", every=64)
+    for i in (5, 400, 401, 63, 64, 65, 1000, 3, 1390, 700):        # (forwards, backwards, on a checkpoint)
+        assert ex.at(i) == guide.explain(prog, i, "en"), i
+    with pytest.raises(IndexError):
+        ex.at(len(prog))
+
+
+def test_following_a_program_without_sentences_gives_the_same_state():
+    prog = ["G21", "G90", "G0 X1 Y2 Z3", "G91", "G1 X1 Y1", "G90", "G98 G81 X9 Y9 Z-5 R2 F100", "G1 Z5"]
+    a, b = guide.State(), guide.State()
+    for ln in prog:
+        guide.explain_line(ln, a)
+        guide.explain_line(ln, b, track=True)
+    assert a == b and a.x == 9 and a.y == 9 and a.z == 5
+
+
+def test_the_id_of_a_file_written_by_hand_can_be_saved_again(host):
+    paths.posts_dir().mkdir(parents=True, exist_ok=True)
+    (paths.posts_dir() / "Old-Style.toml").write_text('id = "Old-Style"\nname = "Old"\nextends = "mach3"\n', encoding="utf-8")
+    from iyicam.builtins import load_user_posts
+    REGISTRY.remove_source("user-posts")
+    load_user_posts(REGISTRY)
+    d = next(p for p in host.handle("posts")["posts"] if p["id"] == "Old-Style")
+    d["options"] = {**d["options"], "decimals": 2}
+    out = host.handle("post_save", {"post": d})
+    assert "error" not in out and out["saved"] == "Old-Style" and out["file"] == "Old-Style.toml"
+    assert [f.name for f in paths.posts_dir().glob("*.toml")] == ["Old-Style.toml"]
+
+
+def test_a_post_that_would_not_read_back_is_not_written(host, monkeypatch):
+    monkeypatch.setattr(E, "dump_toml", lambda d: "this is = not [toml")
+    out = host.handle("post_save", {"post": draft_from(host, name="Broken")})
+    assert out["error"] == "invalid_post" and "cannot be written" in out["message"]
+    assert not list(paths.posts_dir().glob("*"))

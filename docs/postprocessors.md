@@ -2,7 +2,7 @@
 
 Post-processors turn calculated toolpaths into controller specific G-code. They
 are TOML files: the built-in ones are in `iyicam/post/builtin/`, your own go to
-`~/.iyicam/posts/`. **Toolpaths ▸ Post-processors...** (and the *New / Edit post...* buttons of **Save G-code**)
+`~/.iyicam/posts/`. **Toolpaths ▸ Post-processors...** (and the *Edit post...* button of **Save G-code**, which brings you back with the new post chosen)
 creates a custom post from any existing one and shows a live preview while you edit; the page (`iyicam serve`) has the
 same editor on its Output tab. You do not have to write TOML: every option is a field with a sentence of help and every
 block a text box with buttons for the variables ([the editor](#the-post-editor)). The file it writes holds only what
@@ -30,6 +30,12 @@ G4 P5
 ```
 
 ## The post editor
+
+In the desktop window the **Settings** tab is a field for every option (a sentence of help under it, a ● for what
+differs from the post it is based on), **Blocks of text** has a text for every block with lists of words and variables to
+put at the cursor, and **File (TOML)** is the file itself: the form and the file are one thing seen two ways (change
+either, the other follows). The preview below is made again after every change, on a sample part or on the current
+sheet, and **clicking a line of it says what the line means**; **What are I J K?** opens the glossary.
 
 Both editors (the desktop window and the page) work on the same description of the options and blocks
 (`iyicam/post/editing.py`), and say what is wrong in words before a post is saved:

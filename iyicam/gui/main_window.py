@@ -33,6 +33,7 @@ from .files import open_file, save_file
 from .forms import ParamForm
 from .icons import icon
 from .panels import LayersPanel, PropertiesPanel, SheetsPanel, ToolpathsPanel
+from .posts import GlossaryDialog
 from .tabs import DocumentTabs
 from .transform_panel import PAGES as TRANSFORM_PAGES, TransformPanel
 from .tools import TOOLS
@@ -629,6 +630,7 @@ class MainWindow(QMainWindow):
 
         m = mb.addMenu("&Help")
         self._act(m, "&Keyboard Shortcuts", self.shortcuts_help)
+        self._act(m, "&G-code Words (I J K ...)...", lambda: GlossaryDialog(self).exec())
         self._act(m, "&About iyiCAM", self.about)
 
     def _fill_toolpath_menu(self) -> None:

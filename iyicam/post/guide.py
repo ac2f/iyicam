@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 LANGS = ("en", "tr")
 
@@ -153,6 +153,24 @@ _S: dict[str, tuple[str, str]] = {
                 "Delme döngüsünde R, kesicinin delikler arasında döndüğü yüksekliktir."),
 }
 
+# how to read an arc line, for a window that teaches it (three short paragraphs)
+ARC_HELP: dict[str, list[str]] = {
+    "en": ["G2 cuts an arc clockwise, G3 counter-clockwise. X and Y are where the arc ENDS; it starts where the tool is "
+           "at that moment.",
+           "The centre of the arc is given by I and J. I is how far the centre is from the START of the arc along X, "
+           "J along Y. So I and J are not a place on the sheet, they are a distance (minus: to the left or toward you). "
+           "From (10, 0), G2 X20 Y0 I5 J0 turns about the centre (15, 0): the radius is 5.",
+           "Some controllers want R (the radius) instead of I J, and some do not know arcs at all and cut short straight "
+           "lines; that is chosen in the settings of the post (the Arcs part)."],
+    "tr": ["G2 saat yönünde, G3 saat yönünün tersine bir yay keser. X ve Y yayın BİTİŞ noktasıdır; yay, kesicinin o anda "
+           "bulunduğu noktadan başlar.",
+           "Yayın merkezi I ve J ile verilir. I, merkezin X yönünde, J ise Y yönünde yayın BAŞLANGIÇ noktasından ne kadar "
+           "uzakta olduğudur. Yani I ve J sacda bir konum değil, bir uzaklıktır (eksi: sola ya da geriye). (10, 0) "
+           "noktasından G2 X20 Y0 I5 J0, merkezi (15, 0) olan yarıçapı 5 bir yaydır.",
+           "Bazı kontrolcüler I J yerine R (yarıçap) ister, bazıları yayı hiç bilmez ve kısa doğrularla keser; bunlar post "
+           "ayarlarından seçilir (Yaylar bölümü)."],
+}
+
 _WORD = re.compile(r"([A-Za-z])\s*([-+]?(?:\d+\.?\d*|\.\d+))")
 _COMMENT = re.compile(r"\([^)]*\)|;.*$")
 
@@ -252,11 +270,20 @@ def _side(v: float, axis: str, lang: str) -> str:
     return _t("away" if v > 0 else "toward", lang, v=mag)
 
 
-def explain_line(line: str, st: State, lang: str = "en") -> dict:
+def _advance(st: State, vals: dict[str, float], drilling: bool) -> None:
+    """Move the state on to where a line ends (a hole is at its X and Y: the tool comes back up by itself)."""
+    x, y, z = _where(st, vals)
+    for axis, v in (("X", x), ("Y", y)) if drilling else (("X", x), ("Y", y), ("Z", z)):
+        if axis in vals:
+            setattr(st, axis.lower(), v)
+
+
+def explain_line(line: str, st: State, lang: str = "en", track: bool = False) -> dict:
     """Explain one line and move ``st`` on to what is set up after it.
 
     The answer: ``summary`` (a sentence or two), ``words`` (``[{"word": "I5", "text": ...}]``, in the order of the
-    line), ``arc`` (the arc as numbers, when the line is one) and ``at`` (where the tool is after the line)."""
+    line), ``arc`` (the arc as numbers, when the line is one) and ``at`` (where the tool is after the line).  With
+    ``track`` only ``st`` is moved on (no sentences are made: for the lines before the one that is asked about)."""
     lang = lang if lang in LANGS else "en"
     raw = line.rstrip("\r\n")
     text = raw.strip()
@@ -298,6 +325,10 @@ def explain_line(line: str, st: State, lang: str = "en") -> dict:
             st.motion = int(k)
     drilling = any(_fmt(_num(g)) in ("81", "82", "83") for g in gs)
     moves = any(a in vals for a in ("X", "Y", "Z", "A"))
+    if track:
+        if moves and (drilling or st.motion is not None):
+            _advance(st, vals, drilling)
+        return out
 
     # the words, one by one
     for letter, num in words:
@@ -357,18 +388,10 @@ def explain_line(line: str, st: State, lang: str = "en") -> dict:
             summary.append(_t("linear", lang, to=to))
         elif st.motion in (2, 3):           # an arc without a centre: the machine will refuse it
             summary.append(_t("arc", lang, dir=_t("dir_cw" if st.motion == 2 else "dir_ccw", lang), to=to))
-        if st.absolute:
-            for axis, v in (("X", x), ("Y", y), ("Z", z)):
-                if axis in vals and v is not None:
-                    setattr(st, axis.lower(), v)
-        else:
-            st.x, st.y, st.z = x if "X" in vals else st.x, y if "Y" in vals else st.y, z if "Z" in vals else st.z
+        _advance(st, vals, False)
         out["at"] = [st.x, st.y, st.z]
     elif moves and drilling:
-        x, y, z = _where(st, vals)
-        for axis, v in (("X", x), ("Y", y)):
-            if axis in vals and v is not None:
-                setattr(st, axis.lower(), v)
+        _advance(st, vals, True)
         out["at"] = [st.x, st.y, st.z]
     if "F" in vals and (st.motion in (1, 2, 3) or drilling):
         summary.append(_t("feed", lang, f=_fmt(vals["F"]) + unit))
@@ -397,5 +420,31 @@ def explain(lines: list[str], index: int, lang: str = "en", *, inch: bool | None
         raise IndexError("no such line")
     st = State(inch=inch, arc_absolute=arc_absolute)
     for ln in lines[:index]:
-        explain_line(ln, st, lang)
+        explain_line(ln, st, lang, track=True)
     return {**explain_line(lines[index], st, lang), "index": index}
+
+
+class Explainer:
+    """Explain any line of a long program, again and again, without reading it from its start each time: the state
+    of the program is kept every ``every`` lines (a window with 50 000 lines of G-code answers a click at once)."""
+
+    def __init__(self, lines: list[str], lang: str = "en", *, inch: bool | None = None, arc_absolute: bool = False,
+                 every: int = 256):
+        self.lines, self.lang, self.every = lines, lang, max(1, every)
+        self._cp: dict[int, State] = {0: State(inch=inch, arc_absolute=arc_absolute)}
+        self._top = 0
+
+    def at(self, index: int) -> dict:
+        if not 0 <= index < len(self.lines):
+            raise IndexError("no such line")
+        k = (index // self.every) * self.every
+        while self._top < k:
+            st = replace(self._cp[self._top])
+            for ln in self.lines[self._top:self._top + self.every]:
+                explain_line(ln, st, self.lang, track=True)
+            self._top += self.every
+            self._cp[self._top] = st
+        st = replace(self._cp[k])
+        for ln in self.lines[k:index]:
+            explain_line(ln, st, self.lang, track=True)
+        return {**explain_line(self.lines[index], st, self.lang), "index": index}

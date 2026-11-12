@@ -20,11 +20,12 @@ import os
 import re
 import string
 import threading
+import tomllib
 import unicodedata
 from pathlib import Path
 
 from ..core import paths
-from .engine import DEFAULT_BLOCKS, DEFAULT_OPTIONS, OPTION_CHOICES, PostProcessor, checked_options
+from .engine import DEFAULT_BLOCKS, DEFAULT_OPTIONS, PostProcessor, checked_options
 from .loader import builtin_definitions, read_definition
 
 LANGS = ("en", "tr")
@@ -267,6 +268,8 @@ def specs() -> dict:
 # --------------------------------------------------------------------------------------------------
 
 _BARE = re.compile(r"^[A-Za-z0-9_-]+$")
+_ID = re.compile(r"[A-Za-z0-9_-]{1,60}")             # (also what a file of the user may have written by hand)
+_MAX_ENTRIES = 100
 
 
 def _escape(text: str) -> str:
@@ -356,12 +359,19 @@ def placeholders(template: str) -> list[str]:
         raise PostEditError(f"{exc} (a literal brace is written {{{{ or }}}})") from exc
 
 
+def raw_blocks_of(draft: dict) -> dict:
+    b = draft.get("blocks") if isinstance(draft, dict) else None
+    return b if isinstance(b, dict) else {}
+
+
 def check_blocks(blocks: dict) -> tuple[dict, list[str]]:
     """``(blocks, warnings)``: the blocks as text, with a note for each placeholder this program does not know."""
     out, warn = {}, []
     for name, text in blocks.items():
         if not isinstance(name, str) or not isinstance(text, str):
             raise PostEditError("every block is a name and a text")
+        if not _ID.fullmatch(name):
+            raise PostEditError(f"{name!r} is not a name of a block")
         if len(text) > 8000:
             raise PostEditError(f"block {name} is too long")
         for f in placeholders(text):
@@ -414,6 +424,13 @@ def clean_draft(draft: dict) -> tuple[dict, list[str]]:
         options = checked_options(raw)
     except ValueError as exc:
         raise PostEditError(str(exc)) from exc
+    if len(options) > _MAX_ENTRIES or len(raw_blocks_of(draft)) > _MAX_ENTRIES:
+        raise PostEditError("too many options or blocks")
+    for k, v in options.items():
+        if not isinstance(k, str) or not _ID.fullmatch(k):
+            raise PostEditError(f"{k!r} is not a name of an option")
+        if k not in DEFAULT_OPTIONS and not isinstance(v, (bool, int, float, str)):
+            raise PostEditError(f"option {k} must be a number, a switch or text")
     by_key = {o["key"]: o for o in OPTIONS}
     for k, v in options.items():
         if k in by_key:
@@ -431,8 +448,8 @@ def clean_draft(draft: dict) -> tuple[dict, list[str]]:
     clean = {"id": str(draft.get("id") or "").strip(), "name": name, "description": description,
              "extension": extension, "extends": str(draft.get("extends") or "").strip(),
              "options": options, "blocks": blocks}
-    if clean["id"] and slug(clean["id"]) != clean["id"]:
-        raise PostEditError("the id is lower case letters, digits and _ (at most 40)")
+    if clean["id"] and not _ID.fullmatch(clean["id"]):
+        raise PostEditError("the id is letters, digits, - and _ (at most 60)")
     return clean, warnings
 
 
@@ -447,10 +464,11 @@ def build_post(draft: dict) -> PostProcessor:
         raise PostEditError(str(exc)) from exc
 
 
-def draft_of(post: PostProcessor) -> dict:
-    """A post as a draft: every option and block as the post has it."""
-    ext = None
-    if post.path is not None:
+def draft_of(post: PostProcessor, extends: str | None = None) -> dict:
+    """A post as a draft: every option and block as the post has it.  ``extends`` is what the file says it is based
+    on (read from the file when not given)."""
+    ext = extends
+    if ext is None and post.path is not None:
         try:
             ext = read_definition(Path(post.path)).get("extends")
         except Exception:  # noqa: BLE001  (a damaged file: it has no parent to name)
@@ -490,6 +508,16 @@ def info(post: PostProcessor) -> dict:
 _save_lock = threading.Lock()
 
 
+def parent_of(extends: str, posts: dict, own_id: str = "") -> dict | None:
+    """The options and blocks of the post a post is based on, or ``None``.  Only a post that is a file can be
+    extended (the loader finds the parent among the files): a post of a plugin cannot, so such a post is saved
+    with everything that differs from the defaults instead."""
+    base = posts.get(extends) if extends else None
+    if base is not None and base.id != own_id and (base.id in builtin_ids() or is_user_post(base)):
+        return {"options": dict(base.options), "blocks": dict(base.blocks)}
+    return None
+
+
 def own_definition(clean: dict, parent: dict | None) -> dict:
     """What the file of a post says: its name and what differs from its parent (``parent`` holds the parent's
     ``options`` and ``blocks`` as it has them, or ``None`` for a post that extends nothing)."""
@@ -522,12 +550,8 @@ def save_user_post(draft: dict, posts: dict, directory: Path | None = None) -> t
         clean["id"] = pid
         if clean["extends"] == pid:
             raise PostEditError("a post cannot be based on itself")
-        parent = None
-        base = posts.get(clean["extends"]) if clean["extends"] else None
-        # (only a post that is a file can be extended: the loader finds its parent among the files)
-        if base is not None and (base.id in builtin or is_user_post(base)):
-            parent = {"options": dict(base.options), "blocks": dict(base.blocks)}
-        else:
+        parent = parent_of(clean["extends"], posts, pid)
+        if parent is None:
             clean["extends"] = ""
         if existing is not None and existing.path:
             target = Path(existing.path)
@@ -542,6 +566,12 @@ def save_user_post(draft: dict, posts: dict, directory: Path | None = None) -> t
                                     "delete it first")
         out = own_definition(clean, parent)
         text = dump_toml(out)
+        try:
+            back = tomllib.loads(text)
+        except tomllib.TOMLDecodeError as exc:        # (never leave a file that cannot be read)
+            raise PostEditError(f"the post cannot be written as a file: {exc}") from exc
+        if back.get("options", {}) != out["options"] or back.get("blocks", {}) != out["blocks"]:
+            raise PostEditError("the post cannot be written as a file without changing it")
         directory.mkdir(parents=True, exist_ok=True)
         tmp = target.with_name(target.name + ".tmp")
         tmp.write_text(text, encoding="utf-8", newline="\n")
