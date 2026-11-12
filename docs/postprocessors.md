@@ -2,8 +2,11 @@
 
 Post-processors turn calculated toolpaths into controller specific G-code. They
 are TOML files: the built-in ones are in `iyicam/post/builtin/`, your own go to
-`~/.iyicam/posts/`. **Toolpaths ▸ Post-processors...** creates a custom post from
-any existing one and shows a live preview of the current sheet while you edit.
+`~/.iyicam/posts/`. **Toolpaths ▸ Post-processors...** (and the *New / Edit post...* buttons of **Save G-code**)
+creates a custom post from any existing one and shows a live preview while you edit; the page (`iyicam serve`) has the
+same editor on its Output tab. You do not have to write TOML: every option is a field with a sentence of help and every
+block a text box with buttons for the variables ([the editor](#the-post-editor)). The file it writes holds only what
+differs from the post it is based on.
 
 ```toml
 id = "my_mach3"            # unique id (defaults to the file name)
@@ -25,6 +28,30 @@ S{spindle_speed} {spindle_dir_code}
 G4 P5
 """
 ```
+
+## The post editor
+
+Both editors (the desktop window and the page) work on the same description of the options and blocks
+(`iyicam/post/editing.py`), and say what is wrong in words before a post is saved:
+
+* an option of the wrong kind or outside its range (`decimals` must be between 0 and 8);
+* a `{placeholder}` that is not a name (`{0}`, `{x.y}`), a brace that does not close (write `{{` and `}}` for a literal
+  brace), or a variable this program does not know (a warning: the post is saved, the preview then names it);
+* **I J that contradict the header**: with `ijk = "absolute"` the controller must be told, `G90.1` in the header (the
+  usual `G91.1` reads I J from the start of the arc, so every arc would go to the wrong circle).
+
+The preview is a small sample job (a plate with rounded corners, a hole to drill and a round pocket, two tools), so a
+post can be tried before there is a project with toolpaths.
+
+## What are I, J, K and R?
+
+An arc line like `G2 X20 Y0 I5 J0 F800` says: cut a circle arc clockwise (`G3`: counter-clockwise) **to** X20 Y0 from
+where the tool is. **I** and **J** (and **K**, for the Z direction, which flat arcs never need) give the **centre** of
+the circle as the distance from the **start** of the arc: `I5 J0` is "the centre is 5 to the right of here". They are
+not a place on the sheet. With the tool at (10, 0) the centre is at (15, 0) and the radius is 5. With `ijk =
+"absolute"` (`G90.1`) I and J are the centre's own coordinates. `R` gives the radius instead (a minus sign: more than
+half a circle), and `arcs = "none"` writes short straight lines, no arcs at all. Tap a line of G-code in the page or the
+desktop's *Save G-code* window to have it explained, and see `iyicam/post/guide.py` for the words.
 
 ## Options
 

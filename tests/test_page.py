@@ -36,7 +36,7 @@ def get(server, path):
     return r.status, r.getheader("Content-Type", ""), body
 
 
-@pytest.mark.parametrize("name", ["geom.js", "app.js", "edit.js", "app.css"])
+@pytest.mark.parametrize("name", ["geom.js", "app.js", "edit.js", "post.js", "app.css"])
 def test_every_file_of_the_page_is_served(web, name):
     status, ctype, body = get(web, f"/static/{name}")
     assert status == 200 and body
@@ -46,7 +46,7 @@ def test_every_file_of_the_page_is_served(web, name):
 def test_the_scripts_load_in_the_order_they_need():
     html = (WEB / "index.html").read_text(encoding="utf-8")
     order = [m.group(1) for m in re.finditer(r'<script src="/static/([a-z.]+)"', html)]
-    assert order == ["geom.js", "app.js", "edit.js"]          # (app.js needs geom.js; edit.js needs both)
+    assert order == ["geom.js", "app.js", "edit.js", "post.js"]   # (app.js needs geom.js; edit.js and post.js need both)
 
 
 def _keys(block: str) -> set[str]:
@@ -54,13 +54,19 @@ def _keys(block: str) -> set[str]:
 
 
 def _texts():
+    """The page's own texts (app.js) and those the other scripts add (``Object.assign(TXT.tr, {...})``)."""
     app = (WEB / "app.js").read_text(encoding="utf-8")
-    edit = (WEB / "edit.js").read_text(encoding="utf-8")
+    extra = [(WEB / n).read_text(encoding="utf-8") for n in ("edit.js", "post.js")]
     tr_app, en_app = re.split(r"\n  en: \{", app.split("\n  tr: {", 1)[1], maxsplit=1)
     en_app = en_app.split("\n};", 1)[0]
-    tr_edit = edit.split("Object.assign(TXT.tr, {", 1)[1].split("\n  });", 1)[0]
-    en_edit = edit.split("Object.assign(TXT.en, {", 1)[1].split("\n  });", 1)[0]
-    return app + edit, _keys(tr_app) | _keys(tr_edit), _keys(en_app) | _keys(en_edit)
+    tr, en = _keys(tr_app), _keys(en_app)
+    for text in extra:
+        tr_block = re.findall(r"Object\.assign\(TXT\.tr, \{(.*?)\n  \}\);", text, re.S)
+        en_block = re.findall(r"Object\.assign\(TXT\.en, \{(.*?)\n  \}\);", text, re.S)
+        assert tr_block and en_block, "a script of the page has no texts of its own in both languages"
+        tr |= _keys("\n".join(tr_block))
+        en |= _keys("\n".join(en_block))
+    return app + "".join(extra), tr, en
 
 
 def test_every_text_the_page_asks_for_exists_in_both_languages():
@@ -116,3 +122,20 @@ def test_shift_ctrl_and_alt_are_buttons_of_the_bars_and_count_like_the_keys():
     assert "function mods(e)" in edit and "function releaseMods()" in edit
     assert 'key("shift"), key("ctrl"), key("alt")' in edit
     assert "e.shiftKey ||" not in edit.replace("!!(e && e.shiftKey)", "")        # (a gesture asks ``mods(e)``, never the event alone)
+
+
+def test_post_js_is_an_extension_not_a_requirement():
+    """The same for the post editor and the G-code words: without post.js the page shows the G-code as plain text."""
+    app = (WEB / "app.js").read_text(encoding="utf-8")
+    assert "post: null" in app and app.count("window.IyiPage.post") >= 2
+    assert "pre.textContent" in app                                   # (the plain view is still there)
+    post = (WEB / "post.js").read_text(encoding="utf-8")
+    assert "if (!B) return;" in post and "B.post = {" in post
+    # every operation the script calls is one the page may call
+    from iyicam.service.api import API_OPS
+    assert set(re.findall(r'api\("([a-z_]+)"', post)) <= API_OPS
+
+
+def test_the_overlay_that_hides_a_button_really_hides_it():
+    css = (WEB / "app.css").read_text(encoding="utf-8")
+    assert re.search(r"\[hidden\]\s*\{\s*display:\s*none\s*!important", css)      # (button { display: inline-flex } would win)

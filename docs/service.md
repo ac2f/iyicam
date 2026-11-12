@@ -37,7 +37,12 @@ plugins are read from `~/.iyicam` (`IYICAM_HOME`); `IYICAM_SERVICE_PLUGINS=0` le
 | `export` | `project`, `format` (`dxf` `svg` `icam`, …), `sheet?` (id or `"all"`), `selection?`, `options?`, `file_name?` | `{files: [{name, mime, data_b64}]}` |
 | `command` | `project`, `command` (an id from `schema`), `sheet?`, `selection?`, `values?`, `active_layer?` | `{ok, project, selection, messages, changed}`; `command_failed` leaves nothing changed |
 | `compute` | `project`, `sheets?`, `toolpaths?`, `optimise_starts?`, `preview?`, `preview_step?` | `{results, patch, totals, seconds}` — see below |
-| `gcode` | `project`, `post`, `sheets?`, `file_name?`, `program_number?` | `{files: [{name, mime, text, sheet}], errors, warnings, ok}` |
+| `gcode` | `project`, `post` (or `post_draft`: a post not saved, see `post_save`), `sheets?`, `file_name?`, `program_number?` | `{files: [{name, mime, text, sheet}], errors, warnings, ok}` |
+| `posts` | | `{posts, errors, specs, glossary}` — every post as a *draft* (`id, name, description, extension, extends, options, blocks`, with every option and block as the post has it, and `builtin`, `editable`), the files of the user's posts that cannot be loaded, a description of every option / block / variable in English and Turkish (`specs`, for building a form) and the glossary of G-code words (`glossary.en`, `glossary.tr`) |
+| `post_save` | `post` (a draft; no `id`: one is made of the name) | `{saved, file, warnings, posts, errors, specs, glossary}` — writes `~/.iyicam/posts/<id>.toml` with only what differs from the post it `extends`; `invalid_post` says what is wrong (a built-in post is never overwritten) |
+| `post_delete` | `id` | `{deleted, posts, …}` — only posts of the user |
+| `post_preview` | `post` (a draft) | `{files: [{name, text}], warnings}` — the G-code of a small sample job (arcs, a drilling, two tools) written with the draft; `invalid_post` or `post_failed` (an unknown `{variable}`) with the reason |
+| `gcode_explain` | `lines` (the lines of a file up to the one asked, at most 5000), `index?`, `lang?` (`en` `tr`), `post?` | `{summary, words: [{word, text}], arc, at, index}` — what the line says; for an arc the centre and the radius as a place on the sheet |
 | `simulate` | `project`, `sheet?`, `cells?`, `resolution?` | `{png_b64, width_px, height_px, resolution, extent, sheet, time_s}` |
 | `nest` | `project`, `objects?`, `quantities?`, `settings` (the options of `iyicam nest`) | `{project, placed, unplaced, plates, sheets, squeezed, suggestion}` |
 

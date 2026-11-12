@@ -158,7 +158,9 @@ drawn twice on top of each other are reported first
 Included: NcStudio (Weihong, single spindle — one file per tool), NcStudio ATC, Mach3,
 Mach4, Fanuc / ISO, LinuxCNC, Syntec. Options cover units, number formats, IJK or R arcs,
 arc splitting, helical arcs, modal suppression, line numbers, comments, canned cycles,
-CRLF line endings and more. A built-in editor creates custom posts with a live preview.
+CRLF line endings and more. A built-in editor (a form for every option, a text box with variable buttons for every block, a preview on a sample
+part, in the desktop program and on the page) creates custom posts without writing TOML, and any line of G-code
+can be explained (what `G2 X20 Y0 I5 J0` means: the centre of the arc as a place, the radius, ...).
 
 **Extensibility** – plugins add toolpath strategies, vector commands, post-processors,
 importers, exporters, G-code filters, event hooks and GUI extensions. The built-in

@@ -147,7 +147,28 @@ buttons start **folded** (▴ / ▾ at the side of the drawing). Tested in a bro
 568×320 on their side, with the keyboard up and with windows open (`tests/test_page.py` keeps the rules that matter).
 
 Not in the page yet: the trim tool, text, bitmap tracing, the G-code backplot, snapping to crossings, the tool
-database and post-processor editors, tabs of several projects.
+database editor, tabs of several projects.
+
+### Post-processors and what G-code says
+
+Under the choice of the post on the Output tab:
+
+* **✎ Make my own post from this one** (for a post that comes with the program) or **✎ Edit** / **⧉ Make a copy** (for
+  one of yours) opens the post editor: the name, the description and the file extension; every **setting** in groups
+  (units and numbers, arcs, how lines are written, the machine, the rotary axis) with a sentence of help under it;
+  and every **block of text** (start and end of the file, tool change, a toolpath, rapid, cut, arc, drilling ...) with
+  buttons that put `{safe_z}`, `{tool_number}`, `X`, `I`, `J` ... where the cursor is. A ● shows what was changed and ↺
+  puts a block back as it was. **👁 Preview** writes a small sample part (a plate with rounded corners, a hole and a
+  pocket: arcs, drilling and two tools) with the post as it is now, so every change can be looked at before it is saved.
+  A mistake (an unknown `{variable}`, a brace that does not close, a number out of range) is said in words in the preview
+  and when saving. The post is saved as `~/.iyicam/posts/<name>.toml` **on the computer the engine runs on** (with a hub
+  and an agent: the computer of the agent), writing only what differs from the post it is based on; the desktop program
+  reads the same file.
+* **Tap a line of the G-code** (View) to read what it says: each word (`G2`, `X20`, `I5` ...) and a sentence. For an arc
+  the centre is given as a place on the sheet and with its radius: `G2 X20 Y0 I5 J0` coming from (10, 0) turns clockwise
+  about (15, 0). The words **G M I J K R** are coloured. **❓ What are I J K?** has a drawing of an arc with its start,
+  end and centre, and the list of the letters, G codes and M codes, in the language of the page.
+
 ## Files of the computer
 
 Besides uploading from the phone, the page can look into the folders of the computer the server runs on: **Open from

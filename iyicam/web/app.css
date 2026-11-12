@@ -14,6 +14,7 @@
   --brand: #1f7a43; --accent: #4ade80; --warn: #fbbf24; --bad: #f87171; --ok: #4ade80; --canvas: #0b100d;
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+[hidden] { display: none !important; }       /* (a button or a flex box with its own display is hidden too) */
 /* The page is as high as what can be seen: it is fixed to the screen, the view in the middle scrolls by itself and the bar of tabs
    is the last thing in the column, so nothing can slide below the edge when the bar of the browser or the keyboard comes and goes
    (app.js ``fitScreen`` gives --vv-h and --vv-top, the visual viewport, and sets html.vv). */
@@ -199,3 +200,38 @@ html.kbd #toasts { padding-bottom: 12px; }
   .edbars { max-height: 32%; }
   .eddock { max-height: 32%; }
 }
+/* ---- post-processors and the words of G-code (post.js) ---- */
+.gcode-wrap { flex: 1 0 100%; min-width: 0; max-width: 100%; }
+.gcode { width: 100%; min-width: 0; max-width: 100%; }
+.gl-list { margin-top: 6px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); max-height: 60vh; max-width: 100%; overflow: auto; }
+.gl { display: flex; gap: 8px; padding: 2px 8px; min-height: 28px; align-items: baseline; cursor: pointer; font: 12.5px/1.5 ui-monospace, Consolas, monospace; border-bottom: 1px solid transparent; }
+.gl:hover, .gl.on { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.gl .gn { flex: none; width: 3.4em; text-align: right; color: var(--muted); user-select: none; }
+.gl .gt { white-space: pre; }
+.gw-c { color: var(--accent); font-weight: 600; }
+.gw-a { color: var(--warn); font-weight: 700; }
+.gc { color: var(--muted); }
+.gx { position: sticky; left: 0; max-width: calc(100vw - 72px); margin: 2px 6px 6px 12px; padding: 8px 10px; border-radius: 10px; background: var(--card); border: 1px solid var(--accent); font: 14px/1.4 system-ui, sans-serif; white-space: normal; }
+.gx .gxs { margin-bottom: 6px; }
+.gxw { display: flex; gap: 10px; padding: 3px 0; border-top: 1px solid var(--line); font-size: 13px; }
+.gxw b { flex: none; min-width: 4.5em; font-family: ui-monospace, Consolas, monospace; }
+.gxw span { color: var(--muted); }
+.gli { display: flex; gap: 10px; padding: 6px 0; border-top: 1px solid var(--line); font-size: 14px; }
+.gli b { flex: none; min-width: 3.6em; font-family: ui-monospace, Consolas, monospace; }
+.arcfig { display: flex; justify-content: center; margin: 6px 0; }
+.arcfig svg { width: min(100%, 320px); height: auto; color: var(--ink); }
+.arcfig .fa { fill: none; stroke: var(--accent); stroke-width: 3; }
+.arcfig .fd { fill: none; stroke: var(--warn); stroke-width: 2; stroke-dasharray: 5 4; }
+.arcfig .fc { fill: var(--warn); } .arcfig .fs { fill: var(--accent); }
+.arcfig text { fill: currentColor; font: 600 13px system-ui, sans-serif; }
+.arcfig text.fi { fill: var(--warn); font-size: 15px; }
+details.grp, details.blk { border-top: 1px solid var(--line); padding: 2px 0; }
+details.grp > summary, details.blk > summary { min-height: 44px; display: flex; align-items: center; gap: 6px; cursor: pointer; font-weight: 600; flex-wrap: wrap; }
+details.blk > summary .muted { font-weight: 400; }
+details.vars > summary { cursor: pointer; min-height: 36px; display: flex; align-items: center; }
+.opt { margin-bottom: 6px; }
+.chg { color: var(--accent); font-size: 10px; }
+textarea.mono { font: 13px/1.45 ui-monospace, Consolas, monospace; white-space: pre; overflow: auto; tab-size: 4; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 6px 0; }
+button.chip { min-height: 34px; padding: 0 10px; font: 12.5px ui-monospace, Consolas, monospace; border-radius: 99px; }
+.stickybar { position: sticky; bottom: 0; z-index: 2; margin: 16px -16px calc(-20px - env(safe-area-inset-bottom)); padding: 10px 16px calc(12px + env(safe-area-inset-bottom)); display: flex; gap: 8px; background: var(--bg); border-top: 1px solid var(--line); }

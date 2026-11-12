@@ -21,6 +21,11 @@ QUICK: dict[str, Callable[[dict], dict]] = {
     "import": ops.op_import,
     "export": ops.op_export,
     "command": ops.op_command,
+    "posts": ops.op_posts,
+    "post_save": ops.op_post_save,
+    "post_delete": ops.op_post_delete,
+    "post_preview": ops.op_post_preview,
+    "gcode_explain": ops.op_gcode_explain,
 }
 
 LONG: dict[str, Callable[..., dict]] = {

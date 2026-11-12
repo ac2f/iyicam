@@ -137,7 +137,9 @@ def op_schema(_payload=None) -> dict:
     commands = [{"id": c.id, "label": c.label, "menu": c.menu, "min_selection": c.min_selection,
                  "shortcut": c.shortcut, "tooltip": c.tooltip, "source": c.source,
                  "params": [param_to_dict(p) for p in c.params]} for c in REGISTRY.commands.values()]
-    posts = [{"id": p.id, "name": p.name, "extension": p.extension, "description": p.description}
+    from ..post.editing import builtin_ids, is_user_post
+    posts = [{"id": p.id, "name": p.name, "extension": p.extension, "description": p.description,
+              "builtin": p.id in builtin_ids(), "editable": is_user_post(p)}
              for p in sorted(REGISTRY.posts.values(), key=lambda p: p.id)]
     importers = [{"extensions": list(i.extensions), "label": i.label} for i in REGISTRY.importers.values()]
     importers.insert(0, {"extensions": ["icam"], "label": "iyiCAM project"})
@@ -413,7 +415,8 @@ def op_gcode(payload: dict, ctl: JobControl | None = None) -> dict:
     ensure_ready()
     from ..post.export import post_toolpaths
     project = load_project(payload.get("project"))
-    post = REGISTRY.posts.get(str(payload.get("post") or ""))
+    post = _draft_post(payload.get("post_draft")) if payload.get("post_draft") else \
+        REGISTRY.posts.get(str(payload.get("post") or ""))
     if post is None:
         raise ServiceError("unknown_post", "there is no such post-processor", post=str(payload.get("post")),
                            known=sorted(REGISTRY.posts))
@@ -439,6 +442,118 @@ def op_gcode(payload: dict, ctl: JobControl | None = None) -> dict:
             files.append({"name": f"{base}{suffix}.{post.extension}", "mime": "text/plain", "text": text,
                           "sheet": sheet.id})
     return {"files": files, "errors": errors, "warnings": [w[:2000] for w in warnings], "ok": bool(files)}
+
+
+# ---------------------------------------------------------------------------------------------
+# post-processors: list, make, change, delete, try; and what a line of G-code says
+# ---------------------------------------------------------------------------------------------
+
+def _draft_post(draft):
+    """The post of a draft (nothing is written), or ``invalid_post`` with what is wrong."""
+    from ..post.editing import PostEditError, build_post
+    try:
+        return build_post(draft)
+    except PostEditError as exc:
+        raise ServiceError("invalid_post", str(exc)) from exc
+
+
+def _posts_answer() -> dict:
+    from ..builtins import USER_POST_ERRORS
+    from ..post import editing, guide
+    return {"posts": [editing.info(p) for p in sorted(REGISTRY.posts.values(), key=lambda p: p.name.lower())],
+            "errors": [{"file": Path(f).name, "message": m} for f, m in sorted(USER_POST_ERRORS.items())],
+            "specs": editing.specs(), "glossary": {lang: guide.glossary(lang) for lang in guide.LANGS}}
+
+
+def _reload_user_posts() -> None:
+    REGISTRY.remove_source("user-posts")
+    load_user_posts(REGISTRY)
+
+
+def op_posts(_payload=None) -> dict:
+    """Every post with its options and blocks (and whether it is the user's own, so it can be changed), a
+    description of each option, block and variable for building a form, the files of the user that cannot be
+    loaded, and the glossary of G-code words."""
+    ensure_ready()
+    return _posts_answer()
+
+
+def op_post_save(payload: dict) -> dict:
+    """Save a draft (``post``: ``{id?, name, description, extension, extends, options, blocks}``) as a post of the
+    user, ``~/.iyicam/posts/<id>.toml``; only what differs from the post it extends is written.  Answers like
+    ``posts`` plus ``saved`` (the id), ``warnings`` and ``file``."""
+    ensure_ready()
+    from ..post.editing import PostEditError, save_user_post
+    try:
+        target, warnings = save_user_post(payload.get("post"), REGISTRY.posts)
+    except PostEditError as exc:
+        raise ServiceError("invalid_post", str(exc)) from exc
+    except OSError as exc:
+        raise ServiceError("os_error", f"the post could not be written: {exc}") from exc
+    _reload_user_posts()
+    from ..builtins import USER_POST_ERRORS
+    bad = USER_POST_ERRORS.get(str(target))
+    if bad:                                              # (it was written but cannot be read back: say so)
+        raise ServiceError("invalid_post", f"the post was written but cannot be loaded: {bad}", file=target.name)
+    from ..post.loader import read_definition
+    return {**_posts_answer(), "saved": read_definition(target).get("id", target.stem), "file": target.name,
+            "warnings": warnings}
+
+
+def op_post_delete(payload: dict) -> dict:
+    """Delete a post of the user (``id``); the built-in posts and those of plugins cannot be deleted."""
+    ensure_ready()
+    from ..post.editing import PostEditError, delete_user_post
+    pid = str(payload.get("id") or "")
+    post = REGISTRY.posts.get(pid)
+    if post is None:
+        raise ServiceError("unknown_post", "there is no such post-processor", post=pid)
+    try:
+        delete_user_post(post)
+    except PostEditError as exc:
+        raise ServiceError("invalid_post", str(exc)) from exc
+    except OSError as exc:
+        raise ServiceError("os_error", f"the post could not be deleted: {exc}") from exc
+    _reload_user_posts()
+    return {**_posts_answer(), "deleted": pid}
+
+
+def op_post_preview(payload: dict) -> dict:
+    """The G-code a draft (``post``) writes for a small sample job with arcs, a drilling and two tools: quick, so
+    it can be asked after every change of a form."""
+    ensure_ready()
+    from ..post.editing import PostEditError, clean_draft, sample_files
+    post = _draft_post(payload.get("post"))
+    try:
+        warnings = clean_draft(payload.get("post"))[1]
+        files = sample_files(post)
+    except PostEditError as exc:
+        raise ServiceError("invalid_post", str(exc)) from exc
+    except KeyError as exc:                              # (an unknown {variable} in a block)
+        raise ServiceError("post_failed", str(exc.args[0] if exc.args else exc)) from exc
+    except (ValueError, TypeError, IndexError) as exc:   # (a block the formatter cannot read, ...)
+        raise ServiceError("post_failed", f"{type(exc).__name__}: {exc}") from exc
+    return {"files": [{"name": f"sample{sfx}.{post.extension}", "text": text} for sfx, text in files],
+            "warnings": warnings, "arcs": post.options["arcs"], "ijk": post.options["ijk"]}
+
+
+def op_gcode_explain(payload: dict) -> dict:
+    """What one line of a G-code file says.  ``lines``: the lines of the file up to the one asked (at most 5000: the
+    position the tool has when the line starts is followed through them), ``index``: the line, ``lang``: ``en`` or
+    ``tr``, ``post``: the id of the post that wrote it (it knows the units and how I J are counted)."""
+    from ..post import guide
+    ensure_ready()
+    lines = payload.get("lines")
+    if not isinstance(lines, list) or not lines or len(lines) > 5000 or not all(isinstance(x, str) for x in lines):
+        raise ServiceError("bad_request", "'lines' must be a list of 1 to 5000 lines")
+    index = payload.get("index", len(lines) - 1)
+    if isinstance(index, bool) or not isinstance(index, int) or not 0 <= index < len(lines):
+        raise ServiceError("bad_request", "'index' must be the number of a line (from 0)", field="index")
+    lines = [x[:300] for x in lines]
+    post = REGISTRY.posts.get(str(payload.get("post") or ""))
+    inch = None if post is None else post.options["units"] == "inch"
+    absolute = bool(post and post.options["ijk"] == "absolute")
+    return guide.explain(lines, index, str(payload.get("lang") or "en"), inch=inch, arc_absolute=absolute)
 
 
 def op_simulate(payload: dict, ctl: JobControl | None = None) -> dict:

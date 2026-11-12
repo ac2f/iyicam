@@ -312,7 +312,7 @@ function setBusy(b) {
 function openSheet(title, body, onClose) {
   let closed = false;
   const close = () => { if (closed) return; closed = true; bg.remove(); document.removeEventListener("keydown", esc); if (onClose) onClose(); };
-  const esc = e => { if (e.key === "Escape") close(); };
+  const esc = e => { if (e.key === "Escape" && [...document.querySelectorAll(".sheet-bg")].pop() === bg) close(); };      // (only the one on top: a preview over an editor must not close both)
   const bg = h("div", { class: "sheet-bg", onclick: e => { if (e.target === bg) close(); } },
     h("div", { class: "sheet-pane", role: "dialog", "aria-modal": "true" }, h("h3", {}, title), body));
   document.addEventListener("keydown", esc);
@@ -1024,6 +1024,7 @@ function viewOutput() {
   const out = [];
 
   out.push(h("div", { class: "card" }, h("h2", {}, t("out.post")), post,
+    window.IyiPage.post ? window.IyiPage.post.tools(S.post) : null,            // (post.js: change it, copy it, what I J K mean)
     h("div", { class: "row", style: "margin-top:12px" },
       h("button", { class: "grow", onclick: () => guarded(async () => {
         const r = await runJob("compute", { project: p, preview: true });
@@ -1058,9 +1059,17 @@ function viewOutput() {
     out.push(h("div", { class: "card" }, h("h2", {}, t("out.files")),
       g.errors.map(e => h("div", { class: "msg bad" }, e)), g.warnings.slice(0, 5).map(w => h("div", { class: "msg warn" }, w)),
       h("div", { class: "list" }, g.files.map(f => {
-        const pre = h("pre", { class: "code", hidden: true }), lines = f.text.split("\n").length;
+        const pg = window.IyiPage.post;                  // (post.js: every line can be tapped to read what it says)
+        const pre = h(pg ? "div" : "pre", { class: pg ? "gcode-wrap" : "code", hidden: true }), lines = f.text.split("\n").length;
         const show = h("button", { class: "small" }, t("out.view"));
-        show.onclick = () => { pre.hidden = !pre.hidden; if (!pre.hidden && !pre.textContent) pre.textContent = f.text.split("\n").slice(0, 400).join("\n") + (lines > 400 ? "\n…" : ""); show.textContent = pre.hidden ? t("out.view") : t("out.hide"); };
+        show.onclick = () => {
+          pre.hidden = !pre.hidden;
+          if (!pre.hidden && !pre.firstChild) {
+            if (pg) pre.append(pg.viewer(f.text, S.post));
+            else pre.textContent = f.text.split("\n").slice(0, 400).join("\n") + (lines > 400 ? "\n…" : "");
+          }
+          show.textContent = pre.hidden ? t("out.view") : t("out.hide");
+        };
         return h("div", { class: "item", style: "flex-wrap:wrap" },
           h("div", { class: "grow" }, h("b", {}, f.name), h("div", { class: "muted small" }, `${t("out.lines", fmt(lines, 0))} · ${fmt(f.text.length / 1024, 0)} KB`)),
           show, h("button", { class: "small primary", onclick: () => download(f.name, new Blob([f.text], { type: "text/plain" })) }, "⬇ " + t("out.download")), pre);
@@ -1159,8 +1168,8 @@ async function start() {
 
 // what edit.js (the drawing tools) needs of this file; it adds ``editor`` to it
 window.IyiPage = { S, h, $, t, TXT, api, runJob, toast, fail, openSheet, paramsForm, numberInput, fmt, store, guarded, render, touch,
-                   persist, changed, activeSheet, layerMap, flatOf, drawScene, fitView, setFile, editor: null,
-                   sceneSegs, lodGroups };
+                   persist, changed, activeSheet, layerMap, flatOf, drawScene, fitView, setFile, editor: null, post: null,
+                   sceneSegs, lodGroups, lang: () => lang };
 
 (async () => {
   let note;
