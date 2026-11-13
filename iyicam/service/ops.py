@@ -622,8 +622,14 @@ def op_nest(payload: dict, ctl: JobControl | None = None) -> dict:
             rules[layer.id] = parse_rule(str(rule))
         except ValueError as exc:
             raise ServiceError("bad_request", f"rotate_layers: {exc}", field="rotate_layers") from exc
+    from ..nesting.nest import ARRANGEMENTS, CORNERS, GRAVITIES
+    for key, allowed, default in (("gravity", GRAVITIES, "left"), ("arrange", ARRANGEMENTS, "free"), ("corner", CORNERS, "bl")):
+        if str(s.get(key, default)) not in allowed:
+            raise ServiceError("bad_request", f"'{key}' must be one of: {', '.join(allowed)}", field=key, allowed=list(allowed))
     st = NestSettings(_num(s, "width", 2800.0, 1.0), _num(s, "height", 2100.0, 1.0), _num(s, "margin", 10.0, 0.0),
                       _num(s, "spacing", 8.0, 0.0), rots, str(s.get("gravity", "left")),
+                      gravity_only=bool(s.get("gravity_only")), arrange=str(s.get("arrange", "free")),
+                      corner=str(s.get("corner", "bl")),
                       iterations=int(_num(s, "iterations", 8, 1, 200)), time_limit=_num(s, "time_limit", 0.0, 0.0),
                       max_points=int(_num(s, "max_points", 40, 0)), squeeze_angle=_num(s, "squeeze_angle", 0.0, 0.0),
                       squeeze_margin=_num(s, "squeeze_margin", 0.0, 0.0), squeeze_step=_num(s, "squeeze_step", 2.0, 0.1))

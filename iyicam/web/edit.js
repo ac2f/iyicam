@@ -57,6 +57,12 @@
     "nest.spacing": "Parça aralığı (mm)", "nest.rot": "Dönüş adımı (°, 0 = dönme)", "nest.iter": "Arama (deneme sayısı)", "nest.sel": "Yalnız seçilileri yerleştir",
     "nest.copies": "Her parçadan kaç tane", "nest.run": "Yerleştir", "nest.result": "{0} parça yerleşti, {1} sığmadı, {2} plaka.",
     "nest.nothing": "Yerleştirilecek vektör yok.", "nest.squeeze": "Sıkıştırma önerisi (°, 0 = yok)",
+    "nest.how": "Dizme", "nest.arrange": "Parçalar nasıl dizilsin?", "nest.a.free": "Serbest (iç içe geçer, en az malzeme)",
+    "nest.a.rows": "X ekseni boyunca: satır satır", "nest.a.columns": "Y ekseni boyunca: sütun sütun",
+    "nest.corner": "Başlangıç köşesi", "nest.c.bl": "Sol alt", "nest.c.br": "Sağ alt", "nest.c.tl": "Sol üst", "nest.c.tr": "Sağ üst",
+    "nest.gravity": "Serbest dizmede yön", "nest.g.auto": "Otomatik (en iyisini dene)", "nest.g.left": "Sola yasla (Y boyunca dolar)",
+    "nest.g.bottom": "Aşağı yasla (X boyunca dolar)", "nest.g.compact": "En küçük alan", "nest.g.reach_x": "X'te en kısa", "nest.g.reach_y": "Y'de en kısa",
+    "nest.g.diag": "Sol alt köşeye (çapraz)",
     "e.command_failed": "Komut uygulanamadı.", "e.nothing_to_nest": "Yerleştirilecek vektör yok.",
     "paths.bylayers": "Katmanlar", "paths.byvectors": "Seçili vektörler ({0})", "paths.novec": "Önce çizimde vektör seç.",
     "paths.order": "Kesim sırası ve başlangıç noktaları", "paths.up": "Yukarı", "paths.down": "Aşağı", "paths.dup": "Çoğalt",
@@ -124,6 +130,12 @@
     "nest.spacing": "Part spacing (mm)", "nest.rot": "Rotation step (°, 0 = no turning)", "nest.iter": "Search (attempts)", "nest.sel": "Nest only the selected",
     "nest.copies": "Copies of each part", "nest.run": "Nest", "nest.result": "{0} part(s) placed, {1} did not fit, {2} plate(s).",
     "nest.nothing": "There is nothing to nest.", "nest.squeeze": "Squeeze suggestion (°, 0 = none)",
+    "nest.how": "Arrangement", "nest.arrange": "How are the parts put down?", "nest.a.free": "Free (they interlock, least material)",
+    "nest.a.rows": "Along the X axis: row by row", "nest.a.columns": "Along the Y axis: column by column",
+    "nest.corner": "Start in the corner", "nest.c.bl": "Bottom left", "nest.c.br": "Bottom right", "nest.c.tl": "Top left", "nest.c.tr": "Top right",
+    "nest.gravity": "Direction of free nesting", "nest.g.auto": "Automatic (try the best)", "nest.g.left": "Pack to the left (fills along Y)",
+    "nest.g.bottom": "Pack to the bottom (fills along X)", "nest.g.compact": "Smallest area", "nest.g.reach_x": "Shortest along X", "nest.g.reach_y": "Shortest along Y",
+    "nest.g.diag": "To the lower left corner (diagonal)",
     "e.command_failed": "The command could not be applied.", "e.nothing_to_nest": "There is nothing to nest.",
     "paths.bylayers": "Layers", "paths.byvectors": "Selected vectors ({0})", "paths.novec": "Select vectors on the drawing first.",
     "paths.order": "Cut order and start points", "paths.up": "Up", "paths.down": "Down", "paths.dup": "Duplicate",
@@ -1020,12 +1032,34 @@
     toast(t("nest.result", n(r.placed), n(r.unplaced), S.project.sheets.length), "ok");
   }
   B.jobApply.nest = r => applyNest(r);                  // (jobs.js applies the result of a nesting asked for again)
-  const nestState = JSON.parse(B.store.get("iyicam.nest") || "null") || { margin: 10, spacing: 8, rotation: 90, iterations: 8, copies: 1, squeeze: 0 };
+  const nestState = Object.assign({ arrange: "free", corner: "bl", gravity: "auto" }, JSON.parse(B.store.get("iyicam.nest") || "null") || { margin: 10, spacing: 8, rotation: 90, iterations: 8, copies: 1, squeeze: 0 });
+  /** what the engine is asked: the plate, the gaps, the turning, and how the parts are put down (``arrange``: free, or in rows
+   *  along X / columns along Y from a corner; free nesting may be kept to one direction) */
+  function nestSettings(s) {
+    const o = { width: s.width, height: s.height, margin: s.margin, spacing: s.spacing, rotation: s.rotation, iterations: s.iterations, squeeze_angle: s.squeeze || 0,
+                arrange: s.arrange || "free" };
+    if (o.arrange !== "free") o.corner = s.corner || "bl";
+    else if (s.gravity && s.gravity !== "auto") { o.gravity = s.gravity; o.gravity_only = true; }
+    return o;
+  }
   function nestDialog() {
     const sh = sheet(), s = nestState;
     s.width = s.width || sh.width; s.height = s.height || sh.height;
     const only = h("input", { type: "checkbox", checked: E.sel.size > 0 });
     const num = (label, key, p) => h("label", { class: "f" }, h("span", {}, label), numberInput(s[key], v => { s[key] = v; }, p || {}));
+    const pick = (label, key, options, on) => {
+      const sel = h("select", {}, options.map(([v, l]) => h("option", { value: v }, l)));
+      sel.value = s[key];
+      sel.onchange = () => { s[key] = sel.value; if (on) on(); };
+      return h("label", { class: "f" }, h("span", {}, label), sel);
+    };
+    const cornerBox = h("div"), gravBox = h("div");
+    const showArrange = () => { cornerBox.hidden = s.arrange === "free"; gravBox.hidden = s.arrange !== "free"; };
+    cornerBox.append(pick(t("nest.corner"), "corner", [["bl", t("nest.c.bl")], ["br", t("nest.c.br")], ["tl", t("nest.c.tl")], ["tr", t("nest.c.tr")]]));
+    gravBox.append(pick(t("nest.gravity"), "gravity", [["auto", t("nest.g.auto")], ["left", t("nest.g.left")], ["bottom", t("nest.g.bottom")], ["compact", t("nest.g.compact")],
+                                                        ["reach_x", t("nest.g.reach_x")], ["reach_y", t("nest.g.reach_y")], ["diag", t("nest.g.diag")]]));
+    const arrangeBox = h("div", {}, pick(t("nest.arrange"), "arrange", [["free", t("nest.a.free")], ["rows", t("nest.a.rows")], ["columns", t("nest.a.columns")]], showArrange), cornerBox, gravBox);
+    showArrange();
     let close;
     const run = () => B.guarded(async () => {
       B.store.set("iyicam.nest", JSON.stringify(s));
@@ -1040,7 +1074,7 @@
         // is one of the last three jobs, to be asked for again (jobs.js); a result that comes after the connection was lost is
         // offered, not taken: the person is asked first
         r = await runJob("nest", { project: S.project, objects: ids, quantities,
-          settings: { width: s.width, height: s.height, margin: s.margin, spacing: s.spacing, rotation: s.rotation, iterations: s.iterations, squeeze_angle: s.squeeze || 0 } },
+          settings: nestSettings(s) },
           { keep: { title: `${t("nest.title")} · ${S.project.name || ""}`.trim() }, deferrable: true });
       } catch (e) {
         if (e instanceof B.JobDeferred) { if (B.jobs) B.jobs.offer(e.id); return; }
@@ -1053,6 +1087,7 @@
       h("div", { class: "grid2" }, num(t("nest.margin"), "margin"), num(t("nest.spacing"), "spacing")),
       h("div", { class: "grid2" }, num(t("nest.rot"), "rotation"), num(t("nest.copies"), "copies", { kind: "int", min: 1 })),
       h("div", { class: "grid2" }, num(t("nest.iter"), "iterations", { kind: "int", min: 1 }), num(t("nest.squeeze"), "squeeze")),
+      h("div", { class: "group-h" }, t("nest.how")), arrangeBox,
       h("label", { class: "chk" }, only, t("nest.sel")),
       h("div", { class: "row", style: "margin-top:16px" }, h("button", { class: "primary grow", onclick: () => { close(); run(); } }, t("nest.run")), h("button", { onclick: () => close() }, t("ed.cancel")))));
   }

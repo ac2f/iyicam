@@ -60,6 +60,35 @@ after the plate (*Leftover 1*, *Offcut 2*, ...). The border gap is kept to the e
 the plate, to its holes and cut-outs; the gap between parts is kept between parts and
 to what is fixed on a plate.
 
+## Rows and columns: lining the parts up along X or Y
+
+**Arrangement** (desktop: *Strategy* tab; page: *Dizme* / *Arrangement*; `--arrange` on the command line; `arrange` in the
+service) decides how the parts are put down:
+
+| | |
+|---|---|
+| **Free** (default) | the parts interlock at the best place of the feasible area, as described above: the least material |
+| **Rows along X** | the parts are **lined up along the X axis, a row at a time**; the rows are stacked along Y |
+| **Columns along Y** | the parts are **lined up along the Y axis, a column at a time**; the columns are stacked along X |
+
+Rows and columns start in the **corner** chosen (bottom left, bottom right, top left, top right; `--corner bl|br|tl|tr`): the
+first part is in that corner and the strips grow from it. A strip is as thick as the first part put in it (the biggest
+first, in the order of the strip: tallest first for rows, widest first for columns), a part goes in the first strip it
+fits in, at the angle (of those the rotation settings allow) that wastes the least of the strip's thickness, and the last
+strip may grow while the plate has room. A part that fits no strip starts a new sheet like in free nesting.
+
+It is **tidy and predictable** (a row shares its baseline, the order of the parts is the order of the strips, straight cuts
+along a row), not the most economical: the parts are lined up by their **bounding boxes**, so an L-shaped part wastes the corner
+that free nesting would have filled. The gap between parts and the border gap are kept as always, and the outlines are
+checked against the plate: a plate that is not a rectangle, with parts fixed on it, is respected (a part slides along its
+strip to a place that is on the plate). Squeezing and polishing are not used for strips; several attempts only try other
+orders of the parts.
+
+**Free nesting in one direction.** *Pack towards* chooses where the free nesting gathers the parts (left: filling along Y;
+bottom: along X; smallest area; shortest along X or Y; the lower left corner). Normally the other directions are tried as well
+when there are several attempts and the best layout is kept; **Try only this direction** (`--gravity-only`, `gravity_only`) keeps it to
+the one chosen.
+
 ## Speed, progress and cancelling
 
 Nesting runs in the background: the program stays alive, a progress window counts the

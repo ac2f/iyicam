@@ -1028,11 +1028,26 @@ class NestingDialog(RemembersSize, QDialog):
                   visible={"rotation": "list"}, help="Any angles, separated by commas, e.g. 0, 22.5, 90"),
             Param("tilt_step", "Step of limited rotation", "angle", 5.0, min=0.1, max=90.0, group="Strategy",
                   help="The step of 'Tilt up to ±X°' set for parts or layers below"),
+            Param("arrange", "Arrangement", "choice", "free",
+                  choices=[("free", "Free (the parts interlock, least material)"),
+                           ("rows", "Rows along X (lined up, a row at a time)"),
+                           ("columns", "Columns along Y (lined up, a column at a time)")],
+                  group="Strategy", help="Rows and columns put the parts in tidy strips of the sheet, from the corner "
+                  "chosen below, each strip as thick as its thickest part; free nesting uses the least material"),
+            Param("corner", "Start in the corner", "choice", "bl",
+                  choices=[("bl", "Bottom left"), ("br", "Bottom right"), ("tl", "Top left"), ("tr", "Top right")],
+                  group="Strategy", visible={"arrange": ["rows", "columns"]},
+                  help="The first row (or column) starts here"),
             Param("gravity", "Pack towards", "choice", "left",
                   choices=[("left", "Left (X min)"), ("bottom", "Bottom (Y min)"), ("compact", "Smallest area"),
-                           ("reach_x", "Shortest layout along X"), ("reach_y", "Shortest layout along Y")],
-                  group="Strategy", help="The first layout is made this way; with more attempts the other "
+                           ("reach_x", "Shortest layout along X"), ("reach_y", "Shortest layout along Y"),
+                           ("diag", "Lower left corner (diagonal)")],
+                  group="Strategy", visible={"arrange": "free"},
+                  help="The first layout is made this way; with more attempts the other "
                   "ways are tried too and the one that uses the least of the sheet is kept"),
+            Param("gravity_only", "Try only this direction", "bool", False, group="Strategy",
+                  visible={"arrange": "free"},
+                  help="Off: the other directions are tried too (more attempts needed). On: only the one above"),
             Param("iterations", "Optimisation attempts", "int", 8, min=1, max=200, group="Strategy",
                   help="1: one quick pass. More: other orders of the parts and other directions are tried, "
                        "the best layout (fewest sheets, least area used on the last) is kept and polished"),
@@ -1267,7 +1282,8 @@ class NestingDialog(RemembersSize, QDialog):
         squeezing = v["squeeze"] != "off"
         st = NestSettings(v["width"], v["height"], v["margin"], v["spacing"], self.rotations(v), v["gravity"],
                           iterations=v["iterations"], time_limit=float(v["time_limit"]), tolerance=v["tolerance"],
-                          max_points=v["max_points"],
+                          max_points=v["max_points"], gravity_only=bool(v["gravity_only"]), arrange=v["arrange"],
+                          corner=v["corner"],
                           squeeze_angle=v["squeeze_angle"] if squeezing else 0.0,
                           squeeze_margin=v["squeeze_margin"] if squeezing else 0.0,
                           squeeze_step=v["squeeze_step"])

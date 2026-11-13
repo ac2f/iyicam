@@ -264,7 +264,7 @@ def cmd_nest(a) -> int:
     st = NestSettings(a.width, a.height, a.margin, a.spacing, rots, a.gravity, iterations=a.iterations,
                       time_limit=a.time_limit, max_points=a.max_points, squeeze_angle=a.squeeze_angle,
                       squeeze_margin=a.squeeze_margin,
-                      squeeze_step=a.squeeze_step)
+                      squeeze_step=a.squeeze_step, gravity_only=a.gravity_only, arrange=a.arrange, corner=a.corner)
     stock = [] if a.no_project_stock else list(p.stock)
     if a.stock:
         stock += load_stock(a.stock)
@@ -368,6 +368,13 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--spacing", type=float, default=8.0)
     s.add_argument("--rotation", type=float, default=90.0, help="rotation step in degrees (0 = none)")
     s.add_argument("--gravity", default="left", choices=["left", "bottom", "compact", "reach_x", "reach_y", "diag"])
+    s.add_argument("--gravity-only", action="store_true",
+                   help="free nesting: try only the --gravity direction (not the other directions as well)")
+    s.add_argument("--arrange", default="free", choices=["free", "rows", "columns"],
+                   help="free: the parts interlock (default); rows: lined up along X, a row at a time; "
+                        "columns: lined up along Y, a column at a time")
+    s.add_argument("--corner", default="bl", choices=["bl", "br", "tl", "tr"],
+                   help="rows / columns start in this corner of the plate (bottom left, bottom right, top left, top right)")
     s.add_argument("--iterations", type=int, default=8,
                    help="layouts tried (1 = one quick pass); the one using the least material is kept")
     s.add_argument("--time-limit", type=float, default=0.0,

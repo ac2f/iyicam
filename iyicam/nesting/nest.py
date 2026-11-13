@@ -6,6 +6,12 @@ the no-fit polygons (Minkowski differences) of the parts already placed.  The
 best vertex of that region is chosen with a gravity rule.  Several randomised
 orders can be tried and the best layout is kept.
 
+Besides this free nesting there are **rows** (the parts lined up along X, a row at a time) and **columns** (along Y):
+:meth:`Nester._fill_strips` puts the parts in strips of the plate, each strip as thick as its thickest part, from a chosen
+corner, with the outlines of the parts checked against the plate (and what is fixed on it) as in the free nesting.  The
+parts are tidy and in order, the material use is that of their bounding boxes; ``gravity_only`` keeps the free nesting to
+the one direction chosen instead of trying the others too.
+
 Plates are :class:`Container`s: any shape (leftovers with cut-outs, damaged
 corners, holes), possibly with parts already fixed on them, in any number of
 sizes and quantities.  They are filled one after the other, leftovers first, so
@@ -70,7 +76,10 @@ class NestSettings:
     margin: float = 10.0
     spacing: float = 8.0
     rotations: list[float] = field(default_factory=lambda: [0.0, 90.0, 180.0, 270.0])
-    gravity: str = "left"          # left | bottom | compact
+    gravity: str = "left"          # left | bottom | compact | reach_x | reach_y | diag
+    gravity_only: bool = False     # free nesting: only this gravity is tried (not the others as well)
+    arrange: str = "free"          # free | rows (lined up along X, a row at a time) | columns (along Y)
+    corner: str = "bl"             # rows / columns start in this corner: bl | br | tl | tr
     max_sheets: int = 100
     iterations: int = 1            # layouts tried (see nest()), the best is kept
     time_limit: float = 0.0        # seconds after which no further attempt is started (0 = no limit)
@@ -85,6 +94,11 @@ class NestSettings:
     squeeze_angle: float = 0.0
     squeeze_margin: float = 0.0
     squeeze_step: float = 2.0
+
+
+GRAVITIES = ("left", "bottom", "compact", "reach_x", "reach_y", "diag")
+ARRANGEMENTS = ("free", "rows", "columns")
+CORNERS = ("bl", "br", "tl", "tr")
 
 
 @dataclass
@@ -883,9 +897,109 @@ class Nester:
                 return c, round(dev, 6), b.relief
         return None
 
+    def _fill_strips(self, box: _Box, remaining: list[tuple[int, int]], res: NestResult, progress,
+                     total: int) -> int:
+        """Rows (or columns): place the parts in strips along X (or Y) from the corner ``settings.corner``, in the order
+        they come, and return how many were placed.
+
+        A strip is as thick as the first part put in it (so the biggest first makes tidy strips); a part goes in the first
+        strip it fits in, at the angle that wastes the least of the strip's thickness; the last strip may grow while the
+        plate has room.  The outline of the part, grown by half the spacing, is what is lined up: the bounding boxes
+        touch, so the parts keep the spacing.  A plate that is not a rectangle (or has parts fixed on it) is
+        asked whether each place is on it, and the part slides along its strip to one that is."""
+        S = clip.SCALE
+        st = self.st
+        along_x = st.arrange == "rows"
+        right, top = st.corner in ("br", "tr"), st.corner in ("tl", "tr")
+        ux0, uy0, ux1, uy1 = box.rect if box.rect is not None else box.bbox
+        # along: the direction of a strip, across: the direction the strips are stacked in; each from its start edge
+        a0, a1, a_rev = (ux0, ux1, right) if along_x else (uy0, uy1, top)
+        c0, c1, c_rev = (uy0, uy1, top) if along_x else (ux0, ux1, right)
+        reach, depth = a1 - a0, c1 - c0
+        strips: list[list[int]] = []       # [offset across (from the start edge), thickness, used along]
+        items: list[tuple] = []
+        left: list[tuple[int, int]] = []
+        used_bbox = None
+        free = box.free
+        sheet = res.sheets
+        dead: set[tuple] = set()
+        for item in remaining:
+            self._check()
+            si, ci = item
+            key = self.skey[si]
+            if self.areas[si] > free + 1e-6 or key in dead:
+                left.append(item)
+                continue
+            if progress:
+                progress(total - len(remaining) + len(items), total)
+            c = self.cls[si]
+            opts = []                       # (angle, length along, thickness across)
+            for ang in self.angles[si]:
+                bx0, by0, bx1, by1 = self._variant(c, ang).bbox
+                opts.append((ang, (bx1 - bx0) if along_x else (by1 - by0), (by1 - by0) if along_x else (bx1 - bx0)))
+            best = None                     # (strip index, waste, length) -> (strip, angle, length, thickness)
+            last = len(strips) - 1
+            for k, sp in enumerate(strips):
+                for ang, ln, th in opts:
+                    if sp[2] + ln > reach:
+                        continue
+                    if th > sp[1] and not (k == last and sp[0] + th <= depth):
+                        continue            # (only the last strip may grow)
+                    cand = ((k, max(0, th - sp[1]), sp[1] - th if th <= sp[1] else 0, ln), k, ang, ln, th)
+                    if best is None or cand[0] < best[0]:
+                        best = cand
+                if best is not None:
+                    break                   # the first strip it fits in
+            if best is None:                # a new strip: the thinnest way up
+                at = (strips[-1][0] + strips[-1][1]) if strips else 0
+                fits = [(th, ln, ang) for ang, ln, th in opts if ln <= reach and at + th <= depth]
+                if fits:
+                    th, ln, ang = min(fits)
+                    strips.append([at, th, 0])
+                    best = ((len(strips) - 1, 0, 0, ln), len(strips) - 1, ang, ln, th)
+            placed_at = None
+            if best is not None:
+                _, k, ang, ln, th = best
+                sp = strips[k]
+                v = self._variant(c, ang)
+                bx0, by0, bx1, by1 = v.bbox
+                step = max(S, ln // 20)
+                used = sp[2]
+                while used + ln <= reach:
+                    lo_a = (a1 - used - ln) if a_rev else (a0 + used)
+                    pt = th                  # the part's own thickness: flush with the strip's start edge
+                    lo_c = (c1 - sp[0] - pt) if c_rev else (c0 + sp[0])
+                    x = (lo_a - bx0, lo_c - by0) if along_x else (lo_c - bx0, lo_a - by0)
+                    if box.rect is not None or self._inside(box, v, x[0], x[1]):
+                        placed_at = (ang, x[0], x[1], used, ln, th)
+                        break
+                    used += step            # (not on the plate here: along the strip to the next place)
+                if placed_at is not None:
+                    sp[1] = max(sp[1], th)
+                    sp[2] = placed_at[3] + ln
+            if placed_at is None:
+                dead.add(key)
+                left.append(item)
+                continue
+            ang, x, y = placed_at[0], placed_at[1], placed_at[2]
+            items.append((si, ci, c, ang, x, y))
+            free -= self.areas[si]
+            bx0, by0, bx1, by1 = self._variant(c, ang).bbox
+            nb = (x + bx0, y + by0, x + bx1, y + by1)
+            used_bbox = nb if used_bbox is None else (min(used_bbox[0], nb[0]), min(used_bbox[1], nb[1]),
+                                                      max(used_bbox[2], nb[2]), max(used_bbox[3], nb[3]))
+            res.placements.append(self._placement(si, ci, sheet, ang, x, y))
+        remaining[:] = left
+        if items:
+            res.used.append(tuple(v / S for v in used_bbox))
+            res.layout.append(items)
+        return len(items)
+
     def _fill(self, box: _Box, remaining: list[tuple[int, int]], res: NestResult, progress,
               total: int, squeeze: bool = False) -> int:
         """Place as many of ``remaining`` (largest first) on a new plate of ``box`` as fit; their count."""
+        if self.st.arrange != "free":
+            return self._fill_strips(box, remaining, res, progress, total)
         placed: list[tuple[int, float, int, int]] = []
         items: list[tuple] = []   # (shape, copy, class, angle, x, y) of what is placed
         used_bbox = None
@@ -969,10 +1083,21 @@ class Nester:
         """Up to ``count`` layouts to try, ``(order, gravity)``, the plainest first: the biggest parts first
         in the gravity chosen, then in the other gravities, then other ways to rank the parts."""
         g0 = self.st.gravity
-        gravs = [g0] + [g for g in ("reach_x", "left", "reach_y", "bottom", "compact") if g != g0]
+        if self.st.arrange != "free":      # strips: the orders of the parts are what can differ (the thickest first)
+            hows = ("height", "area", "width", "side", "perimeter") if self.st.arrange == "rows" \
+                else ("width", "area", "height", "side", "perimeter")
+            out, seen = [], set()
+            for how in hows:
+                order = self.order_by(how)
+                if tuple(order) not in seen and len(out) < max(1, count):
+                    seen.add(tuple(order))
+                    out.append((order, g0))
+            return out
+        gravs = [g0] if self.st.gravity_only else \
+            [g0] + [g for g in ("reach_x", "left", "reach_y", "bottom", "compact") if g != g0]
         plan = [("area", g) for g in gravs] + [("side", g) for g in gravs] + [
-            ("height", gravs[0]), ("width", gravs[0]), ("perimeter", gravs[0]), ("height", gravs[1]),
-            ("width", gravs[1]), ("perimeter", gravs[1])]
+            ("height", gravs[0]), ("width", gravs[0]), ("perimeter", gravs[0])] + (
+            [] if len(gravs) < 2 else [("height", gravs[1]), ("width", gravs[1]), ("perimeter", gravs[1])])
         out, seen = [], set()
         for how, g in plan:
             if len(out) >= max(1, count):
@@ -1074,7 +1199,7 @@ def nest(shapes: Sequence[NestShape], settings: NestSettings, progress: Callable
     ``progress(done, total)`` counts the parts placed over all attempts."""
     n = Nester(shapes, settings)
     n.cancel = cancel
-    squeezing = settings.squeeze_angle > 0 or settings.squeeze_margin > 0
+    squeezing = (settings.squeeze_angle > 0 or settings.squeeze_margin > 0) and settings.arrange == "free"
     tries = max(1, settings.iterations)
     attempts = tries + (1 if squeezing else 0)
     plan = n.candidates(tries)
@@ -1107,7 +1232,7 @@ def nest(shapes: Sequence[NestShape], settings: NestSettings, progress: Callable
         r = n.run_order(cand, share(i), cancel, gravity=g)
         if best is None or n.quality(r) < n.quality(best):
             best, order, grav = r, cand, g
-    if tries > 1 and not out_of_time():
+    if tries > 1 and settings.arrange == "free" and not out_of_time():     # (strips are tidy: nothing to polish)
         n.polish(best, 12 * tries, rng, None if settings.time_limit <= 0 else t0 + settings.time_limit)
     if squeezing and (best.unplaced or best.sheets > 1):
         # squeezing parts in may place what did not fit or save a plate: offered as a suggestion

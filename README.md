@@ -135,7 +135,7 @@ with Python plugins.
   long calculations run in the background with a Cancel button, the program stays alive
 - **G-code backplot**: open any G-code file, see it over the sheet and simulate it
 
-**Nesting** – true shape nesting with no-fit polygons: rotations (none / 180 / 90 / 45 /
+**Nesting** – true shape nesting with no-fit polygons (or **rows along X / columns along Y**, lined up from a chosen corner, also on the page): rotations (none / 180 / 90 / 45 /
 15 degree steps), part spacing, border gap, quantities, several sheets, holes and
 engravings travel with their part (a part drawn inside another part's hole is recognised as
 a separate part), **a search for the layout that uses the least material** (other directions
