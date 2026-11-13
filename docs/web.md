@@ -53,7 +53,8 @@ User posts, tools and plugins are read from `~/.iyicam` (`IYICAM_HOME`), as in t
    project; it opens again in the desktop program or here.
 2. **Drawing** — the sheet and its vectors, with the tools of [editing the drawing](#editing-the-drawing) below; after
    *Calculate* the toolpaths are drawn over it, coloured by depth, with the rapid moves dashed and drilled holes as dots,
-   and the cut order can be shown as numbers at the start of every cut.
+   and the cut order can be shown as numbers at the start of every cut. The **Preview** tab looks at them and changes their order
+   ([below](#toolpath-preview-cut-order-and-editing-the-preview-tab)).
 3. **Toolpaths** — add, edit, duplicate, move up and down, switch off or delete toolpaths. The form is built from the
    engine's own description of the operation (profile, pocket, drill, engrave, V-carve, plugin operations too), so it
    offers exactly the settings the desktop program has; a toolpath machines **layers** or **the vectors that are
@@ -148,6 +149,30 @@ buttons start **folded** (▴ / ▾ at the side of the drawing). Tested in a bro
 
 Not in the page yet: the trim tool, text, bitmap tracing, the G-code backplot, snapping to crossings, the tool
 database editor, tabs of several projects.
+
+### Toolpath preview, cut order and editing (the *Preview* tab)
+
+After *Calculate* the **Önizleme / Preview** tab (between *Toolpaths* and *Output*) shows the sheet with its toolpaths and, under it,
+what the desktop's Cut Order panel does:
+
+* **Preview.** The toolpaths coloured by depth (the bar says how deep), **each one shown or hidden** with its tick (time,
+  cutting length and the length in the air next to it, and the warnings), the **moves in the air**, **arrows along the cuts** (the way
+  the tool goes), the **numbers** (the place of every cut in the order, blue first, red last) and the **start points**, each switched on
+  or off. **Play**: a slider (and ⏮ ◀ ▶ ▶| ⏭) shows the cuts one after the other in the order the machine makes them (the toolpaths in
+  the order of the G-code); the tool is the orange dot at the end of the last cut.
+* **Order.** *① Cut order* of a toolpath lists its cuts in order (name and size of each); tap a row, or the cut on the
+  drawing, and it is lit up on both.
+* **Editing the order.** ↑ ↓ move the cut that is picked by one place, ⤒ ⤓ to the first or the last, ⇅ turns the order
+  round, **👆 Give the order by tapping the drawing**: tap the parts in the order they are to be cut (tap again to take one back) and
+  *Done*; the ones tapped come first, the others follow as they were. Or let a **strategy** order them (the same ones as the
+  desktop: smart, shortest travel, rows, columns, diagonals, zig-zag, smallest first, from the centre ...), and choose the **cutting
+  direction** (climb, conventional, clockwise, counter-clockwise ...). *Start points ⚑* takes you to the start point tool of the Drawing
+  tab.
+* **Look before you apply.** Every change is **calculated by the engine on a copy of the project and drawn in pink** (the cuts and the
+  moves in the air), with what it does: `Moves in the air 1.484 → 1.607 mm (+8 %) · time 9:04 → 9:05`, how many cuts change place and
+  a warning when the engine's rules moved something (what is inside a part, the holes, is always cut first). **Apply** writes the
+  order into the project (a manual order is kept as it is: `auto_order` off; a strategy stays automatic) and calculates again;
+  **Cancel** drops it. The project itself is not touched until Apply.
 
 ### Jobs that go on without the page
 

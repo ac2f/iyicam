@@ -36,7 +36,7 @@ def get(server, path):
     return r.status, r.getheader("Content-Type", ""), body
 
 
-@pytest.mark.parametrize("name", ["geom.js", "app.js", "edit.js", "post.js", "jobs.js", "app.css"])
+@pytest.mark.parametrize("name", ["geom.js", "app.js", "edit.js", "post.js", "preview.js", "jobs.js", "app.css"])
 def test_every_file_of_the_page_is_served(web, name):
     status, ctype, body = get(web, f"/static/{name}")
     assert status == 200 and body
@@ -46,7 +46,7 @@ def test_every_file_of_the_page_is_served(web, name):
 def test_the_scripts_load_in_the_order_they_need():
     html = (WEB / "index.html").read_text(encoding="utf-8")
     order = [m.group(1) for m in re.finditer(r'<script src="/static/([a-z.]+)"', html)]
-    assert order == ["geom.js", "app.js", "edit.js", "post.js", "jobs.js"]   # (app.js needs geom.js; edit.js and post.js need both)
+    assert order == ["geom.js", "app.js", "edit.js", "post.js", "preview.js", "jobs.js"]   # (app.js needs geom.js; edit.js and post.js need both)
 
 
 def _keys(block: str) -> set[str]:
@@ -56,7 +56,7 @@ def _keys(block: str) -> set[str]:
 def _texts():
     """The page's own texts (app.js) and those the other scripts add (``Object.assign(TXT.tr, {...})``)."""
     app = (WEB / "app.js").read_text(encoding="utf-8")
-    extra = [(WEB / n).read_text(encoding="utf-8") for n in ("edit.js", "post.js", "jobs.js")]
+    extra = [(WEB / n).read_text(encoding="utf-8") for n in ("edit.js", "post.js", "preview.js", "jobs.js")]
     tr_app, en_app = re.split(r"\n  en: \{", app.split("\n  tr: {", 1)[1], maxsplit=1)
     en_app = en_app.split("\n};", 1)[0]
     tr, en = _keys(tr_app), _keys(en_app)
@@ -171,5 +171,30 @@ def test_the_texts_of_the_jobs_exist_in_both_languages():
     names = {f"job.{k}" for k in ("queued", "running", "done", "error", "cancelled", "title", "btn", "none", "hint", "mine", "get",
                                   "cancel", "drop", "send", "later", "offline", "finishedTitle", "finished", "askNote", "failed",
                                   "applied", "interrupted", "noapply")} | {"e.job_not_found", "e.interrupted"}
+    assert not sorted(names - tr), f"missing in Turkish: {sorted(names - tr)}"
+    assert not sorted(names - en), f"missing in English: {sorted(names - en)}"
+
+
+def test_preview_js_is_an_extension_that_changes_the_order_by_the_engines_own_calculation():
+    """The preview tab is added to the page by preview.js (the page works without it); a change of the cut order is calculated by
+    the engine on a copy of the project, shown, and only then written into the project."""
+    app = (WEB / "app.js").read_text(encoding="utf-8")
+    assert "EXTRA_TABS" in app and "SCENE_HOOKS" in app and "S.pv.custom" in app and "async function recompute" in app
+    pv = (WEB / "preview.js").read_text(encoding="utf-8")
+    assert "if (!B || !G) return;" in pv and "B.EXTRA_TABS.push" in pv and "B.SCENE_HOOKS.push" in pv
+    assert 'runJob("compute"' in pv and "toolpaths: [tp]" in pv                       # (only the toolpath being changed is calculated)
+    assert "auto_order: false" in pv and "applyDraft" in pv and "B.recompute()" in pv
+    # the copy of the project: the project itself is changed only by Apply
+    run = pv[pv.index("async function runPreview"):pv.index("async function applyDraft")]
+    assert "S.project.toolpaths.map" in run and "tp.sequence =" not in run
+    assert "tp.sequence =" in pv[pv.index("async function applyDraft"):]
+
+
+def test_the_texts_of_the_preview_exist_in_both_languages():
+    _, tr, en = _texts()
+    names = {"tab.prev"} | {f"pv.{k}" for k in ("need", "calc", "notyet", "paths", "show", "rapids", "arrows", "numbers", "starts", "depth", "play",
+                                                "step", "all", "order", "orderNone", "pick", "picking", "done", "up", "down", "first", "last",
+                                                "reverse", "strategy", "reorder", "direction", "startp", "draft", "apply", "drop", "computing",
+                                                "compare", "moved", "rule", "applied", "cutof", "same", "choose", "stats", "total")}
     assert not sorted(names - tr), f"missing in Turkish: {sorted(names - tr)}"
     assert not sorted(names - en), f"missing in English: {sorted(names - en)}"

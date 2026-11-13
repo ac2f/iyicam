@@ -235,3 +235,17 @@ textarea.mono { font: 13px/1.45 ui-monospace, Consolas, monospace; white-space: 
 .chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 6px 0; }
 button.chip { min-height: 34px; padding: 0 10px; font: 12.5px ui-monospace, Consolas, monospace; border-radius: 99px; }
 .stickybar { position: sticky; bottom: 0; z-index: 2; margin: 16px -16px calc(-20px - env(safe-area-inset-bottom)); padding: 10px 16px calc(12px + env(safe-area-inset-bottom)); display: flex; gap: 8px; background: var(--bg); border-top: 1px solid var(--line); }
+
+/* ---- toolpath preview, order and editing (preview.js) ---- */
+.pvdock { max-height: 52%; padding: 4px 12px 12px; }
+.pvdock .item { padding: 6px 0; }
+.pvplay { flex-wrap: wrap; gap: 4px; align-items: center; }
+.pvplay button.small { min-width: 36px; padding: 0 8px; }
+.pvlist { max-height: 168px; overflow-y: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); }
+.orow { display: flex; gap: 10px; align-items: center; min-height: 40px; padding: 4px 10px; border-top: 1px solid var(--line); cursor: pointer; font-size: 14px; }
+.orow:first-child { border-top: 0; }
+.orow.on { background: color-mix(in srgb, var(--accent) 20%, transparent); font-weight: 600; }
+.onum { flex: none; min-width: 2em; height: 24px; line-height: 24px; text-align: center; border-radius: 99px; background: var(--brand); color: #fff; font-size: 12px; font-weight: 700; }
+.pvdraft { margin: 6px 0; padding: 8px 10px; border-radius: 10px; border: 1px solid #ec4899; background: color-mix(in srgb, #ec4899 10%, var(--card)); }
+.pvlegend { display: flex; align-items: center; gap: 8px; }
+.pvlegend i { display: block; width: 120px; height: 8px; border-radius: 99px; background: linear-gradient(90deg, hsl(140 80% 42%), hsl(70 80% 42%), hsl(15 80% 42%)); }

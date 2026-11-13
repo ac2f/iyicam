@@ -278,6 +278,7 @@ async function runJob(op, payload, opts = {}) {
 // ------------------------------------------------------------------------------------------ state
 const S = { schema: null, project: null, tab: "project", sheetId: null, results: null, gcode: null, sim: null,
             report: null, post: store.get("iyicam.post") || "", showPaths: true, views: {}, busy: null,
+            pv: { hidden: new Set(), rapids: true, custom: false },       // what is shown of the calculated toolpaths (preview.js changes it)
             files: null,          // what the server says about files of its computer ({files, roots, limits}); null: none
             file: null,           // the file the open project came from or was saved to: {path, hash}
             toComputer: store.get("iyicam.tocomputer") === "1",
@@ -463,12 +464,13 @@ const previews = new WeakMap();
 function previewOf(sheet, th) {
   let per = previews.get(S.results);
   if (!per) previews.set(S.results, per = new Map());
-  const key = sheet.id + "|" + th;
+  const hidden = S.pv.hidden;
+  const key = sheet.id + "|" + th + "|" + [...hidden].sort().join(",");
   let pv = per.get(key);
   if (pv) return pv;
   const buckets = Array.from({ length: 8 }, () => new Path2D()), rapid = new Path2D(), drills = [];
   for (const it of S.results.results) {
-    if (it.sheet !== sheet.id || !it.preview) continue;
+    if (it.sheet !== sheet.id || !it.preview || hidden.has(it.toolpath)) continue;
     for (const c of it.preview.cuts) {
       const b = buckets[clamp(Math.floor(clamp(-c.z / th, 0, 1) * 7.999), 0, 7)];
       for (let i = 0; i + 1 < c.p.length; i += 2) i ? b.lineTo(c.p[i], c.p[i + 1]) : b.moveTo(c.p[i], c.p[i + 1]);
@@ -507,33 +509,47 @@ function drawScene(cv, sheet, view, extra) {
   for (const [col, g] of lodGroups(sheet.vectors, view, w, hgt, v => { const l = layers.get(v.layer); return l && !l.visible ? null : (l && l.color) || "#1f77b4"; })) {
     ctx.strokeStyle = col; ctx.stroke(g.lines); ctx.fillStyle = col; ctx.fill(g.dots);
   }
-  // the toolpaths
-  if (S.showPaths && S.results) {
+  // the toolpaths (the preview tab draws them itself while it plays or compares: ``S.pv.custom``)
+  if (S.showPaths && S.results && !S.pv.custom) {
     const th = Math.max(sheetThickness(p, sheet), 0.01), { buckets, rapid, drills } = previewOf(sheet, th);
-    ctx.lineWidth = 1 * px; ctx.setLineDash([4 * px, 4 * px]); ctx.strokeStyle = dark ? "#7d8b83" : "#9aa7a0"; ctx.stroke(rapid); ctx.setLineDash([]);
+    if (S.pv.rapids) { ctx.lineWidth = 1 * px; ctx.setLineDash([4 * px, 4 * px]); ctx.strokeStyle = dark ? "#7d8b83" : "#9aa7a0"; ctx.stroke(rapid); ctx.setLineDash([]); }
     ctx.lineWidth = 2 * px;
     buckets.forEach((path, i) => { ctx.strokeStyle = `hsl(${140 - 125 * i / 7} 80% ${dark ? 58 : 42}%)`; ctx.stroke(path); });
     ctx.fillStyle = dark ? "#fbbf24" : "#b45309";
     for (const [x, y] of drills) { ctx.beginPath(); ctx.arc(x, y, 3 * px, 0, 7); ctx.fill(); }
   }
+  for (const fn of SCENE_HOOKS) fn(ctx, view, px, dark, sheet);                // (preview.js: playback, the order, a change being looked at)
   if (extra && extra.overlay) extra.overlay(ctx, view, px, dark, w, hgt);      // the selection, the nodes, what is being drawn
 }
+const SCENE_HOOKS = [];
 
-function drawStage(sheet) {
+/** The sheet with its vectors and calculated toolpaths, to look at (pan, zoom).  ``opts.onTap(x, y)``: a tap (mm, Y up); the
+    stage has ``redraw()``. */
+function drawStage(sheet, opts = {}) {
   const cv = h("canvas", { "aria-label": "drawing" });
   const stage = h("div", { class: "stage" }, cv);
   let view = S.views[sheet.id];
-  let raf = 0;
+  let raf = 0, tap = null;
   const redraw = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(() => { if (!view) view = S.views[sheet.id] = fitView(cv, sheet); drawScene(cv, sheet, view); }); };
   const zoomAt = (cx, cy, f) => { f = clamp(f, 0.2, 40); view.ox = cx - (cx - view.ox) * f; view.oy = cy - (cy - view.oy) * f; view.s *= f; };
   const ptrs = new Map();
-  cv.addEventListener("pointerdown", e => { cv.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, { x: e.offsetX, y: e.offsetY }); });
-  const up = e => ptrs.delete(e.pointerId);
+  cv.addEventListener("pointerdown", e => {
+    cv.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, { x: e.offsetX, y: e.offsetY });
+    tap = ptrs.size === 1 ? { x: e.offsetX, y: e.offsetY, t: Date.now(), moved: false } : null;       // (a second finger: not a tap)
+  });
+  const up = e => {
+    ptrs.delete(e.pointerId);
+    if (e.type === "pointerup" && tap && !tap.moved && !ptrs.size && Date.now() - tap.t < 600 && opts.onTap && view) {
+      opts.onTap((tap.x - view.ox) / view.s, (view.oy - tap.y) / view.s, view);
+    }
+    if (!ptrs.size) tap = null;
+  };
   cv.addEventListener("pointerup", up); cv.addEventListener("pointercancel", up);
   cv.addEventListener("pointermove", e => {
     const q = ptrs.get(e.pointerId);
     if (!q || !view) return;
     const nx = e.offsetX, ny = e.offsetY;
+    if (tap && Math.hypot(nx - tap.x, ny - tap.y) > 6) tap.moved = true;
     if (ptrs.size === 1) { view.ox += nx - q.x; view.oy += ny - q.y; }
     else if (ptrs.size === 2) {
       const o = [...ptrs].find(([id]) => id !== e.pointerId)[1];
@@ -555,6 +571,7 @@ function drawStage(sheet) {
   if (S.results) tools.append(btn(S.showPaths ? "◉" : "○", t("draw.paths"), e => { S.showPaths = !S.showPaths; e.currentTarget.textContent = S.showPaths ? "◉" : "○"; redraw(); }));
   stage.append(tools);
   stage.append(h("div", { class: "legend" }, `${sheet.name} · ${fmt(sheet.width, 0)}×${fmt(sheet.height, 0)} mm · ${t("proj.vectors", sheet.vectors.length)}`));
+  stage.redraw = redraw;
   return stage;
 }
 
@@ -729,6 +746,8 @@ function view() {
   const p = S.project;
   if (S.tab === "project") return viewProject();
   if (!p) return h("div", { class: "empty" }, h("div", { class: "big" }, "📂"), h("div", {}, t("proj.none")), h("div", { class: "muted" }, t("proj.none2")));
+  const extra = EXTRA_TABS.find(x => x.id === S.tab);
+  if (extra) return extra.view();
   return { draw: viewDraw, paths: viewPaths, out: viewOutput }[S.tab]();
 }
 
@@ -1036,6 +1055,14 @@ function viewDraw() {
   return wrap;
 }
 
+/** Calculate the toolpaths of the project (with what is needed to draw them); what the calculation changed in the project
+    (the order of the cuts, start points moved into the vectors) is put into it. */
+async function recompute(extra) {
+  const r = await runJob("compute", { project: S.project, preview: true, ...(extra || {}) });
+  applyPatch(r.patch); S.results = r; S.gcode = S.sim = null; render();
+  return r;
+}
+
 function moveToolpath(tp, d) {                       // (the order of the toolpaths is the order in the G-code)
   const list = S.project.toolpaths, i = list.indexOf(tp), j = i + d;
   if (j < 0 || j >= list.length) return;
@@ -1076,10 +1103,7 @@ function viewOutput() {
   out.push(h("div", { class: "card" }, h("h2", {}, t("out.post")), post,
     window.IyiPage.post ? window.IyiPage.post.tools(S.post) : null,            // (post.js: change it, copy it, what I J K mean)
     h("div", { class: "row", style: "margin-top:12px" },
-      h("button", { class: "grow", onclick: () => guarded(async () => {
-        const r = await runJob("compute", { project: p, preview: true });
-        applyPatch(r.patch); S.results = r; S.gcode = S.sim = null; render();
-      }) }, "▶ " + t("out.compute")),
+      h("button", { class: "grow", onclick: () => guarded(() => recompute()) }, "▶ " + t("out.compute")),
       h("button", { class: "primary grow", onclick: () => guarded(async () => {
         const r = await runJob("gcode", { project: p, post: S.post, file_name: stem });
         S.gcode = r; render();
@@ -1149,12 +1173,17 @@ function viewOutput() {
 
 // ------------------------------------------------------------------------------------------ shell
 const TABS = [["project", "📁", "tab.project"], ["draw", "🗺", "tab.draw"], ["paths", "🛠", "tab.paths"], ["out", "📤", "tab.out"]];
+/** tabs the other scripts add (preview.js): ``{id, icon, key, view, wide}``, between the toolpaths and the output */
+const EXTRA_TABS = [];
+const allTabs = () => [...TABS.slice(0, 3), ...EXTRA_TABS.map(x => [x.id, x.icon, x.key]), TABS[3]];
 
 function render() {
   const v = $("#view");
   if (!v) return;
-  v.className = S.tab === "draw" && S.project ? "wide" : "";
+  const extra = EXTRA_TABS.find(x => x.id === S.tab);
+  v.className = (S.tab === "draw" || (extra && extra.wide)) && S.project ? "wide" : "";
   $("#app").dataset.tab = S.tab;                                // (the css gives the drawing the room of the header on a low screen)
+  S.pv.custom = false;                                          // (the preview tab says it draws the toolpaths itself when its view is made)
   v.replaceChildren(view());
   document.querySelectorAll("nav.tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === S.tab));
   v.scrollTop = 0; window.scrollTo(0, 0);
@@ -1172,7 +1201,7 @@ function mountApp() {
       h("div", { class: "row sp" }, h("span", { class: "lab" }, t("busy")), h("button", { class: "small", onclick: () => { if (S.busy) S.busy.stop = true; } }, t("cancel"))),
       h("div", { class: "progress" }, h("i"))),
     h("main", { id: "view" }),
-    h("nav", { class: "tabs" }, TABS.map(([id, ic, k]) => h("button", { "data-tab": id, onclick: () => { S.tab = id; render(); } }, h("span", { class: "ic" }, ic), h("span", { class: "tx" }, t(k))))));
+    h("nav", { class: "tabs" }, allTabs().map(([id, ic, k]) => h("button", { "data-tab": id, onclick: () => { S.tab = id; render(); } }, h("span", { class: "ic" }, ic), h("span", { class: "tx" }, t(k))))));
   setBusy(S.busy);
   render();
 }
@@ -1227,7 +1256,7 @@ async function start() {
 window.IyiPage = { S, h, $, t, TXT, api, runJob, toast, fail, openSheet, paramsForm, numberInput, fmt, store, guarded, render, touch,
                    persist, changed, activeSheet, layerMap, flatOf, drawScene, fitView, setFile, editor: null, post: null,
                    sceneSegs, lodGroups, lang: () => lang, jobs: null, jobApply: {}, JobDeferred, deviceInfo, setBusy, ApiError,
-                   lostConnection, wakePoll };
+                   lostConnection, wakePoll, recompute, EXTRA_TABS, SCENE_HOOKS, applyPatch, drawStage };
 
 (async () => {
   let note;

@@ -8,6 +8,11 @@ Everything is in one place, the **Cut Order panel** (**Toolpaths ▸ Cut Order..
 Ctrl+Alt+O; the tab next to *Toolpaths* on the right), and everything it does is
 shown on the drawing as it happens.
 
+The page (`iyicam serve`) has the same on its **Preview** tab: the numbers, the arrows along the cuts, the start points, a playback of
+the cuts, the list of the cuts in order, moving a cut up or down, to the first or last place, turning the order round, **tapping the
+parts on the drawing in the order they are to be cut**, a strategy and the cutting direction, and the change calculated and drawn in
+pink with what it does to the travel before it is applied ([docs/web.md](web.md#toolpath-preview-cut-order-and-editing-the-preview-tab)).
+
 ## Seeing it on the drawing
 
 The panel's **Show on the drawing** options (also in the View menu) draw, for every
