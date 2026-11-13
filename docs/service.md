@@ -60,13 +60,31 @@ wait (a request/response channel with a time limit, a phone that may be put to s
 
 | | |
 |---|---|
-| `job.start` `{op, payload}` | `{id, state: "queued"}` (`too_busy` when 16 jobs are already waiting or running) |
+| `job.start` `{op, payload, keep?, wait?}` | `{id, state: "queued"}` (`too_busy` when 16 jobs are already waiting or running); `keep` makes it a **kept job**, see below |
 | `job.status` `{id}` | `{state: queued│running│done│error│cancelled, k, n, label, elapsed, error}` |
 | `job.cancel` `{id}` | cooperative: the calculation looks at the flag and stops |
-| `job.result` `{id}` | the answer of the operation, or its error; can be fetched again until the job is forgotten (30 min) |
+| `job.result` `{id, device?}` | the answer of the operation, or its error; can be fetched again until the job is forgotten (30 min; a kept job: see below). `device` notes who was given it |
+| `jobs` `{device?}` | the **kept jobs**, newest first: `[{id, kind, state, k, n, label, created, finished, title, device_label, mine, delivered, deliveries, size, has_result, error}]` and `recent` (3) |
+| `job.dismiss` `{id}` | take a kept job off the list (one that is running is cancelled first) |
 
 A job keeps no document, only its progress and result. Without `job.start`, a long operation called directly runs in
 the calling thread.
+
+### Kept jobs (the last three)
+
+A job runs at the engine, in its own thread, whatever its caller does: a phone that loses its connection, a browser that is
+closed or goes to sleep does not stop it. A job started with `keep: {title, device, device_label}` (the page does it for
+nesting: `device` is an id the page made for itself and keeps in its browser, `device_label` a name like `Android · Chrome`)
+is one of the **last three jobs** of the engine:
+
+* it stays, with its result, until three newer ones push it out (a job that is not over is never pushed out) or for a week;
+  `jobs` lists them, from any device, and `job.result` gives the result again whenever it is asked for;
+* the engine notes which devices were given the result (`delivered` is for the `device` asked with, `mine` says that device
+  started the job): a device that comes back finds what it has not received and can **ask its person before it takes it**;
+  a job that was over within the call that started it counts as given to the device that started it;
+* they are written to `~/.iyicam/jobs` (`index.json` and one gzip file per result, mode 600; a result larger than 256 MB stays
+  in memory only), so **restarting the engine does not lose a finished job**; one that was still running then is `error` with
+  `interrupted`. An unreadable index means no kept jobs, nothing more. With a hub the files are those of the agent's computer.
 
 ## Tested against the program itself
 

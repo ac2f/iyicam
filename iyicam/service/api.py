@@ -11,7 +11,7 @@ from .host import ServiceHost
 
 # what /api/<operation> may call (the whole service interface, nothing else)
 API_OPS = frozenset({"ping", "schema", "validate", "import", "export", "command", "compute", "gcode", "simulate",
-                     "nest", "job.start", "job.status", "job.cancel", "job.result",
+                     "nest", "job.start", "job.status", "job.cancel", "job.result", "jobs", "job.dismiss",
                      "posts", "post_save", "post_delete", "post_preview", "gcode_explain"})
 
 # an error code that is not "the request was wrong" (400) answers with another HTTP status

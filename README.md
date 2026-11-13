@@ -176,7 +176,7 @@ phone; see [docs/service.md](docs/service.md).
 
 `iyicam serve` puts that service behind a web page of its own, with a key: open a drawing on a phone, **edit it**
 (select, move to coordinates you type, draw, edit nodes, Shift / Ctrl / Alt as buttons, layers to reorder and select, every
-vector command of the program, nesting, undo), add toolpaths with their cut
+vector command of the program, nesting, undo; **a nesting goes on at the server when the connection is lost or the browser is closed, and the last three jobs can be asked for again**), add toolpaths with their cut
 order, calculate, write G-code and download it, with nothing else installed (no Qt, no CNC-Assistant); the page can also
 browse, open and save files of the computer it runs on, inside the folders you name (`--root`); see
 [docs/web.md](docs/web.md). On a Linux server `packaging/linux/install.sh` installs it as a systemd service

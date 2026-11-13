@@ -41,8 +41,13 @@ JOBBABLE = {"command", "import", "export"}
 
 
 class ServiceHost:
-    def __init__(self, workers: int = 2, ttl: float = 1800.0):
-        self.jobs = JobManager(workers=workers, ttl=ttl)
+    def __init__(self, workers: int = 2, ttl: float = 1800.0, store: object = True):
+        """``store``: where the last three kept jobs are written (``True``: ``~/.iyicam/jobs``, a folder of your own, or
+        ``None`` / ``False`` for none: they are then kept in memory only)."""
+        if store is True:
+            from ..core import paths
+            store = paths.user_dir() / "jobs"
+        self.jobs = JobManager(workers=workers, ttl=ttl, store=store or None)
 
     # -- the raising interface (for Python callers) -----------------------------------------
     def call(self, op: str, payload: dict | None = None) -> dict:
@@ -65,9 +70,12 @@ class ServiceHost:
             inner = payload.get("payload")
             if not isinstance(inner, dict):
                 raise ServiceError("bad_request", "'payload' must be an object")
+            keep = payload.get("keep")        # (the page asks for nesting: one of the last three jobs, see jobs.py)
+            if keep is not None and not isinstance(keep, (dict, bool)):
+                raise ServiceError("bad_request", "'keep' must be an object")
             if kind in LONG:
                 fn = LONG[kind]
-                jid = self.jobs.start(kind, lambda ctl: fn(inner, ctl))
+                jid = self.jobs.start(kind, lambda ctl: fn(inner, ctl), keep if kind in LONG else None)
             else:
                 quick = QUICK[kind]
                 jid = self.jobs.start(kind, lambda ctl: quick(inner))
@@ -75,6 +83,7 @@ class ServiceHost:
             if isinstance(wait, (int, float)) and not isinstance(wait, bool) and wait > 0:
                 job = self.jobs.wait(jid, min(float(wait), 30000.0) / 1000.0)
                 if job.state == "done":
+                    self.jobs.mark_delivered(job)       # (a kept job: the device that started it has the result now)
                     self.jobs.forget(jid)               # (the caller has it: it is not kept in memory for later)
                     return {"id": jid, "state": "done", "result": job.result}
                 if job.state == "error":
@@ -86,7 +95,11 @@ class ServiceHost:
         if op == "job.cancel":
             return self.jobs.cancel(str(payload.get("id")))
         if op == "job.result":
-            return self.jobs.result(str(payload.get("id")))
+            return self.jobs.result(str(payload.get("id")), payload.get("device"))
+        if op == "jobs":
+            return {"jobs": self.jobs.listing(payload.get("device")), "recent": self.jobs.recent}
+        if op == "job.dismiss":
+            return self.jobs.dismiss(str(payload.get("id")))
         raise ServiceError("unknown_operation", f"there is no operation '{op}'", operation=op)
 
     # -- the interface of a transport ----------------------------------------------------------

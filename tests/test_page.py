@@ -36,7 +36,7 @@ def get(server, path):
     return r.status, r.getheader("Content-Type", ""), body
 
 
-@pytest.mark.parametrize("name", ["geom.js", "app.js", "edit.js", "post.js", "app.css"])
+@pytest.mark.parametrize("name", ["geom.js", "app.js", "edit.js", "post.js", "jobs.js", "app.css"])
 def test_every_file_of_the_page_is_served(web, name):
     status, ctype, body = get(web, f"/static/{name}")
     assert status == 200 and body
@@ -46,7 +46,7 @@ def test_every_file_of_the_page_is_served(web, name):
 def test_the_scripts_load_in_the_order_they_need():
     html = (WEB / "index.html").read_text(encoding="utf-8")
     order = [m.group(1) for m in re.finditer(r'<script src="/static/([a-z.]+)"', html)]
-    assert order == ["geom.js", "app.js", "edit.js", "post.js"]   # (app.js needs geom.js; edit.js and post.js need both)
+    assert order == ["geom.js", "app.js", "edit.js", "post.js", "jobs.js"]   # (app.js needs geom.js; edit.js and post.js need both)
 
 
 def _keys(block: str) -> set[str]:
@@ -56,7 +56,7 @@ def _keys(block: str) -> set[str]:
 def _texts():
     """The page's own texts (app.js) and those the other scripts add (``Object.assign(TXT.tr, {...})``)."""
     app = (WEB / "app.js").read_text(encoding="utf-8")
-    extra = [(WEB / n).read_text(encoding="utf-8") for n in ("edit.js", "post.js")]
+    extra = [(WEB / n).read_text(encoding="utf-8") for n in ("edit.js", "post.js", "jobs.js")]
     tr_app, en_app = re.split(r"\n  en: \{", app.split("\n  tr: {", 1)[1], maxsplit=1)
     en_app = en_app.split("\n};", 1)[0]
     tr, en = _keys(tr_app), _keys(en_app)
@@ -139,3 +139,37 @@ def test_post_js_is_an_extension_not_a_requirement():
 def test_the_overlay_that_hides_a_button_really_hides_it():
     css = (WEB / "app.css").read_text(encoding="utf-8")
     assert re.search(r"\[hidden\]\s*\{\s*display:\s*none\s*!important", css)      # (button { display: inline-flex } would win)
+
+
+def test_jobs_js_is_an_extension_not_a_requirement():
+    """The page works without jobs.js (it asks ``window.IyiPage.jobs``); with it a nesting is a kept job."""
+    app = (WEB / "app.js").read_text(encoding="utf-8")
+    assert "jobs: null" in app and app.count("window.IyiPage.jobs") >= 3
+    jobs = (WEB / "jobs.js").read_text(encoding="utf-8")
+    assert "if (!B) return;" in jobs and "B.jobs = {" in jobs
+    from iyicam.service.api import API_OPS
+    assert set(re.findall(r'api\("([A-Za-z_.]+)"', jobs)) <= API_OPS
+    assert {"jobs", "job.result", "job.cancel", "job.dismiss"} <= set(re.findall(r'api\("([A-Za-z_.]+)"', jobs))
+
+
+def test_a_job_outlives_the_connection_of_the_page():
+    """What makes a nesting go on and be found again: the page keeps asking while the connection is lost and asks the person
+    before it takes a result that came while it was away; the job is kept at the engine, nesting is a kept job."""
+    app = (WEB / "app.js").read_text(encoding="utf-8")
+    run = app[app.index("async function runJob"):app.index("// ---", app.index("async function runJob"))]
+    assert "lostConnection(e)" in run and "dropped" in run and "JobDeferred" in run and "opts.deferrable" in run
+    assert 'addEventListener("online"' in app and "visibilitychange" in app          # (a phone that wakes polls at once)
+    assert "keep," in run or "keep }" in run or "keep:" in run
+    edit = (WEB / "edit.js").read_text(encoding="utf-8")
+    assert "keep: { title:" in edit and "deferrable: true" in edit and "B.jobApply.nest" in edit
+    assert "JobDeferred" in edit and "B.jobs.offer" in edit
+
+
+def test_the_texts_of_the_jobs_exist_in_both_languages():
+    """``t("job." + state)`` is not found by the pattern of the test above: ask for the states by name."""
+    _, tr, en = _texts()
+    names = {f"job.{k}" for k in ("queued", "running", "done", "error", "cancelled", "title", "btn", "none", "hint", "mine", "get",
+                                  "cancel", "drop", "send", "later", "offline", "finishedTitle", "finished", "askNote", "failed",
+                                  "applied", "interrupted", "noapply")} | {"e.job_not_found", "e.interrupted"}
+    assert not sorted(names - tr), f"missing in Turkish: {sorted(names - tr)}"
+    assert not sorted(names - en), f"missing in English: {sorted(names - en)}"

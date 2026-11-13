@@ -149,6 +149,25 @@ buttons start **folded** (▴ / ▾ at the side of the drawing). Tested in a bro
 Not in the page yet: the trim tool, text, bitmap tracing, the G-code backplot, snapping to crossings, the tool
 database editor, tabs of several projects.
 
+### Jobs that go on without the page
+
+A nesting runs **at the engine** (the server, or the agent's computer), not in the browser. If the connection is lost, the
+browser is closed or the phone goes to sleep, **it goes on**:
+
+* While the page stays open and the connection breaks, the bar says so and the page keeps asking, at once again when the network
+  is back or the phone wakes; **it then asks before it takes the result** ("Nesting finished. Send the result to this device?"):
+  *Send* applies it (one step to undo), *Not now* leaves it on the list, *Delete* takes it off.
+* If the page is closed, it asks the same when it is opened again (a running job shows its progress in the bar, with Cancel).
+  Every device is told what it started and did not receive; the answer *Not now* asks again at the next visit.
+* The **🕘 button** in the header lists the **last three jobs** (queued, running, finished, from any device), newest first, with
+  their state and the device that started them: **Get the result** asks the engine for it again (also a result that was given
+  to another device), **Cancel** stops a running one, **Delete** takes one off. Three are kept, newer ones push out the older.
+* The finished jobs are on the engine's disk (`~/.iyicam/jobs`), so restarting the engine does not lose them; a job that was
+  running when it was stopped is said to have been cut short.
+
+The page does not push a notice while the browser is closed (that needs a service worker and push messages): the result waits
+for the next visit. See [kept jobs](service.md#kept-jobs-the-last-three).
+
 ### Post-processors and what G-code says
 
 Under the choice of the post on the Output tab:

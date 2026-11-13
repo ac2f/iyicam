@@ -10,6 +10,7 @@ const TXT = {
     "login.hint": "Devam etmek için anahtarını gir.", "login.key": "Anahtar", "login.go": "Giriş",
     "login.bad": "Anahtar yanlış.", "login.wait": "Çok fazla yanlış deneme. {0} sn bekle.",
     "login.remember": "Bu cihazda açık kalsın (90 gün)",
+    "job.offline": "Bağlantı koptu: iş sunucuda devam ediyor, yeniden deneniyor…",
     "logout": "Çıkış", "busy": "Çalışıyor…", "cancel": "Vazgeç", "cancelled": "İptal edildi.",
     "open.title": "Dosya aç", "open.hint": "iyiCAM projesi (.icam), DXF, SVG, HPGL, CorelDRAW…",
     "open.pick": "Bu cihazdan seç…", "open.thickness": "Malzeme kalınlığı (mm)", "open.add": "Açık projeye ekle",
@@ -63,6 +64,7 @@ const TXT = {
     "login.hint": "Enter your key to continue.", "login.key": "Key", "login.go": "Sign in",
     "login.bad": "The key is not right.", "login.wait": "Too many wrong tries. Wait {0} s.",
     "login.remember": "Keep me signed in on this device (90 days)",
+    "job.offline": "The connection was lost: the job goes on at the server, trying again…",
     "logout": "Sign out", "busy": "Working…", "cancel": "Cancel", "cancelled": "Cancelled.",
     "open.title": "Open a file", "open.hint": "iyiCAM project (.icam), DXF, SVG, HPGL, CorelDRAW…",
     "open.pick": "From this device…", "open.thickness": "Material thickness (mm)", "open.add": "Add to the open project",
@@ -206,22 +208,68 @@ async function apiRaw(path, file) {
   return body;
 }
 
-async function runJob(op, payload) {
-  const first = await api("job.start", { op, payload, wait: 1500 });       // (a job that is over within 1.5 s answers right here)
+/** What a device is: an id its page made for itself (kept in this browser) and a name for the list of jobs. */
+function deviceInfo() {
+  let id = store.get("iyicam.device");
+  if (!/^[A-Za-z0-9_-]{6,40}$/.test(id || "")) { id = newId() + newId().slice(0, 4); store.set("iyicam.device", id); }
+  const ua = navigator.userAgent || "";
+  const os = /Android/.test(ua) ? "Android" : /iPhone|iPad|iPod/.test(ua) ? "iOS" : /Windows/.test(ua) ? "Windows" : /Mac OS/.test(ua) ? "Mac" : /Linux|X11/.test(ua) ? "Linux" : "";
+  const browser = /Edg\//.test(ua) ? "Edge" : /Firefox\//.test(ua) ? "Firefox" : /Chrome\//.test(ua) ? "Chrome" : /Safari\//.test(ua) ? "Safari" : "";
+  return { id, label: [os, browser].filter(Boolean).join(" · ") };
+}
+
+/** a job whose result was not fetched because the connection was lost on the way: the page asks before it takes it */
+class JobDeferred extends Error { constructor(id) { super("the job is over"); this.id = id; } }
+
+// a page that was put to sleep (or a phone that lost its network) polls again the moment it is awake
+let pollWake = null;
+const wakePoll = () => { if (pollWake) pollWake(); };
+addEventListener("online", wakePoll);
+addEventListener("pageshow", wakePoll);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) wakePoll(); });
+const lostConnection = e => e instanceof ApiError && (e.code === "network" || e.status === 0 || e.code === "agent_offline" || e.code === "agent_timeout" || e.status >= 502);
+
+/** Run a calculation as a job and wait for it.  The job lives at the server: when the connection breaks, the page goes on
+    asking until it is back.  ``opts.keep`` ({title}): one of the last three jobs of the engine, which stays there (also
+    when this page is closed) for any device to ask for; with ``opts.deferrable`` a result that comes after the
+    connection was lost is not fetched here but offered (``JobDeferred``), so that the person is asked first. */
+async function runJob(op, payload, opts = {}) {
+  const dev = opts.keep ? deviceInfo() : null;
+  const keep = opts.keep ? { title: opts.keep.title || "", device: dev.id, device_label: dev.label } : undefined;
+  const first = await api("job.start", { op, payload, wait: 1500, keep });       // (a job that is over within 1.5 s answers right here)
+  if (keep && window.IyiPage.jobs) window.IyiPage.jobs.started(first.id);
   if (first.state === "done") return first.result;
   if (first.state === "error") throw new ApiError(first.error || { error: "internal_error" }, 400);
   const { id } = first;
   const busy = { id, label: t("busy"), k: 0, n: 0, stop: false };
   setBusy(busy);
-  let wait = 100;
+  let wait = 100, failures = 0, dropped = false;
   try {
     for (;;) {
-      await sleep(wait); wait = Math.min(400, wait * 1.5);
-      if (busy.stop) { busy.stop = false; await api("job.cancel", { id }).catch(() => {}); }
-      const st = await api("job.status", { id });
+      await Promise.race([sleep(wait), new Promise(r => { pollWake = r; })]);
+      pollWake = null;
+      wait = Math.min(failures ? 15000 : opts.keep ? 1500 : 400, wait * 1.5);
+      if (busy.stop) {
+        busy.stop = false;
+        try { await api("job.cancel", { id }); } catch (e) {
+          if (lostConnection(e)) throw new ApiError({ error: "job_cancelled", message: t("cancelled") }, 0);     // (cannot reach it: stop waiting; a kept job stays on the list)
+        }
+      }
+      let st;
+      try { st = await api("job.status", { id }); failures = 0; }
+      catch (e) {
+        if (!lostConnection(e)) throw e;
+        dropped = true; failures++;
+        busy.label = t("job.offline"); setBusy(busy);
+        wait = Math.min(15000, 1000 * failures);
+        continue;
+      }
       busy.k = st.k || 0; busy.n = st.n || 0; busy.label = st.label || t("busy");
       setBusy(busy);
-      if (st.state === "done" || st.state === "error") return await api("job.result", { id });
+      if (st.state === "done" || st.state === "error") {
+        if (dropped && keep && opts.deferrable && st.state === "done") throw new JobDeferred(id);
+        return await api("job.result", { id, device: dev ? dev.id : undefined });
+      }
       if (st.state === "cancelled") throw new ApiError({ error: "job_cancelled", message: t("cancelled") }, 0);
     }
   } finally { setBusy(null); }
@@ -1117,6 +1165,7 @@ function mountApp() {
   const app = $("#app");
   app.replaceChildren(
     h("header", { class: "top" }, h("h1", {}, "iyiCAM", h("span", { class: "sub" }, S.schema ? "v" + S.schema.iyicam : "")),
+      window.IyiPage.jobs ? window.IyiPage.jobs.button() : null,                // (jobs.js: the last three jobs of the engine)
       h("button", { class: "small", onclick: () => { lang = lang === "tr" ? "en" : "tr"; store.set("iyicam.lang", lang); mountApp(); } }, lang === "tr" ? "EN" : "TR"),
       h("button", { class: "small", onclick: async () => { await fetch("/api/logout", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: "{}" }).catch(() => {}); showLogin(); } }, t("logout"))),
     h("div", { id: "busy", class: "card", hidden: true, style: "margin:8px 16px 0" },
@@ -1171,12 +1220,14 @@ async function start() {
   }
   if (S.project) S.sheetId = S.project.sheets[0].id;
   mountApp();
+  if (window.IyiPage.jobs) window.IyiPage.jobs.start();       // (jobs that went on while this page was away are asked about)
 }
 
 // what edit.js (the drawing tools) needs of this file; it adds ``editor`` to it
 window.IyiPage = { S, h, $, t, TXT, api, runJob, toast, fail, openSheet, paramsForm, numberInput, fmt, store, guarded, render, touch,
                    persist, changed, activeSheet, layerMap, flatOf, drawScene, fitView, setFile, editor: null, post: null,
-                   sceneSegs, lodGroups, lang: () => lang };
+                   sceneSegs, lodGroups, lang: () => lang, jobs: null, jobApply: {}, JobDeferred, deviceInfo, setBusy, ApiError,
+                   lostConnection, wakePoll };
 
 (async () => {
   let note;

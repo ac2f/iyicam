@@ -1011,6 +1011,15 @@
   }
 
   // ------------------------------------------------------------------------------------------ nesting
+  /** The result of a nesting becomes the project (one step to undo).  ``before``: the project as it was (default: as it is). */
+  function applyNest(r, before) {
+    if (S.project) { E.undo.push(before || snapshot()); E.redo = []; trimUndo(); }       // (no project open, a result that comes later: nothing to go back to)
+    S.project = r.project; S.sheetId = S.project.sheets[0].id; E.sel = new Set(); S.views = {};
+    B.changed();
+    const n = x => (Array.isArray(x) ? x.length : (+x || 0));
+    toast(t("nest.result", n(r.placed), n(r.unplaced), S.project.sheets.length), "ok");
+  }
+  B.jobApply.nest = r => applyNest(r);                  // (jobs.js applies the result of a nesting asked for again)
   const nestState = JSON.parse(B.store.get("iyicam.nest") || "null") || { margin: 10, spacing: 8, rotation: 90, iterations: 8, copies: 1, squeeze: 0 };
   function nestDialog() {
     const sh = sheet(), s = nestState;
@@ -1025,13 +1034,19 @@
       const quantities = {};
       if (s.copies > 1) for (const v of S.project.sheets.flatMap(x => x.vectors)) if (!ids || ids.includes(v.id)) quantities[v.id] = Math.round(s.copies);
       const before = snapshot();
-      const r = await runJob("nest", { project: S.project, objects: ids, quantities,
-        settings: { width: s.width, height: s.height, margin: s.margin, spacing: s.spacing, rotation: s.rotation, iterations: s.iterations, squeeze_angle: s.squeeze || 0 } });
-      E.undo.push(before); E.redo = []; trimUndo();
-      S.project = r.project; S.sheetId = S.project.sheets[0].id; E.sel = new Set(); S.views = {};
-      B.changed();
-      const n = x => (Array.isArray(x) ? x.length : (+x || 0));
-      toast(t("nest.result", n(r.placed), n(r.unplaced), S.project.sheets.length), "ok");
+      let r;
+      try {
+        // a kept job: it goes on at the server whatever happens to this page (the connection, the browser closed or asleep) and
+        // is one of the last three jobs, to be asked for again (jobs.js); a result that comes after the connection was lost is
+        // offered, not taken: the person is asked first
+        r = await runJob("nest", { project: S.project, objects: ids, quantities,
+          settings: { width: s.width, height: s.height, margin: s.margin, spacing: s.spacing, rotation: s.rotation, iterations: s.iterations, squeeze_angle: s.squeeze || 0 } },
+          { keep: { title: `${t("nest.title")} · ${S.project.name || ""}`.trim() }, deferrable: true });
+      } catch (e) {
+        if (e instanceof B.JobDeferred) { if (B.jobs) B.jobs.offer(e.id); return; }
+        throw e;
+      }
+      applyNest(r, before);
     });
     close = openSheet(t("nest.title"), h("div", {},
       h("div", { class: "group-h" }, t("nest.plate")), h("div", { class: "grid2" }, num(t("nest.w"), "width"), num(t("nest.h"), "height")),
