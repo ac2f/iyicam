@@ -217,6 +217,10 @@ python -m pip install -e ".[gui]"
 iyicam
 ```
 
+On Windows `packaging\desktop_windows.bat` does this for you and opens the program: double-click it (the first time it
+makes `.venv-build` and installs, later it only opens the window). It is independent of anything else running on the
+computer, such as the CNC-Assistant agent.
+
 (Turkçe: Windows'ta **64 bit** Python gerekir; 32 bit Python'da PySide6 kurulamaz.)
 
 ## Quick start
