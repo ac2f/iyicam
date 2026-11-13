@@ -34,11 +34,13 @@ from dataclasses import dataclass, field
 INCH = 25.4
 EPS = 1e-6                        # libcdr's CDR_EPSILON (inches): "the same point"
 FIRST_VERSION = 500               # CorelDRAW 5
-LAST_VERSION = 1800               # CorelDRAW X8 (libcdr reads no newer)
+LAST_VERSION = 1800               # CorelDRAW X8: the newest version whose rules libcdr has (it has none for later ones)
+MAX_TRIED_VERSION = 3500          # a newer file is tried with the rules of X6 and later, up to version 35 ('Z')
 VERIFIED = (1300,)                # versions compared with libcdr's own output on a real file (X3)
 
 VERSION_NAMES = {500: "5", 600: "6", 700: "7", 800: "8", 900: "9", 1000: "10", 1100: "11", 1200: "12", 1300: "X3",
-                 1400: "X4", 1500: "X5", 1600: "X6", 1700: "X7", 1800: "X8"}
+                 1400: "X4", 1500: "X5", 1600: "X6", 1700: "X7", 1800: "X8", 1900: "2017", 2000: "2018", 2100: "2019",
+                 2200: "2020", 2300: "2021", 2400: "2022", 2500: "2023", 2600: "2024", 2700: "2025", 2800: "2026"}
 
 
 class Unsupported(Exception):
@@ -457,6 +459,7 @@ class Drawing:
     version: int
     pages: list[Page]
     unverified: bool = False                                # a version never compared with libcdr's output on a real file
+    newer: bool = False                                     # newer than X8: read with the rules of X8 (nobody has rules for it)
 
     @property
     def page(self) -> Page:
@@ -747,9 +750,11 @@ LISTS = (b"RIFF", b"LIST")
 
 
 class _Parser:
-    def __init__(self, collector, external: list[bytes | None]):
+    def __init__(self, collector, external: list[bytes | None], strict: bool = False):
         self.c = collector
         self.ext = external
+        self.strict = strict                               # a block that cannot be inflated is a failure, not an empty block
+        self.problem = ""                                  # the first thing that stopped the reading (for ``diagnose``)
         self.fast_levels = all(hasattr(collector, a) for a in ("obj_level", "vect_level", "page_level"))
         self.version = 0
         self.prec = 0                                      # 16 or 32 (bit), 0 until the version is known
@@ -781,6 +786,14 @@ class _Parser:
         return r.f64() / 254000.0
 
     # -- records
+    def _bad(self, why: str) -> bool:
+        if not self.problem:
+            self.problem = why
+        return False
+
+    def on_list(self, list_type: bytes) -> None:
+        """A list was entered (``diagnose`` counts them)."""
+
     def parse(self, data: bytes) -> bool:
         return self.parse_records(_R(data), [], 0)
 
@@ -816,15 +829,16 @@ class _Parser:
                     self.c.collect_other_list()
             if four in LISTS:
                 cmprsize = length - 4
+                self.on_list(list_type)
                 if list_type == b"cmpr":
                     cmprsize = r.u32()
                     r.skip(12)
                     if r.take(4) != b"CPng":
-                        return False
+                        return self._bad("a compressed list does not start the way libcdr knows (CPng)")
                     if r.u16() != 1:
-                        return False
+                        return self._bad("a compressed list has a version this reader does not know")
                     if r.u16() != 4:
-                        return False
+                        return self._bad("a compressed list has a header this reader does not know")
                 elif list_type == b"page":
                     self.c.collect_page(level)
                 elif list_type == b"obj ":
@@ -838,13 +852,16 @@ class _Parser:
                     self.c.collect_vect(level)
                 compressed = list_type == b"cmpr"
                 if cmprsize < 0:
-                    return False
+                    return self._bad("a list has a negative length")
                 if not compressed:
                     sub = _R(r.take(min(cmprsize, r.n - r.p)) if cmprsize else b"")
                     if not self.parse_records(sub, blocks, level + 1):
                         return False
                 else:
-                    body = _inflate(r.take(min(cmprsize, r.n - r.p)))
+                    packed = r.take(min(cmprsize, r.n - r.p))
+                    body = _inflate(packed)
+                    if self.strict and packed and not body:
+                        return self._bad("a compressed list could not be inflated")
                     blocks_len = length + position - r.p
                     block_bytes = _inflate(r.take(min(max(blocks_len, 0), r.n - r.p)))
                     lens = [struct.unpack_from("<I", block_bytes, i)[0] for i in range(0, len(block_bytes) - 3, 4)]
@@ -855,7 +872,7 @@ class _Parser:
             r.p = max(0, min(r.n, position + length))               # (seek: clamped)
             return True
         except _Short:
-            return False
+            return self._bad("a record runs past the end of the data")
 
     def redirect(self, r: _R, length: int) -> tuple[_R, int]:
         """CorelDRAW X6 and later may keep the content of a chunk in another stream of the package."""
@@ -1245,11 +1262,35 @@ def _riff_version(data: bytes) -> int:
     return cdr_version(data[11])
 
 
-def _streams(path) -> tuple[bytes, list[bytes | None]]:
-    """The RIFF data of the file and the extra streams of a package of CorelDRAW X6 and later."""
+COMPRESSION = {0: "stored", 8: "deflated", 9: "deflate64", 12: "bzip2", 14: "lzma", 93: "zstd", 95: "xz"}
+
+
+def _riff_member(z: zipfile.ZipFile) -> str | None:
+    """A member of the ``content`` folder of a package that is a CorelDRAW RIFF stream, whatever it is called (a newer
+    CorelDRAW may name it otherwise).  An archive that merely holds a ``.cdr`` file is not a package."""
+    members = [i for i in z.infolist() if i.filename.lower().startswith("content/")]
+    for info in sorted(members, key=lambda i: -i.file_size)[:64]:
+        if info.file_size < 12 or info.is_dir():
+            continue
+        try:
+            with z.open(info) as f:
+                if _riff_version(f.read(12)):
+                    return info.filename
+        except (NotImplementedError, RuntimeError, zipfile.BadZipFile, OSError, EOFError, zlib.error):
+            continue
+    return None
+
+
+def _streams(path, info: dict | None = None) -> tuple[bytes, list[bytes | None]]:
+    """The RIFF data of the file and the extra streams of a package of CorelDRAW X6 and later.  ``info`` (for
+    ``diagnose``) gets the container, the members of the package and the one that was used."""
     with open(path, "rb") as f:
         data = f.read()
+    if info is not None:
+        info["size"] = len(data)
     if _riff_version(data):
+        if info is not None:
+            info["container"] = "riff"
         return data, []
     if data[:2] != b"PK":
         raise Unsupported("not a CorelDRAW drawing")
@@ -1260,17 +1301,30 @@ def _streams(path) -> tuple[bytes, list[bytes | None]]:
     with z:
         names = {n.lower(): n for n in z.namelist()}
         ext: list[bytes | None] = []
+        if info is not None:
+            info["container"] = "zip"
+            info["entries"] = [{"name": i.filename, "size": i.file_size,
+                                "compression": COMPRESSION.get(i.compress_type, str(i.compress_type))}
+                               for i in z.infolist()[:400]]
+
         def member(name: str) -> bytes:
             if z.getinfo(name).file_size > MAX_INFLATED:
                 raise Unsupported("a part of the package is too big")
-            return z.read(name)
+            try:
+                return z.read(name)
+            except NotImplementedError as exc:
+                how = COMPRESSION.get(z.getinfo(name).compress_type, str(z.getinfo(name).compress_type))
+                raise Unsupported(f"a part of the package ({name}) is compressed in a way this program cannot read "
+                                  f"({how})") from exc
 
         if "content/riffdata.cdr" in names:
-            riff = member(names["content/riffdata.cdr"])
+            used = names["content/riffdata.cdr"]
+            riff = member(used)
         elif "content/root.dat" in names:
-            riff = member(names["content/root.dat"])
+            used = names["content/root.dat"]
+            riff = member(used)
             if "content/datafilelist.dat" in names:
-                listing = z.read(names["content/datafilelist.dat"]).split(b"\n")
+                listing = member(names["content/datafilelist.dat"]).split(b"\n")
                 for item in listing:
                     item = item.strip(b"\r")
                     if not item:
@@ -1278,7 +1332,13 @@ def _streams(path) -> tuple[bytes, list[bytes | None]]:
                     n = names.get("content/data/" + item.decode("latin-1").lower())
                     ext.append(member(n) if n else None)
         else:
-            raise Unsupported("a ZIP file without a CorelDRAW drawing in it")
+            used = _riff_member(z)
+            if used is None:
+                raise Unsupported("a ZIP file without a CorelDRAW drawing in it")
+            riff = member(used)
+        if info is not None:
+            info["main"] = used
+            info["external_streams"] = len(ext)
     if not _riff_version(riff):
         raise Unsupported("the drawing in the package is not one this reader knows")
     return riff, ext
@@ -1299,18 +1359,106 @@ def _read(path) -> Drawing:
     version = _riff_version(data)
     if version < FIRST_VERSION:
         raise Unsupported(f"CorelDRAW version {version // 100} is older than this reader goes (5)")
-    if version > LAST_VERSION:
-        raise Unsupported(f"CorelDRAW version {version // 100 - 5} is newer than this reader knows (X8)")
+    if version > MAX_TRIED_VERSION:
+        raise Unsupported(f"the version character of the file ({chr(data[11])!r}) is not one any CorelDRAW has used")
+    newer = version > LAST_VERSION
+    # a file newer than X8: nobody has its rules (libcdr has none either); it is read with those of X8 and every block
+    # that cannot be followed stops the reading, so that a drawing is never given with a part of it missing
+    where = (f" (the file is of a version newer than {version_name(LAST_VERSION)}, whose format this reader "
+             f"has no rules for)") if newer else ""
     pages = _Pages()
-    first = _Parser(pages, ext)
+    first = _Parser(pages, ext, strict=newer)
     if not first.parse(data) or not pages.pages:
-        raise Unsupported("the file could not be followed (damaged, or a kind of file this reader does not know)")
+        raise Unsupported("the file could not be followed (damaged, or a kind of file this reader does not know)"
+                          + (f": {first.problem}" if first.problem else "") + where)
     content = _Content(pages.pages)
-    second = _Parser(content, ext)
+    second = _Parser(content, ext, strict=newer)
     if not second.parse(data):
-        raise Unsupported("the file could not be followed (damaged, or a kind of file this reader does not know)")
+        raise Unsupported("the file could not be followed (damaged, or a kind of file this reader does not know)"
+                          + (f": {second.problem}" if second.problem else "") + where)
     content.collect_level(0)
     out = content.pages()
     if not out:
-        raise Unsupported("no page of the drawing could be read")
-    return Drawing(version, out, version not in VERIFIED)
+        raise Unsupported("no page of the drawing could be read" + where)
+    return Drawing(version, out, version not in VERIFIED, newer)
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# what is in a file this reader cannot follow
+# ---------------------------------------------------------------------------------------------------------------
+
+class _Null:
+    """A collector that takes no notice: the scanner only counts what the parser walks through."""
+
+    def collect_level(self, level): pass
+    def collect_other_list(self): pass
+    def collect_page(self, level): pass
+    def collect_object(self, level): pass
+    def collect_group(self, level): pass
+    def collect_vect(self, level): pass
+
+
+class _Scanner(_Parser):
+    """The parser's walk through the records with nothing read from them: the kinds of record, of list, the versions the
+    file says, the chunks that point to other streams."""
+
+    def __init__(self, external: list[bytes | None]):
+        super().__init__(_Null(), external, strict=True)
+        self.records: Counter = Counter()
+        self.lists: Counter = Counter()
+        self.versions: list[int] = []
+        self.redirected = 0
+        self.max_level = 0
+
+    def parse_records(self, r, blocks, level):
+        self.max_level = max(self.max_level, level)
+        return super().parse_records(r, blocks, level)
+
+    def on_list(self, list_type: bytes) -> None:
+        self.lists[list_type.decode("latin-1")] += 1
+
+    def read_record(self, four: bytes, length: int, r) -> None:
+        self.records[four.decode("latin-1")] += 1
+        if self.version >= 1600 and length == 0x10:
+            self.redirected += 1
+        if four == b"vrsn":
+            super().read_record(four, length, r)
+            self.versions.append(self.version)
+
+
+def diagnose(path) -> dict:
+    """What a file is made of, without any of its drawing: the container (the members of the package and how they are
+    compressed), the RIFF header and version, how many records of which kind, whether the reader follows it and what it
+    found.  For a file this reader cannot open: the answer says where it stops.  Nothing of the drawing (coordinates,
+    names, text) is in it, so it can be shared."""
+    out: dict = {"container": None, "read": {"ok": False}}
+    try:
+        data, ext = _streams(path, out)
+    except Unsupported as exc:
+        out["read"]["error"] = str(exc)
+        return out
+    except OSError as exc:
+        out["read"]["error"] = f"the file cannot be opened: {exc}"
+        return out
+    out["form"] = data[8:12].decode("latin-1", "replace")
+    out["version"] = _riff_version(data)
+    out["version_name"] = version_name(out["version"]) if out["version"] else "?"
+    out["newer_than_x8"] = out["version"] > LAST_VERSION
+    scan = _Scanner(ext)
+    try:
+        ok = scan.parse(data)
+    except Unsupported as exc:
+        ok, scan.problem = False, scan.problem or str(exc)
+    out["scan"] = {"ok": ok, "problem": scan.problem, "records": dict(scan.records.most_common(60)),
+                   "lists": dict(scan.lists), "file_versions": sorted(set(scan.versions)),
+                   "chunks_in_other_streams": scan.redirected, "depth": scan.max_level}
+    try:
+        d = read(path)
+    except Unsupported as exc:
+        out["read"] = {"ok": False, "error": str(exc)}
+        return out
+    xs = [x for sh in d.page.shapes for c in sh.contours for sg in c.segs for x, _ in sg[1:]]
+    ys = [y for sh in d.page.shapes for c in sh.contours for sg in c.segs for _, y in sg[1:]]
+    out["read"] = {"ok": True, "pages": len(d.pages), "shapes": len(d.page.shapes), "skipped": dict(d.skipped),
+                   "newer": d.newer, "size_mm": [round(max(xs) - min(xs), 3), round(max(ys) - min(ys), 3)] if xs else None}
+    return out

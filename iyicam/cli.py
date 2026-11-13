@@ -4,6 +4,7 @@
     python -m iyicam info job.icam
     python -m iyicam gcode job.icam --post mach3 --sheet all -o out/job.tap
     python -m iyicam import drawing.dxf -o job.icam --thickness 18
+    python -m iyicam cdr-info drawing.cdr           # what a CorelDRAW file is made of (nothing of the drawing): for a file that does not open
     python -m iyicam export job.icam -o parts.dxf --dxf-version 2000
     python -m iyicam nest job.icam --width 2800 --height 2100 --spacing 8 -o nested.icam
     python -m iyicam nest job.icam --leftover 900x600:2 --stock leftovers.json -o nested.icam
@@ -30,7 +31,7 @@ from .formats.cdr import CdrError
 from .formats.report import ImportReport, run_importer
 from .plugins.manager import PluginManager
 
-COMMANDS = ("posts", "info", "gcode", "import", "export", "nest", "plugins", "selftest", "serve", "agent")
+COMMANDS = ("posts", "info", "gcode", "import", "export", "nest", "plugins", "selftest", "serve", "agent", "cdr-info")
 
 
 def _setup(plugins: bool = True) -> None:
@@ -154,6 +155,51 @@ def cmd_import(a) -> int:
     p.save(a.output)
     print(f"{len(objs)} vectors -> {a.output}")
     return 0
+
+
+def cmd_cdr_info(a) -> int:
+    """What a CorelDRAW file is made of, and where the reader stops: for a file that does not open (a version newer than
+    this program has seen).  Nothing of the drawing (coordinates, names, text) is in the answer, so it can be sent."""
+    import json
+
+    from .formats import cdr_native
+    from .formats.cdr import CdrError, sniff
+    try:
+        kind = sniff(a.file)
+    except CdrError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        kind = None
+    out = cdr_native.diagnose(a.file)
+    out["iyicam"] = __import__("iyicam").__version__
+    if kind is not None:
+        out["sniff"] = kind
+    if a.json:
+        print(json.dumps(out, indent=2, ensure_ascii=False))
+        return 0 if out["read"].get("ok") else 1
+    print(f"container   {out.get('container') or '?'}   size {out.get('size', '?')} bytes")
+    for e in out.get("entries", []):
+        print(f"  {e['name']:<48} {e['size']:>10}  {e['compression']}")
+    if out.get("main"):
+        print(f"drawing in  {out['main']}   ({out.get('external_streams', 0)} extra streams)")
+    if "form" in out:
+        print(f"RIFF form   {out['form']!r}   version {out['version']} ({out['version_name']})"
+              + ("   NEWER than X8: read with the rules of X8" if out.get("newer_than_x8") else ""))
+    sc = out.get("scan")
+    if sc:
+        print(f"records     {'followed to the end' if sc['ok'] else 'STOPPED: ' + sc['problem']}   depth {sc['depth']}   "
+              f"versions the file says {sc['file_versions']}   chunks in other streams {sc['chunks_in_other_streams']}")
+        print("  lists     " + ", ".join(f"{k} x{v}" for k, v in sc["lists"].items()))
+        print("  records   " + ", ".join(f"{k} x{v}" for k, v in sc["records"].items()))
+    rd = out["read"]
+    if rd.get("ok"):
+        size = f"{rd['size_mm'][0]} x {rd['size_mm'][1]} mm" if rd.get("size_mm") else "no outlines"
+        print(f"read        {rd['shapes']} shapes on {rd['pages']} page(s), {size}"
+              + (f", left out {rd['skipped']}" if rd.get("skipped") else "")
+              + ("\n            NEWER than X8: never compared with a drawing of this version, check the size in CorelDRAW"
+                 if rd.get("newer") else ""))
+        return 0
+    print(f"read        NO: {rd.get('error')}")
+    return 1
 
 
 def cmd_export(a) -> int:
@@ -301,6 +347,10 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("file")
     s.add_argument("-o", "--output", required=True)
     s.add_argument("--thickness", type=float, default=18.0)
+    s = sub.add_parser("cdr-info", help="what a CorelDRAW file is made of and where the reader stops (nothing of the "
+                                        "drawing is in it); for a file that does not open")
+    s.add_argument("file")
+    s.add_argument("--json", action="store_true", help="the answer as JSON")
     s = sub.add_parser("export", help="write the vectors of a project as DXF (layers and their colours kept) or SVG")
     s.add_argument("project")
     s.add_argument("-o", "--output", help="the file (its extension decides the format; default: next to the project)")
@@ -352,7 +402,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return {"posts": cmd_posts, "plugins": cmd_plugins, "info": cmd_info, "gcode": cmd_gcode,
                 "import": cmd_import, "export": cmd_export, "nest": cmd_nest, "selftest": cmd_selftest,
-                "serve": cmd_serve, "agent": cmd_agent}[a.cmd](a)
+                "serve": cmd_serve, "agent": cmd_agent, "cdr-info": cmd_cdr_info}[a.cmd](a)
     except FileNotFoundError as exc:
         print(f"error: {exc.filename or exc} was not found", file=sys.stderr)
     except (OSError, ValueError, KeyError, TypeError, IndexError) as exc:   # a bad file or a bad number

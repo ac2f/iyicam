@@ -14,7 +14,7 @@ used besides it, tried in this order, the first that gives a drawing wins:
 Text is not read by any of them as outlines (the letters are in the font, not in the file): it is left out and said so.
 ``IYICAM_CDR_TIMEOUT`` is how many seconds the programs may take (default 60).
 
-What cannot be read (CorelDRAW 2018 and newer, bitmaps, text) is said, never dropped silently.
+What cannot be read (bitmaps, text) is said, never dropped silently; a file newer than X8 is tried and said to be unchecked.
 """
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ LAST_READ_VERSION = 18           # CorelDRAW X8: the newest version libcdr reads
 
 VERSION_NAMES = {5: "5", 6: "6", 7: "7", 8: "8", 9: "9", 10: "10", 11: "11", 12: "12", 13: "X3", 14: "X4", 15: "X5", 16: "X6",
                  17: "X7", 18: "X8", 19: "2017", 20: "2018", 21: "2019", 22: "2020", 23: "2021", 24: "2022",
-                 25: "2023", 26: "2024"}
+                 25: "2023", 26: "2024", 27: "2025", 28: "2026"}
 
 INSTALL_HINT = ("Nothing has to be installed for most files. For the others LibreOffice (libreoffice.org) or, on Linux, the "
                 "libcdr tools (apt install libcdr-tools) are used when they are on the computer. Or export the drawing from "
@@ -107,14 +107,26 @@ def sniff(path: str | Path) -> dict:
         try:
             with zipfile.ZipFile(p) as z:
                 names = z.namelist()
-                riff = next((n for n in names if n.lower().endswith("riffdata.cdr")), None)
-                if riff or any(n.lower().endswith("root.dat") for n in names):
+                riff = next((n for n in names if n.lower().endswith("riffdata.cdr")), None) \
+                    or next((n for n in names if n.lower().endswith("root.dat")), None)
+                if riff is None:                     # (a newer CorelDRAW may call it something else)
+                    riff = cdr_native._riff_member(z)
+                if riff:
                     version = None
-                    if riff:
+                    try:
                         with z.open(riff) as inner:
                             version = _version_of(inner.read(16))
+                    except (NotImplementedError, OSError, RuntimeError, zipfile.BadZipFile):
+                        pass                         # (it says why when it is read)
                     return {"container": "zip", "version": version}
                 inner_cdr = [n for n in names if n.lower().endswith(".cdr")]
+                top = {n.split("/", 1)[0].lower() for n in names if "/" in n}
+                if p.suffix.lower() == ".cdr" and "content" in top:
+                    raise CdrError("cdr_package", "This is a CorelDRAW package, but of a layout this program does not know "
+                                   "(a version of CorelDRAW newer than it has been tried with). In CorelDRAW use File > Save "
+                                   "As and choose an older version (X8), or export the drawing as DXF or SVG. To have this "
+                                   "kind of file supported, run `iyicam cdr-info` on it and send the answer (it holds "
+                                   "nothing of the drawing).", entries=names[:30])
         except zipfile.BadZipFile as exc:
             raise CdrError("cdr_not_cdr", "this is a damaged ZIP file, not a CorelDRAW drawing") from exc
         if inner_cdr:
@@ -185,7 +197,8 @@ def describe() -> dict:
     found = find_converters()
     ordered = [c for c in found if c.name == "custom"] + [builtin] + [c for c in found if c.name != "custom"]
     return {"available": True, "converters": [c.describe() for c in ordered],
-            "install": INSTALL_HINT, "reads": f"CorelDRAW 5 to {VERSION_NAMES[LAST_READ_VERSION]}", "text": False}
+            "install": INSTALL_HINT, "reads": f"CorelDRAW 5 to {VERSION_NAMES[LAST_READ_VERSION]}", "text": False,
+            "newer_tried": True}     # (a newer file is read with the rules of X8 and said to be unchecked)
 
 
 class _Budget:
@@ -447,7 +460,14 @@ def import_cdr(path: str | Path, project: Project, sheet: Sheet, layer_id: str |
                                         f"on every page).")
                 if len(drawing.pages) > 1:
                     report.notes.append(f"The drawing has {len(drawing.pages)} pages: only the first was read.")
-                if drawing.unverified:
+                if drawing.newer:
+                    report.notes.append(
+                        f"This {label} file is newer than CorelDRAW {version_name(cdr_native.LAST_VERSION // 100)}, the "
+                        f"newest one libcdr (and so every program that reads CorelDRAW) has rules for. It was read with the "
+                        f"rules of X8 and every block it could not follow would have stopped the reading, but it has "
+                        f"never been compared with a drawing of this version: CHECK THE SIZE AND THE OUTLINES against "
+                        f"the drawing in CorelDRAW before cutting, or save it as X8 or export DXF.")
+                elif drawing.unverified:
                     report.notes.append(
                         f"This {label} file was read by the built-in reader, which has been compared with files of "
                         f"CorelDRAW X3 only: check the size of the result against the drawing in CorelDRAW before cutting.")
@@ -485,8 +505,10 @@ def import_cdr(path: str | Path, project: Project, sheet: Sheet, layer_id: str |
     why = "; ".join(failures)
     if newer:
         raise CdrError("cdr_version", f"This file was saved by CorelDRAW {version_name(info['version'])}, newer than "
-                       f"the readers know (CorelDRAW 5 to {VERSION_NAMES[LAST_READ_VERSION]}). In CorelDRAW use File > "
-                       f"Save As and choose an older version (X8), or export the drawing as DXF or SVG. ({why})",
+                       f"the readers know (CorelDRAW 5 to {VERSION_NAMES[LAST_READ_VERSION]}); it was tried and could not be "
+                       f"followed. In CorelDRAW use File > Save As and choose an older version (X8), or export the drawing "
+                       f"as DXF or SVG. To have this version supported, run `iyicam cdr-info` on the file and send the "
+                       f"answer (it holds nothing of the drawing). ({why})",
                        version=info["version"], name=version_name(info["version"]), why=why)
     raise CdrError("cdr_failed", f"This CorelDRAW file could not be read: {why}. If it is a drawing of a newer or an unusual "
                                  f"CorelDRAW, export it from CorelDRAW as DXF or SVG.", reasons=failures, why=why)

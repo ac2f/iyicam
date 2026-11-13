@@ -77,8 +77,8 @@ with Python plugins.
 - DXF import (lines, arcs, circles, polylines with bulges, exact cubic and periodic splines,
   ellipses, solids, blocks, planes tilted in space, units, gap joining) and export; SVG import
   (transforms, units exact to the micron, Inkscape layers) and export; HPGL (`.plt`) import from
-  cutting plotters; **CorelDRAW (`.cdr`, versions 5 to X8) import with nothing to install** (a port
-  of libcdr's geometry, checked against libcdr itself; [docs/cdr.md](docs/cdr.md)). **An import says
+  cutting plotters; **CorelDRAW (`.cdr`, versions 5 to X8, and newer ones up to 2026 tried and said to be
+  unchecked) import with nothing to install** (a port of libcdr's geometry, checked against libcdr itself; [docs/cdr.md](docs/cdr.md)). **An import says
   what it could not bring in** (hatches, text, ...) instead of dropping it silently; the shapes are
   checked against an independent reading of the files
 

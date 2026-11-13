@@ -28,8 +28,8 @@ their transforms (rotation, mirror, skew, scale). Circles stay circles (arcs) so
 [libcdr](https://wiki.documentfoundation.org/DLP/Libraries/libcdr) (Document Liberation Project, MPL 2.0), the library
 behind the CorelDRAW import of LibreOffice and many other programs: the container (RIFF, or the ZIP package of
 CorelDRAW X4 and later, with the extra streams of X6 and later), the compressed blocks, the objects and their transforms
-and the pages. It reads **CorelDRAW 5 to X8**; a file saved by a newer CorelDRAW is refused with the advice to save it as X8
-(*File > Save As*) or to export DXF/SVG.
+and the pages. It reads **CorelDRAW 5 to X8**, and **tries newer ones** (2017 ... 2026), see
+[the next section](#corel-draw-2017-and-newer-up-to-2026).
 
 What it was compared with, because a drawing that is a little wrong cuts a wrong part:
 
@@ -43,9 +43,39 @@ What it was compared with, because a drawing that is a little wrong cuts a wrong
   a compressed block that claims an absurd size is refused at once.
 
 So the built-in reader agrees with libcdr everywhere it was tried; only X3 was tried on a **real** file. For a file of
-another version the import adds a note: *"read by the built-in reader, which has been compared with files of CorelDRAW X3
+another version (up to X8) the import adds a note: *"read by the built-in reader, which has been compared with files of CorelDRAW X3
 only: check the size of the result against the drawing in CorelDRAW before cutting"*. (Where `cdr2xhtml` or LibreOffice is on
 the computer, those are tried first for such a file, and the built-in reader last.)
+
+## CorelDRAW 2017 and newer (up to 2026)
+
+**Read this before cutting a part from such a file.** The format of CorelDRAW is not published, and libcdr (and so
+LibreOffice, Inkscape and every program that reads CorelDRAW files) has rules for it only up to **X8**. No drawing saved by
+a newer CorelDRAW was at hand when this was written, so nobody has checked what iyiCAM does with one.
+
+What iyiCAM does with a file of CorelDRAW 2017 or newer (version 19 and up, 2026 is 28):
+
+* It is **tried** instead of refused: the file is read with the rules of X8, as libcdr does (libcdr has no upper limit
+  either), in every kind of package (`content/riffData.cdr`, `content/root.dat` with the extra streams, or a stream of
+  another name in the `content` folder). The import says **in its notes that the file is newer than X8, that the result has
+  never been compared with a drawing of this version, and that its size and outlines must be checked in CorelDRAW before
+  cutting.**
+* **A part of a drawing is never left out silently:** for these files a compressed block that cannot be inflated, a chunk that
+  points to a stream that is not there and a header that is not the one libcdr knows stop the reading (the older versions
+  keep their way). The answer is then the refusal below, not a drawing with something missing.
+* If it cannot be followed you get the advice to save the drawing as X8 (*File > Save As*) or to export DXF / SVG, and
+  the words to ask for support: **`iyicam cdr-info drawing.cdr`** says what the file is made of (the members of the
+  package and how they are compressed, the version, how many records of which kind, **where the reader stops**) and holds
+  **nothing of the drawing** (no coordinates, names or text), so it can be sent. `--json` gives it as JSON.
+* A package of a layout this program does not know (a `.cdr` with a `content` folder and no drawing stream it recognises) is
+  said to be that, with the names of its members; a member compressed in a way Python cannot read (zstd, deflate64) is named.
+
+What was **tested**: files of every kind that `tests/cdr_builder.py` writes, with the version numbers of 2017 to 2026 (and a
+file damaged in a compressed block), in every package; the answers are the same as for X8, the notes are there, nothing is
+left out silently. What **cannot be tested** without a real file: whether CorelDRAW 2026 writes its objects the way X8 does.
+If you have a drawing saved by CorelDRAW 2017 or newer, `iyicam cdr-info` on it, and the same drawing exported as DXF or SVG
+from CorelDRAW, is what it takes to check the reader against it (the sample is used by the tests when `IYICAM_CDR_SAMPLE`
+names it).
 
 ## Other readers (optional)
 
