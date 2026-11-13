@@ -9,6 +9,7 @@ const TXT = {
     "tab.project": "Proje", "tab.draw": "Çizim", "tab.paths": "Yollar", "tab.out": "Çıktı",
     "login.hint": "Devam etmek için anahtarını gir.", "login.key": "Anahtar", "login.go": "Giriş",
     "login.bad": "Anahtar yanlış.", "login.wait": "Çok fazla yanlış deneme. {0} sn bekle.",
+    "login.remember": "Bu cihazda açık kalsın (90 gün)",
     "logout": "Çıkış", "busy": "Çalışıyor…", "cancel": "Vazgeç", "cancelled": "İptal edildi.",
     "open.title": "Dosya aç", "open.hint": "iyiCAM projesi (.icam), DXF, SVG, HPGL, CorelDRAW…",
     "open.pick": "Bu cihazdan seç…", "open.thickness": "Malzeme kalınlığı (mm)", "open.add": "Açık projeye ekle",
@@ -61,6 +62,7 @@ const TXT = {
     "tab.project": "Project", "tab.draw": "Drawing", "tab.paths": "Toolpaths", "tab.out": "Output",
     "login.hint": "Enter your key to continue.", "login.key": "Key", "login.go": "Sign in",
     "login.bad": "The key is not right.", "login.wait": "Too many wrong tries. Wait {0} s.",
+    "login.remember": "Keep me signed in on this device (90 days)",
     "logout": "Sign out", "busy": "Working…", "cancel": "Cancel", "cancelled": "Cancelled.",
     "open.title": "Open a file", "open.hint": "iyiCAM project (.icam), DXF, SVG, HPGL, CorelDRAW…",
     "open.pick": "From this device…", "open.thickness": "Material thickness (mm)", "open.add": "Add to the open project",
@@ -1128,13 +1130,17 @@ function mountApp() {
 
 function showLogin(note) {
   document.documentElement.lang = lang;
-  const key = h("input", { type: "password", autocomplete: "off", autocapitalize: "characters", spellcheck: "false", placeholder: "XXXXXX-XXXXXX-XXXXXX-XXXXXX", "aria-label": t("login.key") });
+  // the key can be kept by the browser's own password list, and "keep me signed in" gives the session 90 days (it starts
+  // again every time the page is opened): the key is then asked for once, not at every visit
+  const key = h("input", { type: "password", name: "key", autocomplete: "current-password", autocapitalize: "characters", spellcheck: "false", placeholder: "XXXXXX-XXXXXX-XXXXXX-XXXXXX", "aria-label": t("login.key") });
+  const keep = h("input", { type: "checkbox", checked: store.get("iyicam.remember") !== "0" });
   const msg = h("div", { class: "msg bad", hidden: true });
   const go = async e => {
     e.preventDefault();
     msg.hidden = true;
     try {
-      await api("login", { key: key.value });
+      await api("login", { key: key.value, remember: keep.checked });
+      store.set("iyicam.remember", keep.checked ? "1" : "0");
       await start();
     } catch (err) {
       msg.hidden = false;
@@ -1144,7 +1150,8 @@ function showLogin(note) {
   };
   $("#app").replaceChildren(h("form", { class: "login", onsubmit: go },
     h("h1", {}, "iyiCAM"), h("p", { class: "muted" }, note || t("login.hint")),
-    h("label", { class: "f" }, h("span", {}, t("login.key")), key), msg,
+    h("label", { class: "f" }, h("span", {}, t("login.key")), key),
+    h("label", { class: "chk" }, keep, t("login.remember")), msg,
     h("div", { style: "margin-top:16px" }, h("button", { class: "primary", style: "width:100%", type: "submit" }, t("login.go")))));
   key.focus();
 }

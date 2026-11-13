@@ -32,12 +32,12 @@ from pathlib import Path
 
 from ..core import paths
 from .keys import KeyStore, Throttled, is_key, normalise_key
+from .sessions import REMEMBER_TTL, SESSION_TTL, SessionStore  # noqa: F401
 
 AGENT_ONLINE_SEC = 60.0          # an agent not heard of for this long counts as not connected (it polls every ~25 s)
 POLL_HOLD_SEC = 25.0             # how long a poll waits for a job before it answers "nothing" (a proxy gives up at 100 s)
 JOB_TIMEOUT_SEC = 300.0          # how long a browser's call waits for the agent's answer
 MAX_PENDING = 32                 # calls waiting for one agent
-SESSION_TTL = 12 * 3600.0
 AGENT_ID = re.compile(r"^[0-9a-f]{32}$")
 
 
@@ -271,12 +271,20 @@ class HubAuth:
     session also says which agent it belongs to."""
 
     def __init__(self, hub: Hub, ttl: float = SESSION_TTL, max_fail: int = 10, window: float = 300.0,
-                 max_sessions: int = 256):
+                 max_sessions: int = 256, sessions_path: Path | None = None, remember_ttl: float = REMEMBER_TTL):
         self.hub, self.keys = hub, hub.keys
-        self.ttl, self.max_fail, self.window, self.max_sessions = ttl, max_fail, window, max_sessions
+        self.ttl, self.max_fail, self.window, self.remember_ttl = ttl, max_fail, window, remember_ttl
         self._lock = threading.Lock()
-        self._sessions: dict[str, tuple[float, str, str]] = {}      # token -> (expires, agent id, digest of its key)
+        self._sessions = SessionStore(sessions_path, max_sessions)      # (token hash -> expires, agent id, digest of its key, ttl)
         self._fails: dict[str, list[float]] = {}
+
+    @property
+    def max_sessions(self) -> int:
+        return self._sessions.max_sessions
+
+    @max_sessions.setter
+    def max_sessions(self, n: int) -> None:
+        self._sessions.max_sessions = n
 
     def _recent(self, ip: str, now: float) -> list[float]:
         fails = [t for t in self._fails.get(ip, []) if now - t < self.window]
@@ -286,7 +294,7 @@ class HubAuth:
             self._fails.pop(ip, None)
         return fails
 
-    def login(self, ip: str, given: object) -> str | None:
+    def login(self, ip: str, given: object, remember: bool = False) -> str | None:
         """A session token for the client key of an agent, ``None`` for any other; raises :class:`Throttled`."""
         now = time.time()
         with self._lock:
@@ -302,20 +310,14 @@ class HubAuth:
                         self._recent(k, now)
                 return None
             self._fails.pop(ip, None)
-            self._sessions = {t: v for t, v in self._sessions.items() if v[0] > now}
-            while len(self._sessions) >= self.max_sessions:
-                del self._sessions[min(self._sessions, key=lambda t: self._sessions[t][0])]
-            token = secrets.token_urlsafe(32)
-            self._sessions[token] = (now + self.ttl, agent_id, digest(given))
-            return token
+        token = secrets.token_urlsafe(32)
+        self._sessions.add(token, self.remember_ttl if remember else self.ttl, agent_id, digest(given), now)
+        return token
 
     def agent_of(self, token: str | None) -> str | None:
         """The agent a session belongs to; ``None`` for no session, an old one, or one of a key that was replaced."""
-        if not token:
-            return None
-        with self._lock:
-            entry = self._sessions.get(token)
-        if entry is None or entry[0] <= time.time():
+        entry = self._sessions.get(token)
+        if entry is None:
             return None
         current = self.hub.digest_of(entry[1])
         if current is None or not hmac.compare_digest(current, entry[2]):
@@ -325,6 +327,15 @@ class HubAuth:
     def valid(self, token: str | None) -> bool:
         return self.agent_of(token) is not None
 
+    def lifetime(self, token: str | None) -> int:
+        entry = self._sessions.get(token)
+        return max(0, int(entry[0] - time.time())) if entry is not None else 0
+
+    def renew(self, token: str | None) -> int | None:
+        if not self.valid(token):
+            return None
+        left = self._sessions.renew(token)
+        return int(left) if left else None
+
     def logout(self, token: str | None) -> None:
-        with self._lock:
-            self._sessions.pop(token or "", None)
+        self._sessions.remove(token)

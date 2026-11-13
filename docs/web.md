@@ -348,8 +348,15 @@ call that the hub cannot pass on answers `agent_offline` (503), `agent_timeout` 
 
 * The key is in `~/.iyicam/server.key`, made at the first start: 24 letters and digits (about 120 bits), without
   `0 O 1 I`. Dashes, spaces and case do not matter when it is typed.
-* The page asks for it once. The server answers with a session cookie (12 hours, `HttpOnly`, `SameSite=Strict`, and
-  `Secure` behind an HTTPS proxy). Without it nothing but the page itself is reachable.
+* The page asks for it, and the sign-in page has **Keep me signed in on this device** (ticked at first, and the choice is
+  remembered). The server answers with a session cookie (`HttpOnly`, `SameSite=Strict`, and `Secure` behind an HTTPS
+  proxy). Kept signed in, the session is **90 days and starts again every time the page is opened**: a phone that is used
+  never asks for the key again, one that is not used for three months does. Not kept, it is 12 hours. Without the cookie
+  nothing but the page itself is reachable. The key field also allows the browser's own password list to fill it in.
+* The sessions are in `~/.iyicam/sessions.json` (a hub: `hub-sessions.json` next to `agents.json`; mode 600), **only as
+  hashes of the cookies**, so restarting the server (an update, a reboot) signs nobody out and a copy of the file is of no
+  use. **Sign out** ends the session of that browser for good; a new key (`--new-key`) ends **every** session, those in the
+  file too. Lost phone: make a new key.
 * An address that gives 10 wrong keys within 5 minutes waits (HTTP 429, `Retry-After`).
 * Only the operations of the service and the file operations can be called (`/api/<operation>`); the page itself is
   served from a fixed list of files, never from a path of the request. The disk is reachable only through the file
@@ -417,7 +424,8 @@ the service sees must be the same (nginx needs `proxy_set_header Host $host;`, a
 ## For programs
 
 The same answers as `ServiceHost.handle`, as HTTP: `POST /api/<operation>` with the payload as a JSON object
-(`Content-Type: application/json`) after `POST /api/login` `{"key": "..."}`; the session cookie goes with every call.
+(`Content-Type: application/json`) after `POST /api/login` `{"key": "...", "remember": true}` (`remember` is optional: with it
+the session is 90 days, renewed by `GET /api/session`, without it 12 hours); the session cookie goes with every call.
 A service error is `{"error": code, "message": ...}` with status 400 (404 for an unknown operation or job, 409 for a
 job that has not finished, 503 for `too_busy`). `GET /health` answers `ok` without a key (for a proxy or a monitor).
 Tests: `tests/test_server.py`.

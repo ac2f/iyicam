@@ -6,9 +6,12 @@ its own: CNC-Assistant is not needed.  The project travels as data, as everywher
 open and save files of the computer the server runs on, but only inside the folders named at the start (``--root``,
 see :mod:`iyicam.service.files`; ``--no-files`` turns that off).
 
-Access is by a **key** (``~/.iyicam/server.key``): the page asks for it once, the server answers with a session
-cookie (12 hours; ``HttpOnly``, ``SameSite=Strict``) and every ``/api`` call needs that cookie.  After 10 wrong keys
-within 5 minutes an address waits (HTTP 429).  A new key (``iyicam serve --new-key``) ends every session at once.
+Access is by a **key** (``~/.iyicam/server.key``): the page asks for it, the server answers with a session cookie
+(``HttpOnly``, ``SameSite=Strict``) and every ``/api`` call needs that cookie.  A browser that signs in with "keep me
+signed in on this device" has a session of 90 days that starts again every time the page is opened; any other has 12
+hours.  Sessions are kept in ``~/.iyicam/sessions.json`` (only hashes of the cookies), so restarting the server signs
+nobody out.  After 10 wrong keys within 5 minutes an address waits (HTTP 429).  A new key (``iyicam serve --new-key``)
+ends every session at once, and so does Sign out for its own.
 
 With ``--hub`` the server has no engine and no disk of its own: it is the meeting point of agents (``iyicam agent`` on
 the computers of the people, see :mod:`iyicam.service.hub`).  A browser signs in with the client key of an agent and
@@ -40,11 +43,11 @@ from .files import FILE_OPS, Files
 from .host import ServiceHost
 from .hub import Hub, HubAuth, HubError
 from .keys import KEY_ALPHABET, KeyStore, Throttled, key_file, make_key, normalise_key  # noqa: F401  (re-exported)
+from .sessions import REMEMBER_TTL, SESSION_TTL, SessionStore  # noqa: F401  (part of this module's face)
 from .ops import API_VERSION
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 COOKIE = "iyicam_session"
-SESSION_TTL = 12 * 3600.0
 DEFAULT_PORT = 8300
 DEFAULT_MAX_BODY = 64 * 1024 * 1024                    # a big drawing as base64 is still well below this
 
@@ -62,11 +65,20 @@ CSP = ("default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe
 
 class Auth:
     def __init__(self, keys: KeyStore, ttl: float = SESSION_TTL, max_fail: int = 10, window: float = 300.0,
-                 max_sessions: int = 64):
-        self.keys, self.ttl, self.max_fail, self.window, self.max_sessions = keys, ttl, max_fail, window, max_sessions
+                 max_sessions: int = 64, sessions_path: Path | None = None, remember_ttl: float = REMEMBER_TTL):
+        self.keys, self.ttl, self.max_fail, self.window = keys, ttl, max_fail, window
+        self.remember_ttl = remember_ttl
         self._lock = threading.Lock()
-        self._sessions: dict[str, tuple[float, str]] = {}      # token -> (expires, fingerprint of the key)
+        self._sessions = SessionStore(sessions_path, max_sessions)     # (token hash -> expires, "", proof of the key, ttl)
         self._fails: dict[str, list[float]] = {}
+
+    @property
+    def max_sessions(self) -> int:
+        return self._sessions.max_sessions
+
+    @max_sessions.setter
+    def max_sessions(self, n: int) -> None:
+        self._sessions.max_sessions = n
 
     @staticmethod
     def _fingerprint(key: str) -> str:
@@ -80,8 +92,9 @@ class Auth:
             self._fails.pop(ip, None)
         return fails
 
-    def login(self, ip: str, given: object) -> str | None:
-        """A session token for the right key, ``None`` for a wrong one; raises :class:`Throttled`."""
+    def login(self, ip: str, given: object, remember: bool = False) -> str | None:
+        """A session token for the right key, ``None`` for a wrong one; raises :class:`Throttled`.  A session that is
+        kept (``remember``) lasts 90 days from the last time the page was opened, any other 12 hours."""
         now = time.time()
         with self._lock:
             fails = self._recent(ip, now)
@@ -97,25 +110,30 @@ class Auth:
                         self._recent(k, now)
                 return None
             self._fails.pop(ip, None)
-            self._sessions = {t: v for t, v in self._sessions.items() if v[0] > now}
-            while len(self._sessions) >= self.max_sessions:    # the oldest goes
-                del self._sessions[min(self._sessions, key=lambda t: self._sessions[t][0])]
-            token = secrets.token_urlsafe(32)
-            self._sessions[token] = (now + self.ttl, self._fingerprint(key))
-            return token
+        token = secrets.token_urlsafe(32)
+        self._sessions.add(token, self.remember_ttl if remember else self.ttl, "", self._fingerprint(key), now)
+        return token
 
     def valid(self, token: str | None) -> bool:
-        if not token:
+        entry = self._sessions.get(token)
+        if entry is None:
             return False
-        with self._lock:
-            entry = self._sessions.get(token)
-        if entry is None or entry[0] <= time.time():
-            return False
-        return hmac.compare_digest(entry[1], self._fingerprint(self.keys.get()))    # a new key ends old sessions
+        return hmac.compare_digest(entry[2], self._fingerprint(self.keys.get()))    # a new key ends old sessions
+
+    def lifetime(self, token: str | None) -> int:
+        """Seconds a session has left (what the cookie is told); 0 for none."""
+        entry = self._sessions.get(token)
+        return max(0, int(entry[0] - time.time())) if entry is not None else 0
+
+    def renew(self, token: str | None) -> int | None:
+        """A kept session that is valid starts its 90 days again (at most once a day); returns the seconds, else ``None``."""
+        if not self.valid(token):
+            return None
+        left = self._sessions.renew(token)
+        return int(left) if left else None
 
     def logout(self, token: str | None) -> None:
-        with self._lock:
-            self._sessions.pop(token or "", None)
+        self._sessions.remove(token)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -296,8 +314,11 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/health":
             return self._send(200, b"ok", "text/plain; charset=utf-8", {"Cache-Control": "no-store"})
         if path == "/api/session":
-            if self.server.auth.valid(self._token()):
-                return self._json(200, {"ok": True, "api": API_VERSION})
+            token = self._token()
+            if self.server.auth.valid(token):
+                left = self.server.auth.renew(token)           # (a kept session starts its 90 days again)
+                return self._json(200, {"ok": True, "api": API_VERSION},
+                                  {"Set-Cookie": self._cookie(token, left)} if left else None)
             return self._fail(401, "not_logged_in", "enter the key first")
         self._fail(404, "not_found", "there is nothing here")
 
@@ -447,7 +468,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         ip = self._ip()
         try:
-            token = self.server.auth.login(ip, body.get("key"))
+            token = self.server.auth.login(ip, body.get("key"), body.get("remember") is True)
         except Throttled as exc:
             wait = max(1, int(exc.wait))
             self.server.log(f"{ip} too many wrong keys, waits {wait} s")
@@ -457,7 +478,8 @@ class Handler(BaseHTTPRequestHandler):
             self.server.log(f"{ip} wrong key")
             return self._fail(401, "invalid_key", "the key is not right")
         self.server.log(f"{ip} signed in")
-        self._json(200, {"ok": True, "api": API_VERSION}, {"Set-Cookie": self._cookie(token, int(SESSION_TTL))})
+        self._json(200, {"ok": True, "api": API_VERSION},
+                   {"Set-Cookie": self._cookie(token, self.server.auth.lifetime(token))})
 
 
 # ---------------------------------------------------------------------------------------------
@@ -482,11 +504,13 @@ def make_server(host: str = "127.0.0.1", port: int = DEFAULT_PORT, *, key: str |
     keys.get()                                   # the key file exists from now on
     if hub:
         the_hub = hub if isinstance(hub, Hub) else Hub(keys, hub_state)
-        return ServiceServer((host, port), None, HubAuth(the_hub), trust_proxy=trust_proxy, max_body=max_body,
-                             verbose=verbose, files=None, hub=the_hub)
+        kept = the_hub.state.with_name("hub-sessions.json") if keys.fixed is None else None
+        return ServiceServer((host, port), None, HubAuth(the_hub, sessions_path=kept), trust_proxy=trust_proxy,
+                             max_body=max_body, verbose=verbose, files=None, hub=the_hub)
     service = service or ServiceHost()
-    return ServiceServer((host, port), service, Auth(keys), trust_proxy=trust_proxy, max_body=max_body,
-                         verbose=verbose, files=Files(service, roots) if files else None)
+    kept = keys.path.with_name("sessions.json") if keys.fixed is None else None       # (next to the key: a restart signs nobody out)
+    return ServiceServer((host, port), service, Auth(keys, sessions_path=kept), trust_proxy=trust_proxy,
+                         max_body=max_body, verbose=verbose, files=Files(service, roots) if files else None)
 
 
 def lan_addresses() -> list[str]:
