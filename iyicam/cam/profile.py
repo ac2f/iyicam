@@ -349,7 +349,7 @@ class ProfileOp(Operation):
                               sheet=self._sheet, shift=shift, inner=inner)
             s = ch.s
             info.update(gap=ch.gap, ok=ch.ok, locked=locked, corner=ch.corner, held=ch.held, kept=ch.kept,
-                        support=ch.support, zone=ch.zone)
+                        support=ch.support, zone=ch.zone, target=walker.point_at(ch.target))
             if not ch.ok:
                 ctx.warn("Some cuts have no start point clear of machined areas and corners"
                          if not locked else "A start point set by hand is close to machined areas or a corner")

@@ -275,32 +275,43 @@ def test_the_same_parts_close_the_same_way_in_every_layout(layout):
 
 
 def test_a_cut_is_made_before_the_neighbour_that_would_leave_its_closing_zone_without_sheet():
-    """A tall part with a short part next to its lower right side, in a row below by the sweep's own order: the
-    short one would be cut first and take the sheet away where the tall one closes, so the tall one goes first."""
-    tall = shapes.rectangle(20, 20, 60, 150)
-    short = shapes.rectangle(88, 20, 50, 40)          # right of the tall part's lower right corner, 8 mm away
-    p, s, objs = make_project([[tall], [short], [shapes.rectangle(20, 190, 60, 50)]], size=(220, 300))
+    """A tall part with a lower part standing next to its lower right side: the sweep (row by row, the lowest first)
+    would cut the lower one first and take the sheet away where the tall one closes, so the tall one goes first."""
+    tall = shapes.rectangle(20, 60, 60, 150)
+    low = shapes.rectangle(88, 0, 50, 70)             # 8 mm right of the tall part's lower right corner
+    p, s, objs = make_project([[tall], [low], [shapes.rectangle(20, 230, 60, 50)]], size=(220, 300))
     t = add_tp(p, "profile", end_mill(6), {"through": True}, objs)
     t.sequence = {"strategy": "rows_bl", "smart_starts": True}
     tp = compute_toolpath(p, t, s).toolpaths[0]
-    keys = [c["key"] for c in tp.cuts]
     ids = {o.id: n for n, o in enumerate(objs)}
-    order = [ids[k.split(":")[0]] for k in keys]
-    assert order.index(0) < order.index(1)                              # the tall part before the short one
+    order = [ids[c["key"].split(":")[0]] for c in tp.cuts]
+    assert order.index(0) < order.index(1)                              # the tall part before the lower one
     tall_cut = tp.cuts[order.index(0)]
     assert tall_cut["close"][0] == pytest.approx(80 + R)
-    assert tall_cut["close"][1] - 20 < 20                               # at its bottom right corner, not high up
+    assert tall_cut["close"][1] - 60 < 20                               # at its bottom right corner, not high up
     assert replay(tp, s) == []
 
 
 def test_without_smart_start_points_the_order_is_the_strategys_own():
-    tall = shapes.rectangle(20, 20, 60, 150)
-    short = shapes.rectangle(88, 20, 50, 40)
-    p, s, objs = make_project([[tall], [short]], size=(220, 300))
+    tall = shapes.rectangle(20, 60, 60, 150)
+    low = shapes.rectangle(88, 0, 50, 70)
+    p, s, objs = make_project([[tall], [low]], size=(220, 300))
     t = add_tp(p, "profile", end_mill(6), {"through": True}, objs)
     t.sequence = {"strategy": "rows_bl", "smart_starts": False}
     order = [c["key"].split(":")[0] for c in compute_toolpath(p, t, s).toolpaths[0].cuts]
-    assert order == [objs[1].id, objs[0].id]                            # row by row, bottom first: nothing re-ordered
+    assert order == [objs[1].id, objs[0].id]                            # row by row, the lowest first: nothing re-ordered
+
+
+def test_parts_on_one_line_are_one_row_however_tall_they_are():
+    """A sweep reaches a part at its corner: a tall and a short part standing on one baseline are one row, left to
+    right, not the short one first because its centre is lower."""
+    tall, short = shapes.rectangle(20, 20, 40, 150), shapes.rectangle(70, 20, 40, 30)
+    items = [seq.SeqItem("tall", tall), seq.SeqItem("short", short)]
+    seq.containment(items)
+    assert seq.order_items(items, "rows_bl") == ["tall", "short"]
+    top = [seq.SeqItem("a", shapes.rectangle(0, 100, 40, 50)), seq.SeqItem("b", shapes.rectangle(60, 140, 40, 10))]
+    seq.containment(top)
+    assert seq.order_items(top, "rows_tl") == ["a", "b"]                # both reach y=150: one row from the left
 
 
 def test_two_parts_that_each_want_to_come_first_keep_the_strategys_order():
@@ -353,3 +364,93 @@ def test_the_order_is_never_loose_for_any_sweep(strategy):
     for sh, tp in cut_all(p, strategy):
         assert replay(tp, sh) == []
         assert_supported(tp, strategy)
+
+
+# ---------------------------------------------------------------------------------------------
+# the replay that makes sure no cut is made in loose scrap
+# ---------------------------------------------------------------------------------------------
+
+def replay_items(tp, sheet):
+    from test_sequence import cut_points
+    from iyicam.core.geom import BBox
+    items, order = {}, []
+    for c in tp.cuts:
+        pts = cut_points(tp, c)
+        if not pts or not c["closed"]:
+            continue
+        kerf = clip.offset_lines([pts], R, closed=False)
+        k = c["key"]
+        if k in items:
+            items[k].kerf += kerf
+            continue
+        items[k] = seq.SeqItem(k, c["loop"], frees=True, kerf=kerf)
+        order.append(k)
+    seq.containment(list(items.values()))
+    return order, items, BBox(0, 0, sheet.width, sheet.height)
+
+
+def ring_job():
+    bars = [shapes.rectangle(50, 50, 100, 30), shapes.rectangle(50, 126, 100, 30),
+            shapes.rectangle(50, 88, 30, 30), shapes.rectangle(120, 88, 30, 30)]
+    vecs = [[b] for b in bars] + [[shapes.circle((100, 103), 6)]]
+    p, s, objs = make_project(vecs, size=(250, 250))
+    t = add_tp(p, "profile", end_mill(6), {"through": True}, objs)
+    t.sequence = {"strategy": "rows_bl"}
+    return compute_toolpath(p, t, s).toolpaths[0], s, objs
+
+
+def test_the_fast_replay_agrees_with_the_slow_one_on_any_order():
+    tp, s, objs = ring_job()
+    order, items, box = replay_items(tp, s)
+    rng = random.Random(4)
+    seen = set()
+    for _ in range(40):
+        o = order[:]
+        rng.shuffle(o)
+        slow = bool(seq.verify_support(o, items, box))
+        assert (seq.first_loose(o, items, box) is not None) == slow
+        seen.add(slow)
+    assert seen == {True, False}                                     # (both answers were met)
+
+
+def test_a_cut_in_loose_scrap_is_brought_in_front_of_the_cut_that_closes_the_scrap():
+    tp, s, objs = ring_job()
+    order, items, box = replay_items(tp, s)
+    small = next(k for k in order if items[k].bbox.width < 20)       # the little round part in the middle
+    bad = [k for k in order if k != small] + [small]                 # the four bars first: it is then loose
+    assert seq.first_loose(bad, items, box) is not None
+    fixed, moved = seq.fix_loose(bad, items, box)
+    assert moved == [small]
+    assert seq.is_supported(fixed, items, box)
+    assert fixed.index(small) < max(fixed.index(k) for k in order if k != small)
+    assert sorted(fixed) == sorted(bad)
+
+
+def test_a_sheet_that_is_not_a_rectangle_is_judged_by_the_slow_replay():
+    tp, s, objs = ring_job()
+    order, items, box = replay_items(tp, s)
+    from iyicam.core.plate import Plate
+    notched = Plate(0, 0, 250, 250, region=[[(0, 0), (250, 0), (250, 250), (0, 250)]])
+    small = next(k for k in order if items[k].bbox.width < 20)
+    bad = [k for k in order if k != small] + [small]
+    assert seq.first_loose(bad, items, notched) is not None
+    assert seq.fix_loose(bad, items, notched)[0] == bad              # (no paths to go by: it is left as it is)
+
+
+def test_pulls_that_would_leave_a_cut_in_loose_scrap_are_given_up_and_the_rest_kept():
+    """Four bars round a small part and a free part far away that wants to come before a bar: the pull that
+    would close the ring round the small part is dropped, the harmless one is made."""
+    tp, s, objs = ring_job()
+    order, items, box = replay_items(tp, s)
+    small = next(k for k in order if items[k].bbox.width < 20)
+    bars = [k for k in order if k != small]
+    base = bars + [small]
+    base, _ = seq.fix_loose(base, items, box)                        # (a safe base order)
+    assert seq.is_supported(base, items, box)
+    wanted = {small: {base[0]}}                                      # the small part wants to be before the first bar
+    out = seq.zone_order(base, wanted, items, 10, lambda o: (o, False, []), box)
+    assert seq.is_supported(out, items, box)
+    assert out.index(small) < out.index(base[0])
+    # the same wish the other way round: the first bar wants to be after nothing but the small part is last
+    out = seq.zone_order(base, {bars[-1]: {small}}, items, 10, lambda o: (o, False, []), box)
+    assert seq.is_supported(out, items, box)

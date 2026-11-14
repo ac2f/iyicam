@@ -316,7 +316,17 @@ def support(walker: PathWalker, r: float, machined: Machined, hold: Pt | None, s
                   & (Q[:, 1] >= sheet.ymin) & (Q[:, 1] <= sheet.ymax))
     else:
         on = ones
-    present = np.where(cut, 0.0, np.where(on, 1.0, EDGE_HOLD))
+    # beyond the sheet edge: its rim is still held where the cut is on the sheet; a cut outside the sheet
+    # altogether (a part that does not fit on it) has no sheet to be held by, and nothing to lose either
+    if sheet is not None:
+        if getattr(sheet, "region", None):
+            p_on = clip.region_mask(P, sheet.region)
+        else:
+            p_on = ((P[:, 0] >= sheet.xmin) & (P[:, 0] <= sheet.xmax) & (P[:, 1] >= sheet.ymin) & (P[:, 1] <= sheet.ymax))
+        edge = np.where(np.tile(p_on, len(rings)), EDGE_HOLD, 1.0)
+    else:
+        edge = np.full(len(Q), EDGE_HOLD)
+    present = np.where(cut, 0.0, np.where(on, 1.0, edge))
     local = sum(wgt * present[k * n:(k + 1) * n] for k, (_, wgt) in enumerate(rings))
     solid = sum(wgt * (~cut & on)[k * n:(k + 1) * n] for k, (_, wgt) in enumerate(rings))
     pw = 0.5 if hold is not None else 0.25
@@ -351,6 +361,7 @@ def choose_start(walker: PathWalker, r: float, entry: Callable[[float], list[Pt]
     """
     L = walker.length
     corner = corner if corner > 0 else max(2.0, r)
+    corner = min(corner, L / 8)       # (a loop of a few mm has no room for the distance: nothing is "clear")
     spans = corners(walker, tight=2 * r + 1.0)
     n = int(min(240, max(64, L / 1.5)))
     ss, SP, w, cw, loc = support(walker, r, machined, hold, sheet, n)
