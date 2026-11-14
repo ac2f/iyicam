@@ -124,12 +124,14 @@ with Python plugins.
   position; every strategy with its own cutting direction (climb, conventional, clockwise,
   counter-clockwise or mirrored with the sweep). Inside-first and loose-scrap rules guarantee
   nothing is cut once it is free ([docs/cut_order.md](docs/cut_order.md))
-- **Smart start points**: a cut closes where it starts, so the start is put where the part stays
-  held best to the last moment (ahead of the sweep, away from neighbours already cut), with the well
-  held sides cut last, for the actual cutting direction; long narrow parts and letters close just
-  above the bottom right corner (mirrored for other sweeps); never on a corner, never plunging into a
-  cut; a new node on the vector; hand-set starts are kept; moving one recalculates only that cut and
-  the ones after it
+- **Smart start points**: a cut closes where it starts, so the start is put in the **closing zone**
+  of the sweep: every part closes on its right side, 5 % of the side above its bottom right corner for
+  a sweep from bottom left to top right (mirrored and turned for the other sweeps, for the actual
+  cutting direction), and only where the sheet beyond it is still there (never next to a neighbour
+  already cut, never in loose scrap); the order is made to suit it (a cut goes before the neighbours
+  that lie next to its zone); never on a corner, never plunging into a cut; a counter the outside cut
+  cannot enter is cut before the outline; a new node on the vector; hand-set starts are kept; moving one
+  recalculates only that cut and the ones after it ([docs/cut_order.md](docs/cut_order.md#smart-start-points))
 - **Tiling**: machine sheets longer than the machine in bands, one G-code file per tile
 - Time estimates, warnings, height-map **material removal simulation**, HTML job report;
   long calculations run in the background with a Cancel button, the program stays alive

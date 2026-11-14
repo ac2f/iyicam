@@ -7,7 +7,12 @@ when there is one) and where the cut finally closes. A good start
   earlier cuts and toolpaths) by a safety margin, so the tool never plunges
   next to a slot or into a sliver that is about to break free,
 * keeps away from corners, where a plunge or a lead leaves a mark,
-* prefers straight stretches and gentle curves,
+* closes where the sheet around it is still there: the material beyond the cut at the start
+  and along the stretch cut last has not been cut away by earlier cuts, so every cut is held by the
+  still fixed rest of the sheet to the very end,
+* lies in the *closing zone* of the sweep: a little above the bottom right corner when the sweep
+  goes from bottom left to top right (5 % of the side, never on the corner), and the same turned
+  and mirrored for the other sweeps (:func:`closing_zone`),
 * is not far from where the tool already is,
 * stays where it is when it is (almost) as good as the best place, so that
   starts do not wander every time the job is recalculated.
@@ -22,7 +27,7 @@ from typing import Callable, Iterable, Sequence
 import numpy as np
 
 from ..core import clip
-from ..core.geom import Arc, BBox, Contour, Line, Pt, polygon_area
+from ..core.geom import Arc, BBox, Line, Pt
 from .moves import ArcMove, Feed, arc_sweep
 from .pathutil import PathWalker
 
@@ -126,6 +131,9 @@ class StartChoice:
     ok: bool           # clear of machined areas by the margin and away from corners
     kept: bool         # the previous start was good enough to keep
     held: float = 0.0  # 0..1, how firmly the stretch that closes the cut is held by the material around it
+    support: float = 1.0   # 0..1, how much of the sheet beyond the cut is still there where it closes
+    zone: float = 0.0      # distance along the loop from the target of the closing zone
+    target: float = 0.0    # position of that target
 
 
 def corners(walker: PathWalker, tight: float = 0.0, angle: float = 12.0) -> list[tuple[float, float]]:
@@ -187,38 +195,6 @@ def _span_distance(s: np.ndarray, spans: list[tuple[float, float]], L: float) ->
     return out
 
 
-def shape_kind(c: Contour) -> str:
-    """'strip' (long and narrow), 'complex' (letters, L, T, stars: far from convex) or 'compact'."""
-    bb = c.bbox()
-    w, h = bb.width, bb.height
-    if min(w, h) <= 1e-9 or max(w, h) / min(w, h) >= 2.5:
-        return "strip"
-    pts = c.flatten(0.1)
-    hull = _hull(pts)
-    area = abs(polygon_area(pts))
-    hull_area = abs(polygon_area(hull)) if len(hull) >= 3 else 0.0
-    return "complex" if hull_area > 0 and area / hull_area < 0.8 else "compact"
-
-
-def _hull(pts: Sequence[Pt]) -> list[Pt]:
-    """Convex hull (monotone chain)."""
-    P = sorted(set((round(x, 6), round(y, 6)) for x, y in pts))
-    if len(P) < 3:
-        return P
-
-    def half(points):
-        out: list[Pt] = []
-        for p in points:
-            while len(out) >= 2 and ((out[-1][0] - out[-2][0]) * (p[1] - out[-2][1])
-                                     - (out[-1][1] - out[-2][1]) * (p[0] - out[-2][0])) <= 0:
-                out.pop()
-            out.append(p)
-        return out
-
-    lower, upper = half(P), half(P[::-1])
-    return lower[:-1] + upper[:-1]
-
-
 def sample(walker: PathWalker, s: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Points and unit tangents at arc length positions ``s`` of a closed path (vectorised for
     lines and arcs)."""
@@ -250,16 +226,72 @@ def sample(walker: PathWalker, s: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 
 
 DEFAULT_HOLD = (math.sqrt(0.5), math.sqrt(0.5))  # bottom left -> top right: held from the right and the top
+EDGE_HOLD = 0.6        # beyond the sheet edge there is nothing, but the rim of the sheet is still held
+SUPPORT_MIN = 0.79     # the two rings next to the cut (weights 0.5 + 0.3) must be material
+ZONE_FRACTION = 0.05   # the cut closes this fraction of the side above (or before) the corner
+ZONE_MAX = 100.0       # ... but never further than this from the corner
+COMFORT = 4.0          # free material wanted between the plunging tool and the cuts before it, beyond the margin
+COMFORT_WEIGHT = 2.0   # one mm short of that costs this many mm along the loop
+
+
+@dataclass
+class Zone:
+    """Where a cut should close: the corner the sweep ends on and the target a little beyond it."""
+    anchor: float      # arc length of the corner (its span edge the cut arrives at / leaves from)
+    before: bool       # the target lies before the corner in the cutting direction, else after it
+    delta: float       # distance of the target from the corner
+    target: float      # arc length of the target
+    corner: tuple[float, float] = (0.0, 0.0)   # the span of the corner: (from, to)
+
+
+def closing_zone(walker: PathWalker, hold: Pt | None, cw: bool, corner: float, spans: list[tuple[float, float]],
+                 inner: bool = False, fraction: float = ZONE_FRACTION) -> Zone:
+    """The closing zone of a loop.
+
+    The corner is the extreme of the loop a quarter turn from the hold direction, turned with the
+    cutting direction: for a sweep from bottom left to top right (held from the right and the top) and
+    clockwise cutting that is the bottom right corner, and the cut closes on the right side, ``fraction``
+    of the side above the corner (at least the corner distance), so that the last stretch cut is the
+    side facing the sheet that is still to be cut. The other sweeps are the same turned and mirrored.
+    Counter-clockwise outlines take the mirrored corner; an inner cut (a hole) always takes the corner of
+    the sweep itself.
+    """
+    L = walker.length
+    H = np.asarray(hold if hold is not None else DEFAULT_HOLD, float)
+    H = H / (np.hypot(*H) or 1.0)
+    K = np.array([H[1], -H[0]]) if (inner or cw) else np.array([-H[1], H[0]])
+    n = 360
+    ss = np.concatenate([np.arange(n) * L / n, np.asarray(walker.cum[:-1], float)])  # the nodes as well
+    P, T = sample(walker, ss)
+    k = int(np.argmax(P @ (K + 0.02 * H) + 1e-9 * np.arange(len(ss))[::-1]))  # (towards the hold side on a tie)
+    a_s = float(ss[k]) % L
+    span = next(((a, b) for a, b in spans if a - 1e-6 <= a_s <= b + 1e-6), (a_s, a_s))
+    before = True if not inner else bool(cw)
+    t_at = (span[0] - 0.5) if before else (span[1] + 0.5)
+    tan = sample(walker, np.array([t_at]))[1][0]
+    ext = float(np.ptp(P[:, 1]) if abs(tan[0]) < abs(tan[1]) else np.ptp(P[:, 0]))  # the side we are on
+    delta = min(max(corner, fraction * ext), ZONE_MAX)
+    target = (span[0] - delta) % L if before else (span[1] + delta) % L
+    return Zone(a_s, before, delta, target, span)
+
+
+def zone_cost(zone: Zone, s: np.ndarray, L: float) -> np.ndarray:
+    """How far (along the loop) positions ``s`` are from the target of the zone; closer to the corner
+    than the target counts double, the wrong side of the corner (and anything far) a lot."""
+    u = ((zone.corner[0] - s) if zone.before else (s - zone.corner[1])) % L   # distance from the corner
+    return np.where(u >= zone.delta, u - zone.delta, 2.0 * (zone.delta - u))
 
 
 def support(walker: PathWalker, r: float, machined: Machined, hold: Pt | None, sheet: BBox | None,
-            n: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, bool]:
-    """``(positions, points, strength, clockwise)`` of ``n`` samples along a closed path.
+            n: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, bool, np.ndarray]:
+    """``(positions, points, strength, clockwise, material)`` of ``n`` samples along a closed path.
 
     The strength (0..1) of a point is how firmly the material on the far side of
     the cut is still held there: the hold direction of the sweep (material is held
     from where the sweep has not been yet) and what is really there now, probed
     beyond the cut width (already machined areas and the sheet edge hold nothing).
+    ``material`` (0..1) is the second part alone: how much of the sheet beyond the cut is still
+    there (the sheet edge counts :data:`EDGE_HOLD`: no sheet, but its rim is still held).
     """
     L = walker.length
     ss = np.arange(n) * L / n
@@ -273,36 +305,45 @@ def support(walker: PathWalker, r: float, machined: Machined, hold: Pt | None, s
     prior = (1.0 + N @ H) / 2
     rings = ((1.5, 0.5), (5.0, 0.3), (10.0, 0.2))
     Q = np.concatenate([P + N * (r + d) for d, _ in rings])
-    present = machined.gap(Q, 1.0) > 0 if len(machined) else np.ones(len(Q), bool)
+    cut = machined.gap(Q, 1.0) <= 0 if len(machined) else np.zeros(len(Q), bool)
+    ones = np.ones(len(Q), bool)
     if sheet is not None:
         region = getattr(sheet, "region", None)
         if region:  # a leftover: nothing holds beyond its outline
-            present &= clip.region_mask(Q, region)
+            on = clip.region_mask(Q, region)
         else:
-            present &= ((Q[:, 0] >= sheet.xmin) & (Q[:, 0] <= sheet.xmax)
-                        & (Q[:, 1] >= sheet.ymin) & (Q[:, 1] <= sheet.ymax))
+            on = ((Q[:, 0] >= sheet.xmin) & (Q[:, 0] <= sheet.xmax)
+                  & (Q[:, 1] >= sheet.ymin) & (Q[:, 1] <= sheet.ymax))
+    else:
+        on = ones
+    present = np.where(cut, 0.0, np.where(on, 1.0, EDGE_HOLD))
     local = sum(wgt * present[k * n:(k + 1) * n] for k, (_, wgt) in enumerate(rings))
+    solid = sum(wgt * (~cut & on)[k * n:(k + 1) * n] for k, (_, wgt) in enumerate(rings))
     pw = 0.5 if hold is not None else 0.25
-    return ss, P, pw * prior + (1 - pw) * local, cw
+    return ss, P, pw * prior + (1 - pw) * solid, cw, local
 
 
 def choose_start(walker: PathWalker, r: float, entry: Callable[[float], list[Pt]] | None, machined: Machined,
                  prev: Pt | None = None, hint: float | None = None, margin: float = 1.0,
                  corner: float = 0.0, locked: bool = False, hold: Pt | None = None,
-                 kind: str = "compact", sheet: BBox | None = None, shift: float = 0.0) -> StartChoice:
+                 sheet: BBox | None = None, shift: float = 0.0, inner: bool = False) -> StartChoice:
     """Best start position on the closed tool centre path ``walker`` (in cutting direction).
 
     A closed cut ends where it starts: the stretch just before the start is cut
-    last and holds the part to the end. The start is chosen so the firmly held
-    sides are cut last, ending on the best held side, with the plunge clear of
-    machined areas and off the corners.
+    last and holds the part to the end. The start is chosen
 
-    ``kind`` 'strip' or 'complex' (long narrow parts, letters) use the fixed rule:
-    end just after the corner the hold direction points to, turned by a quarter
-    in the cutting direction (bottom right for bottom left -> top right and
-    clockwise cutting), a corner distance before it. ``r`` is the tool radius,
-    ``entry(s)`` the points the tool occupies at depth before it cuts from ``s``
-    (``None``: just the plunge point). A ``locked`` start stays at ``hint``.
+    1. in the *closing zone* of the sweep (:func:`closing_zone`): a little above the bottom right
+       corner for a sweep from bottom left to top right and clockwise cutting, the same turned and
+       mirrored for the others;
+    2. where that is clear: the plunge keeps ``margin`` from machined areas and the corner distance
+       from corners, and the sheet beyond the cut at the close and along the stretch cut last (the
+       *support*) has not been cut away by the cuts before. When the zone itself is not supported
+       (a neighbour that is already cut lies there) the nearest place that is, along the loop, is
+       taken, and when nowhere is, the best supported one.
+
+    ``r`` is the tool radius, ``entry(s)`` the points the tool occupies at depth before it cuts from ``s``
+    (``None``: just the plunge point). A ``locked`` start stays at ``hint``. ``inner``: a hole (it takes
+    the corner of the sweep whatever its direction).
 
     Positions are where the cut closes. When the passes of a cut creep on (ramps,
     overlap) the tool goes down ``shift`` earlier along the path; the plunge
@@ -312,13 +353,15 @@ def choose_start(walker: PathWalker, r: float, entry: Callable[[float], list[Pt]
     corner = corner if corner > 0 else max(2.0, r)
     spans = corners(walker, tight=2 * r + 1.0)
     n = int(min(240, max(64, L / 1.5)))
-    ss, SP, w, cw = support(walker, r, machined, hold, sheet, n)
+    ss, SP, w, cw, loc = support(walker, r, machined, hold, sheet, n)
+    zone = closing_zone(walker, hold, cw, corner, spans, inner)
     if locked and hint is not None:
         cand = np.array([hint % L])
     else:
         s_list = list(ss) + [(walker.cum[i] + walker.cum[i + 1]) / 2 for i in range(len(walker.segs))]
         for a, b in spans:  # exactly the corner distance off every corner, for the close and the plunge
             s_list += [a - corner, b + corner, a - corner + shift, b + corner + shift]
+        s_list += [zone.target, zone.target + shift, zone.target - shift]
         if hint is not None:
             s_list.append(hint % L)
         cand = np.array(sorted(set(round(float(s) % L, 9) for s in s_list)))
@@ -343,24 +386,38 @@ def choose_start(walker: PathWalker, r: float, entry: Callable[[float], list[Pt]
     bridge = min(L / 3, max(6 * r, 0.1 * L))  # the stretch that holds the part at the very end
     last = late >= 1.0 - bridge / L
     end = (last * w[None, :]).sum(axis=1) / np.maximum(last.sum(axis=1), 1)
+    # the sheet beyond the cut where it closes and along the stretch cut last
+    at = np.clip(np.rint(cand / (L / n)).astype(int) % n, 0, n - 1)
+    near = np.minimum.reduce([loc[(at + d) % n] for d in (-1, 0, 1)])
+    held_end = (last * loc[None, :]).sum(axis=1) / np.maximum(last.sum(axis=1), 1)
+    sup = np.minimum(near, held_end)
     travel = np.hypot(*(first - np.asarray(prev, float)).T) if prev is not None else np.zeros(len(cand))
-    score = keep + 0.6 * end - 0.02 * travel / (travel.max() + L)
-    if kind in ("strip", "complex"):
-        H = np.asarray(hold if hold is not None else DEFAULT_HOLD, float)
-        K = np.array([H[1], -H[0]]) if cw else np.array([-H[1], H[0]])  # a quarter turn with the cut
-        anchor = float(ss[int(np.argmax(SP @ (K - 0.02 * H)))])  # the far end along the hold, if a whole side
-        span = next(((a, b) for a, b in spans if a - 1e-6 <= anchor <= b + 1e-6), (anchor, anchor))
-        back = (span[0] - corner - cand + 1e-9) % L  # how far before "a corner distance before the corner"
-        score = -back / L + 1e-3 * score
-    pick = np.flatnonzero(ok) if ok.any() else np.flatnonzero(gap >= margin)
-    if not len(pick):
+    soft = keep + 0.6 * end - 0.02 * travel / (travel.max() + L)           # (the older, physical, taste)
+    # room around the plunge: an earlier cut closer than COMFORT costs as much as a stretch along the loop
+    cost = zone_cost(zone, cand, L) + COMFORT_WEIGHT * np.clip(margin + COMFORT - gap, 0.0, COMFORT)
+    good = ok & (sup >= SUPPORT_MIN)
+    if good.any():  # in the zone, or as near to it as the sheet allows
+        pick = np.flatnonzero(good)
+        score = -cost / L + 1e-4 * soft
+        tol = max(1.0, 0.1 * zone.delta) / L
+    elif ok.any():  # nowhere is fully supported: the best supported place, the zone decides among equals
+        pick = np.flatnonzero(ok)
+        score = np.round(sup, 2) - 0.5 * cost / L + 1e-4 * soft
+        tol = 0.01
+    elif (gap >= margin).any():
+        pick = np.flatnonzero(gap >= margin)
+        score = np.round(sup, 2) - 0.5 * cost / L + 1e-4 * soft
+        tol = 0.01
+    else:
         pick = np.arange(len(cand))
         score = gap  # nothing is clear: get as far from machined areas as possible
+        tol = 0.005
     best = int(pick[np.argmax(score[pick])])
     kept = False
     if hint is not None:
         h = int(np.argmin(np.abs(cand - hint % L)))
-        if h in set(pick.tolist()) and score[h] >= score[best] - 0.005:
+        if h in set(pick.tolist()) and score[h] >= score[best] - tol:
             best, kept = h, True
     return StartChoice(float(cand[best]), tuple(map(float, pts[best])), float(gap[best]), float(cdist[best]),
-                       bool(ok[best]), kept or locked, float(end[best]))
+                       bool(ok[best]), kept or locked, float(end[best]), float(sup[best]),
+                       float(cost[best]), float(zone.target))

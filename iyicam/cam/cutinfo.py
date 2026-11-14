@@ -95,6 +95,15 @@ def explain(cut: dict) -> dict:
             lines.append("Start point set by hand")
         if "held" in cut and not cut.get("locked"):
             lines.append(f"The last stretch is {held_word(cut['held'])} by the material around it")
+        if cut.get("zone") is not None and not cut.get("locked"):
+            z = cut["zone"]
+            lines.append("Closes in its closing zone (just above the corner of the sweep)" if z <= 3.0 else
+                         f"Closes {z:.0f} mm along the cut from its closing zone, where the sheet is held better")
+        if cut.get("support") is not None and not cut.get("locked"):
+            sup = cut["support"]
+            lines.append("The sheet beyond the closing stretch is still there" if sup >= 0.99 else
+                         f"The sheet beyond the closing stretch is {sup * 100:.0f} % still there "
+                         "(neighbours are cut already)")
         if cut.get("corner") is not None and math.isfinite(cut["corner"]):
             lines.append(f"{cut['corner']:.1f} mm along the cut from the nearest corner")
         gap = cut.get("gap")

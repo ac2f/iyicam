@@ -415,7 +415,9 @@ def test_cuts_close_on_the_held_side_just_off_the_corner(strategy, direction, si
         assert (not c["loop"].is_ccw()) == clockwise
         got, dist_ = edge_of(c["close"], bbs[c["key"]])
         assert got == side, (c["key"], c["close"])
-        assert dist_[corner] == pytest.approx(TOOL_R, abs=0.3)  # "a little above the corner", not on it
+        # "a little above the corner", not on it: at least the corner distance, and not further than a
+        # fifth of the side (the 8 mm rows are tight: the plunge moves up a little for room round it)
+        assert TOOL_R - 0.3 <= dist_[corner] <= 0.2 * 50, (c["key"], dist_)
 
 
 def l_shape(x, y):
@@ -441,7 +443,9 @@ def test_strips_and_letters_close_just_above_the_bottom_right_corner():
         corner = max(o.contours[0].flatten(0.1), key=lambda q: q[0] - q[1])
         x, y = c["close"]
         assert x == pytest.approx(corner[0] + TOOL_R, abs=0.05), o.name
-        assert y == pytest.approx(corner[1] + TOOL_R, abs=0.3)  # on the right side, 3 mm above the corner
+        # on the right side, 5 % of the side above the corner (at least the corner distance)
+        h = o.bbox().height
+        assert y - corner[1] == pytest.approx(max(TOOL_R, 0.05 * (h + 2 * TOOL_R)), abs=0.6), o.name
 
 
 def test_the_stretch_cut_last_faces_material_still_in_place():

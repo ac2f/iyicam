@@ -5,7 +5,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 
 from ..core import arcfit, clip, vectorops
-from ..core.geom import Arc, Contour, Line, Pt, add, dist, mul, perp, sub, unit
+from ..core.geom import Arc, Contour, Line, Pt, add, dist, mul, perp, point_in_polygon, polygon_area, sub, unit
 from ..core.params import Param
 from ..core.plate import Plate
 from . import sequence as seq
@@ -13,7 +13,7 @@ from .builder import MoveBuilder
 from .moves import Toolpath
 from .operation import OpContext, Operation, depth_levels, depth_params, final_depth, stepdown
 from .pathutil import PathWalker, emit_profile, machinable, nearest_on_polys, pl_max_breaks
-from .startpoints import Machined, choose_start, shape_kind
+from .startpoints import Machined, choose_start
 
 NEG_INF = -1e9
 
@@ -174,27 +174,32 @@ class ProfileOp(Operation):
         through = final >= ctx.thickness - 1e-6
         kerf_r = max(self._tool_r, 0.05)
         src = dict(sources)
+        locked = {f"{o.id}:{i}" for o in ctx.objects for i in o.locked_starts}
+        smart = cfg["smart_starts"] or ctx.force_smart
         sitems = []
+        mains: dict = {}            # the loop that stands for the vector: it sets the start point of the vector
         for key, its in groups.items():
             closed = its[0].contour.closed
             loops = [it.contour.flatten(tol * 4) for it in its if not it.finish]
             kerf = clip.offset_lines(loops, kerf_r, closed=closed) if loops else None
             held = v["tabs"] and any(self._tabs(PathWalker(it.contour.segs, True), final, self._tool_r) is not None
                                      for it in its if closed)
+            main = max((it for it in its if not it.finish), default=None,
+                       key=lambda it: abs(polygon_area(it.contour.flatten(tol * 4)))) if closed else None
+            mains[key] = main
             sitems.append(seq.SeqItem(key, src[key], frees=closed and through and not held, kerf=kerf,
-                                      solid=self._solids.get(key)))
+                                      solid=self._solids.get(key), loop=main.contour if main else None,
+                                      radius=kerf_r, fixed=src[key].start if key in locked else None))
         if through and v["finish_pass"] and v["side"] != "on" and not v["tabs"]:
             ctx.warn("The finish pass runs along parts the roughing pass has already cut free: add tabs")
         sheet = Plate.of(ctx.sheet)
         home = ctx.material.home[:2]
-        order, notes = seq.sequence(sitems, cfg, home, sheet)
+        order, notes = seq.sequence(sitems, cfg, home, sheet, zones=bool(cfg["smart_starts"]))  # (not for 'optimise now' once)
         for n in notes:
             ctx.warn(n)
         ctx.order = order
 
         # machine them, choosing where each closed cut starts
-        locked = {f"{o.id}:{i}" for o in ctx.objects for i in o.locked_starts}
-        smart = cfg["smart_starts"] or ctx.force_smart
         machined = Machined()  # what is machined so far: start points keep clear of it
         track = smart or bool(locked)
         if track:
@@ -203,17 +208,22 @@ class ProfileOp(Operation):
         mb = MoveBuilder(ctx.safe_z, ctx.clearance, tool.feed_rate, tool.plunge_rate, surface)
         cuts = []
         free = {it.key: it.frees for it in sitems}
+        depth = {it.key: it.depth for it in sitems}
         for idx, key in enumerate(order):
             its = groups[key]
-            first = None
-            for it in [it for it in its if not it.finish] + [it for it in its if it.finish]:
+            closes: list[Pt] = []  # where the roughing loops of this vector close (a finish pass follows its own)
+            rough = self._inside_first([it for it in its if not it.finish], tol)
+            for it, nested in rough + [(it, False) for it in its if it.finish]:
                 c = it.contour
                 info = {"key": key, "index": idx, "closed": c.closed, "finish": it.finish, "frees": free[key]}
                 if c.closed:
                     n = 1 if it.finish else len(levels)
+                    first = min(closes, key=lambda q: c.nearest(q)[3], default=None) if it.finish else None
                     c, close = self._place_start(ctx, it, c, mb, machined, cfg, r, key in locked, smart, first,
-                                                 info, n)
-                    first = first or close
+                                                 info, n, inner=bool(depth.get(key, 0) % 2) != nested,
+                                                 primary=it is mains.get(key) or it.finish)
+                    if not it.finish:
+                        closes.append(close)
                     info["close"] = close
                 info["start"] = c.start
                 info["path"] = c                  # what the tool walks (its direction is the cutting direction)
@@ -238,6 +248,21 @@ class ProfileOp(Operation):
         tp = self.make_toolpath(ctx, mb.finish())
         tp.cuts = cuts
         return [tp]
+
+    @staticmethod
+    def _inside_first(loops: list, tol: float) -> list[tuple["CutItem", bool]]:
+        """The loops of one vector, those lying inside another loop of it first (a slot or a counter that the
+        outside cut cannot enter leaves a loop of scrap inside the part: it is cut before the outline, not
+        after it has set the part loose). ``(loop, whether it lies at an odd depth)``."""
+        if len(loops) < 2:
+            return [(lp, False) for lp in loops]
+        polys = [lp.contour.flatten(tol * 4) for lp in loops]
+        depth = []
+        for i, lp in enumerate(loops):
+            q = lp.contour.start
+            depth.append(sum(1 for j, o in enumerate(polys) if j != i and point_in_polygon(q, o)))
+        order = sorted(range(len(loops)), key=lambda i: -depth[i])
+        return [(loops[i], bool(depth[i] % 2)) for i in order]
 
     def _items(self, ctx: OpContext, sources: list[tuple[str, Contour]], r: float, climb: bool = True,
                clockwise: bool | None = None) -> list[CutItem]:
@@ -299,7 +324,7 @@ class ProfileOp(Operation):
 
     def _place_start(self, ctx: OpContext, it: CutItem, c: Contour, mb: MoveBuilder, machined: Machined,
                      cfg: dict, r: float, locked: bool, smart: bool, first: Pt | None, info: dict,
-                     passes: int) -> tuple[Contour, Pt]:
+                     passes: int, inner: bool = False, primary: bool = True) -> tuple[Contour, Pt]:
         """Rotate the loop ``c`` to where the tool starts and return where the cut closes.
 
         The vector start point marks where the cut closes: that is what holds the part
@@ -316,18 +341,19 @@ class ProfileOp(Operation):
 
         if first is not None:  # the finish pass closes where its roughing pass closed
             s = at(first)
-        elif smart or locked:
-            hint = at(it.source.start)
+        elif smart or (locked and primary):
+            hint = at(it.source.start) if primary else None   # (the start of the vector is its main loop's)
             ch = choose_start(walker, r, self._entry_fn(walker, it), machined, pos, hint,
                               cfg["start_margin"], cfg["corner_distance"], locked=locked or not smart,
                               hold=seq.hold_direction(cfg["strategy"], it.source.bbox().center, self._sheet),
-                              kind=shape_kind(it.source), sheet=self._sheet, shift=shift)
+                              sheet=self._sheet, shift=shift, inner=inner)
             s = ch.s
-            info.update(gap=ch.gap, ok=ch.ok, locked=locked, corner=ch.corner, held=ch.held, kept=ch.kept)
+            info.update(gap=ch.gap, ok=ch.ok, locked=locked, corner=ch.corner, held=ch.held, kept=ch.kept,
+                        support=ch.support, zone=ch.zone)
             if not ch.ok:
                 ctx.warn("Some cuts have no start point clear of machined areas and corners"
                          if not locked else "A start point set by hand is close to machined areas or a corner")
-            if smart and not locked and ctx.start_updates is not None:
+            if smart and not locked and primary and ctx.start_updates is not None:
                 q = it.source.nearest(walker.point_at(s))[2]
                 if dist(q, it.source.start) > 1e-3:
                     ctx.start_updates[it.key] = q

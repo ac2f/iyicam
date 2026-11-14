@@ -28,6 +28,8 @@ import numpy as np
 
 from ..core import clip
 from ..core.geom import BBox, Contour, Pt, dist, point_in_polygon, polygon_area
+from .pathutil import PathWalker
+from .startpoints import closing_zone, corners, sample
 
 STRATEGIES: list[tuple[str, str]] = [
     ("smart", "Smart: shortest route (optimised)"),
@@ -165,6 +167,9 @@ class SeqItem:
     solid: list | None = None    # part material this cut leaves (outline minus holes), if known
     parent: str | None = None    # innermost closed item around this one
     depth: int = 0
+    loop: Contour | None = None  # the loop the tool walks, in cutting direction (where the cut closes is judged on it)
+    radius: float = 0.0          # tool radius of that loop
+    fixed: Pt | None = None      # where its cut closes when that is set by hand and kept
     bbox: BBox = field(init=False)
     poly: list = field(init=False)
     area: float = field(init=False)
@@ -443,19 +448,39 @@ def descendants(key: str, items: dict[str, SeqItem]) -> set[str]:
 
 
 def sequence(items: list[SeqItem], cfg: dict, pos: Pt = (0.0, 0.0),
-             sheet: BBox | None = None) -> tuple[list[str], list[str]]:
+             sheet: BBox | None = None, zones: bool = False) -> tuple[list[str], list[str]]:
     """The cutting order of ``items`` for the settings ``cfg`` and notes for the user.
 
     Automatic: the strategy decides. Frozen: the stored order is kept, new items
     follow it in strategy order. Either way inner items come first and, when cut
     areas touch, the geometric support check has the last word.
+
+    With ``zones`` (the start points are placed by the program) an automatic order is also made to
+    respect the closing zones: a cut is made before the neighbours that lie next to the place where it
+    closes, so that it closes held by sheet that is still there (:func:`apply_zones`).
     """
     s = settings(cfg)
     by_key = {it.key: it for it in items}
     containment(items)
     notes: list[str] = []
+    islands = island_constraints(items, sheet)
+
+    def settle(order: list[str]) -> tuple[list[str], bool, list[str]]:
+        order, changed = repair(order, by_key)
+        order, moved = apply_islands(order, islands, by_key)
+        return order, changed, moved
+
     if s["auto_order"] or not s["order"]:
         order = order_items(items, s["strategy"], s["grouping"], pos, s["band"], sheet)
+        if zones and s["strategy"] not in POLICY_STRATEGIES:
+            smart = s["strategy"] == "smart"    # (a route not made by sweeping can close rings of scrap in many ways)
+            if not smart or len(items) <= REPLAY_LIMIT:
+                zoned = apply_zones(order, zone_blockers(items, s, sheet), by_key)
+                if zoned != order:
+                    zoned, _, _ = settle(zoned)
+                    if smart and verify_support(zoned, by_key, sheet):    # replayed: never a cut in loose scrap
+                        zoned = order
+                    order = zoned
     else:
         order = list(dict.fromkeys(k for k in s["order"] if k in by_key))
         known = set(order)
@@ -463,10 +488,9 @@ def sequence(items: list[SeqItem], cfg: dict, pos: Pt = (0.0, 0.0),
         if rest:
             last = by_key[order[-1]].entry(pos)[1] if order else pos
             order += order_items(rest, s["strategy"], s["grouping"], last, s["band"], sheet)
-    order, changed = repair(order, by_key)
+    order, changed, moved = settle(order)
     if changed and not s["auto_order"]:
         notes.append("Cut order adjusted: vectors inside others are cut first")
-    order, moved = apply_islands(order, island_constraints(items, sheet), by_key)
     if moved:
         notes.append(f"Cut order adjusted: {len(moved)} cut(s) moved forward, they lie in scrap that the "
                      "cuts around them set free")
@@ -474,6 +498,217 @@ def sequence(items: list[SeqItem], cfg: dict, pos: Pt = (0.0, 0.0),
     if bad:
         notes.append(f"{len(bad)} cut(s) run into neighbouring parts: the parts are closer than the tool allows")
     return order, notes
+
+
+# ---------------------------------------------------------------------------
+# closing zones
+# ---------------------------------------------------------------------------
+
+REPLAY_LIMIT = 40       # a zone order of the smart strategy is replayed (:func:`verify_support`) up to this many cuts, else not made
+POLICY_STRATEGIES = ('small_first', 'centre_out', 'edges_in')   # an order with a purpose of its own: left as it is
+ZONE_RINGS = (1.5, 5.0)     # how far beyond the cut the material has to be there (the two rings next to it)
+
+
+def zone_blockers(items: list[SeqItem], cfg: dict, sheet: BBox | None = None) -> dict[str, set[str]]:
+    """``{item key: keys of the items whose cut areas lie next to where its cut closes}``.
+
+    A cut closes in its closing zone (:func:`startpoints.closing_zone`: a little above the bottom right
+    corner for a sweep from bottom left to top right). What that stretch faces, and the stretch cut last
+    before it, has to be sheet that is still there. The items listed are the ones that would take that
+    away if they were cut first; the cut should be made before them. Only outlines are looked at: the
+    inner cuts of a part are made while it is whole.
+    """
+    cand = [it for it in items if it.loop is not None and it.closed and it.frees and it.depth % 2 == 0
+            and it.radius > 0]
+    kerfed = [it for it in items if it.kerf]
+    if not cand or not kerfed:
+        return {}
+    boxes = _bboxes([it.kerf for it in kerfed])
+    by_key = {it.key: it for it in items}
+    out: dict[str, set[str]] = {}
+    for it in cand:
+        loop = it.loop
+        walker = PathWalker(loop.segs, True)
+        L = walker.length
+        if L <= 1e-6:
+            continue
+        r = it.radius
+        corner = cfg.get("corner_distance") or max(2.0, r)
+        cw = not loop.is_ccw()
+        hold = hold_direction(cfg["strategy"], it.center, sheet)
+        zone = closing_zone(walker, hold, cw, corner, corners(walker, tight=2 * r + 1.0))
+        target = zone.target
+        if it.fixed is not None:
+            i, t, _, _ = loop.nearest(it.fixed)
+            target = walker.cum[i] + t * (walker.cum[i + 1] - walker.cum[i])
+        bridge = min(L / 3, max(6 * r, 0.1 * L))
+        span = bridge + corner                      # the stretch cut last, then the close itself
+        m = int(max(8, min(40, span / 2.0)))
+        s_probe = (target - bridge + np.arange(m + 1) * span / m) % L
+        P, T = sample(walker, s_probe)
+        N = np.c_[-T[:, 1], T[:, 0]] if cw else np.c_[T[:, 1], -T[:, 0]]   # away from what the cut sets free
+        Q = np.concatenate([P + N * (r + d) for d in ZONE_RINGS])
+        near_close = np.tile(np.abs(np.arange(m + 1) * span / m - bridge) <= corner, len(ZONE_RINGS))
+        lo, hi = Q.min(axis=0), Q.max(axis=0)
+        anc = ancestors(it, by_key) | descendants(it.key, by_key)
+        blockers: set[str] = set()
+        for j in _near(boxes, (*lo, *hi), 0.01):
+            o = kerfed[j]
+            if o is it or o.key in anc:
+                continue
+            hit = clip.region_mask(Q, o.kerf)
+            if hit[near_close].any() or hit.mean() >= 0.1:
+                blockers.add(o.key)
+        if blockers:
+            out[it.key] = blockers
+    return out
+
+
+def apply_zones(order: list[str], blockers: dict[str, set[str]], items: dict[str, SeqItem]) -> list[str]:
+    """Bring every cut in front of the neighbours that would be cut away next to its closing zone.
+
+    The cut is pulled forward to just before the first of them (with what has to come before it: the
+    inner cuts of the part and the cuts that in turn want to come before it), so the sweep stays as it
+    was and only the neighbours trade places. When two cuts want to come before each other the
+    order the strategy made is kept for them.
+
+    A cut that ends up with more neighbours cut before it than it had is checked (:func:`_enclosed`): if
+    the cuts around it would now close a ring of scrap round it, the cuts that were brought forward in
+    front of it stay where they were, so no cut is ever made in loose scrap.
+    """
+    old = {k: i for i, k in enumerate(order)}
+    edges = _acyclic({a: set(bs) for a, bs in blockers.items() if bs}, old)
+    if not edges:
+        return order
+    near = _neighbours(order, items)
+    for _ in range(4):
+        out = _pull(order, edges, items)
+        if out == order:
+            return order
+        new = {k: i for i, k in enumerate(out)}
+        gained: dict[str, set[str]] = {}
+        for k in out:      # neighbours that are now cut before it and used to come after it
+            g = {n for n in near.get(k, ()) if new[n] < new[k] and old[n] > old[k]}
+            if g:
+                gained[k] = g
+        bad = {k: g for k, g in gained.items()
+               if _enclosed(items[k], [items[x] for x in out[:new[k]]])}
+        if not bad:
+            return out
+        culprits = set().union(*bad.values())
+        for a in list(edges):      # the cuts that were brought forward in front of it
+            if a in culprits:
+                del edges[a]
+        if not edges:
+            break
+    return order
+
+
+def _acyclic(edges: dict[str, set[str]], pos: dict[str, int]) -> dict[str, set[str]]:
+    """The wishes "a before b" that can all be had at once. When some contradict each other (a wants to be
+    before b, b before a) the ones the strategy's order already fulfils win, then the smallest changes."""
+    wishes = sorted(((a, b) for a, bs in edges.items() for b in bs if a in pos and b in pos),
+                    key=lambda ab: (pos[ab[0]] > pos[ab[1]], abs(pos[ab[0]] - pos[ab[1]])))
+    out: dict[str, set[str]] = defaultdict(set)
+
+    def reaches(src: str, dst: str) -> bool:
+        seen, stack = {src}, [src]
+        while stack:
+            for nxt in out.get(stack.pop(), ()):
+                if nxt == dst:
+                    return True
+                if nxt not in seen:
+                    seen.add(nxt)
+                    stack.append(nxt)
+        return False
+
+    for a, b in wishes:
+        if a != b and not reaches(b, a):
+            out[a].add(b)
+    return dict(out)
+
+
+def _pull(order: list[str], edges: dict[str, set[str]], items: dict[str, SeqItem]) -> list[str]:
+    """``order`` with every owner placed before the items it wants to precede (stable otherwise)."""
+    owners: dict[str, list[str]] = defaultdict(list)
+    for a, bs in edges.items():
+        for b in bs:
+            owners[b].append(a)
+    pos = {k: i for i, k in enumerate(order)}
+    kids: dict[str, list[str]] = defaultdict(list)
+    for k in order:
+        p = items[k].parent
+        if p is not None and p in items:
+            kids[p].append(k)
+    out: list[str] = []
+    placed: set[str] = set()
+    active: set[str] = set()
+
+    def place(k: str) -> None:
+        if k in placed or k in active:
+            return
+        active.add(k)
+        for c in kids.get(k, []):        # the inner cuts first
+            place(c)
+        for a in sorted(owners.get(k, []), key=lambda x: pos.get(x, 0)):   # who wants to be cut before this one
+            place(a)
+        active.discard(k)
+        placed.add(k)
+        out.append(k)
+
+    for k in order:
+        place(k)
+    return out
+
+
+NEIGHBOUR = 12.0      # cut areas this close belong to neighbours (they share the scrap between the parts)
+
+
+def _neighbours(order: list[str], items: dict[str, SeqItem]) -> dict[str, set[str]]:
+    keys = [k for k in order if items[k].kerf]
+    boxes = _bboxes([items[k].kerf for k in keys])
+    out: dict[str, set[str]] = {}
+    for i, k in enumerate(keys):
+        bb = tuple(boxes[i])
+        near = _near(boxes, (bb[0] - NEIGHBOUR, bb[1] - NEIGHBOUR, bb[2] + NEIGHBOUR, bb[3] + NEIGHBOUR), 0.0)
+        out[k] = {keys[j] for j in near if j != i}
+    return out
+
+
+def _enclosed(it: SeqItem, earlier: list[SeqItem], reach: float = 30.0) -> bool:
+    """Whether ``it`` would be cut in scrap the ``earlier`` cuts around it have set loose.
+
+    Looks at a window ``reach`` round the cut: material in it that does not reach the edge of the
+    window (cut off from the rest of the sheet by the cut areas inside the window) is loose.
+    """
+    if not it.kerf:
+        return False
+    pts = np.asarray([p for poly in it.kerf for p in poly])
+    lo, hi = pts.min(axis=0) - reach, pts.max(axis=0) + reach
+    box = (lo[0], lo[1], hi[0], hi[1])
+    near = [e for e in earlier if e.kerf and e is not it and e.frees]
+    if not near:
+        return False
+    eb = _bboxes([e.kerf for e in near])
+    cuts = [p for j in _near(eb, box, 0.0) for p in near[j].kerf]
+    if not cuts:
+        return False
+    cut = clip.union(cuts)
+    rect = [[(lo[0], lo[1]), (hi[0], lo[1]), (hi[0], hi[1]), (lo[0], hi[1])]]
+    loose: list = []
+    for outer, holes in clip.polytree(clip.boolean(rect, cut, "difference")):
+        a = np.asarray(outer)
+        if (a[:, 0].min() > lo[0] + 1.0 and a[:, 0].max() < hi[0] - 1.0
+                and a[:, 1].min() > lo[1] + 1.0 and a[:, 1].max() < hi[1] - 1.0):
+            loose += [outer] + holes
+    if not loose:
+        return False
+    hit = clip.boolean(it.kerf, loose, "intersection")
+    if hit:   # running into another part's material is gouging, not a question of order
+        others = [p for e in near for p in (e.solid or [])]
+        if others:
+            hit = clip.boolean(hit, others, "difference")
+    return abs(clip.area(hit)) > 0.05
 
 
 def manual_from(order: list[str], index: int, picked: list[str]) -> list[str]:

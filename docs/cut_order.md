@@ -177,32 +177,34 @@ order on the drawing or moving a row freezes the order.
 
 A closed cut ends where it starts: the stretch just before the start point is
 cut last and is all that holds the part (or the scrap of a hole) at the end. The
-start point of a vector therefore marks **where its cut closes**, and smart start
-points put it where the part stays held best until the very last moment:
+start point of a vector therefore marks **where its cut closes**. Smart start
+points put it in the **closing zone** and where the sheet beyond it is still there:
 
-* **Hold direction.** The sheet is held most firmly where the sweep has not
-  been yet: bottom left → top right is held from the **right and top**, bottom
-  right → top left from the left and top, top left → bottom right from the right
-  and bottom, top right → bottom left from the left and bottom (zig-zag sweeps:
-  ahead of the rows / columns; centre outwards / edges inwards: away from /
-  towards the centre; other strategies: as bottom left → top right).
-* **What is really there.** Beyond the width of the cut the material is probed
-  at every point: sides facing neighbours that are already cut, or the sheet edge,
-  hold little; sides facing uncut parts or the solid sheet hold well.
-* **Cut last what holds best.** Over the whole cut, the well held sides are left
-  for the end, and the final stretch lies on the best held side.
-* **Cutting direction counts.** With clockwise outlines (climb milling) a
-  rectangle in a bottom left → top right sweep closes on its right side, a corner
-  distance above the bottom right corner (the cut runs along the bottom, up the
-  left, along the top and finishes down the right side); when its right side faces
-  a neighbour that is already cut, it closes at the top right instead. The mirror
-  images follow for the other sweeps. The direction is part of the cut order, see
-  below.
-* **Long narrow parts and letters** (strips with a length of 2.5 times their
-  width or more, shapes far from convex such as letters, L and T shapes) always
-  close a corner distance before their bottom right corner in a bottom left → top
-  right sweep with clockwise cutting: on the right side, just above the corner.
-  Other sweeps and directions use the mirrored corner.
+* **The closing zone.** For a sweep from **bottom left to top right** and clockwise cutting
+  (climb milling, the default) every part closes on its **right side, 5 % of the side above
+  the bottom right corner** (at least the corner distance, never on the corner; at most 100 mm).
+  The cut runs along the bottom, up the left, along the top and finishes down the right
+  side. The other sweeps are the same turned and mirrored: bottom right → top left closes
+  at the bottom left, top left → bottom right at the top right, top right → bottom left at the
+  top left. Counter-clockwise outlines take the mirrored corner (their last stretch is then
+  still the side facing the sheet that is yet to be cut). A **hole** always takes the corner
+  of the sweep itself (bottom right for bottom left → top right), whatever its direction.
+  Round and irregular parts (letters, circles, L and T shapes) use the extreme point towards
+  that corner the same way, so every part of a sign closes in the same place, however it is
+  nested.
+* **Held by sheet that is still there.** Beyond the cut width the material is probed where the
+  cut closes and along the stretch cut last (the two rings next to the cut): they must not lie
+  in an area an earlier cut has already removed. A side that faces a neighbour already cut,
+  or a ring of loose scrap, holds nothing; the sheet edge holds a little (its rim is still held).
+  When the zone itself is not held, the nearest place along the loop that is, is taken, and
+  when nowhere is, the best held one. So **the start of the 3rd cut is never in the area the
+  2nd cut took away**: every cut uses the fixed part of the sheet.
+* **Room round the plunge.** The tool plunges clear of everything machined before
+  (*start margin*, 1 mm), and where an earlier cut is close (rows 8 mm apart) the start
+  moves up the side until there are about 5 mm of material between the tool and that cut.
+* **Cutting direction counts.** The corner is the one a quarter turn from the hold direction,
+  turned with the cutting direction (see above). The direction is part of the cut order,
+  see below.
 * **Never on the corner, never into a cut.** The close and the plunge keep the
   corner distance (default: the larger of 2 mm and the tool radius) from corners,
   including the small arcs an offset path rolls around a sharp corner, and the
@@ -210,6 +212,10 @@ points put it where the part stays held best until the very last moment:
 * **Ramps and overlap.** Passes without a lead-in go on where the previous one
   ended, so with a ramp or an overlap the tool goes down earlier along the path
   and the last pass still closes at the start point.
+* **Scrap the outside cut cannot enter.** A part with a counter or a slot narrower than the
+  tool (a letter whose counter is joined to the outside by a thin channel) has a second loop of
+  scrap in the same vector; it is cut **before** the outline, while the part is whole, and gets
+  its own smart start point.
 
 The chosen point becomes a **new node** of the vector, wherever it is, and is
 the vector's start from then on. A start point that is about as good as the best
@@ -218,6 +224,29 @@ one stays where it is, so start points do not wander between calculations.
 Start points set with the **Set Start Point** tool are kept by the automatic
 mode (shown as squares while the tool is active); right click one, or use
 **Release Start Points of the Selection**, to hand it back.
+
+### Order and start points work together
+
+With smart start points on, an automatic order is made to suit the closing zones. After the
+strategy has made its order (rows, columns, diagonal, zig-zag, shortest travel, smart route), every
+cut is brought **in front of the neighbours that lie next to its closing zone**: if the part's
+right side, just above its bottom right corner, faces a part the sweep would cut first, the
+part is cut first. It is pulled forward to just before that neighbour (with its own inner pieces
+and with the cuts that in turn want to come before it), so the sweep stays as it was and only the
+neighbours trade places. Cuts that want to come before each other keep the order of the strategy.
+
+* A cut is not brought forward when that would close a ring of cuts round a part that is cut later
+  (that part would be cut loose); the smart route is replayed cut by cut up to 40 cuts (a longer
+  one keeps its route).
+* Strategies with a purpose of their own (**smallest first**, **from the centre outwards**,
+  **from the edges inwards**) and orders fixed by hand are left as they are; their start points
+  still go to the best held place there is.
+
+Measured on the 543 letters of a real sign (nested every way: free with every gravity, in rows
+and columns from every corner, turned in 90° and 15° steps, with 8 mm and 24 mm between the parts),
+with the sweeps and the shortest travel: every outline closes within a few mm of the target of its
+closing zone (5 % above the corner), none closes next to an area cut before it, and no cut is made
+in loose scrap.
 
 ## What a start point change recalculates
 
