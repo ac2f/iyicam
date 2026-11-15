@@ -506,21 +506,23 @@ def sequence(items: list[SeqItem], cfg: dict, pos: Pt = (0.0, 0.0),
                 for b in bs:
                     wait[b].add(a)
         n = len(items)
-        check = n <= REPLAY_LIMIT           # (bigger jobs are not replayed: it takes too long)
+        rp = Replayer(by_key, sheet) if n <= REPLAY_LIMIT else None    # (bigger jobs are not replayed: it takes too long)
 
-        def made(wait_for) -> list[str]:
+        def made(wait_for) -> tuple[list[str], bool, list]:
             order, _, shifted = settle(order_items(items, s["strategy"], s["grouping"], pos, s["band"], sheet, wait_for))
             loose_fixed.extend(shifted)
-            if check:
-                order, fixed = fix_loose(order, by_key, sheet)
-                loose_fixed.extend(fixed)
-            return order
+            if rp is None:
+                return order, False, []
+            order, fixed, snaps = mend_loose(order, by_key, rp)
+            loose_fixed.extend(fixed)
+            return order, bool(snaps) or rp.nothing or rp.slow, snaps
 
-        order = made(wait if route and wait else None)
-        if route and wait and check and not is_supported(order, by_key, sheet):
-            order = made(None)                                            # (the plain route)
-        if zoning and blockers:
-            order = zone_order(order, blockers, by_key, pull_reach(n) if check else 2, settle, sheet if check else None)
+        order, ok, snaps = made(wait if route and wait else None)
+        if route and wait and rp is not None and not ok:
+            order, ok, snaps = made(None)                                 # (the plain route)
+        if zoning and blockers and (rp is None or ok):
+            order = zone_order(order, blockers, by_key, pull_reach(n) if rp is not None else 2, settle,
+                               sheet if rp is not None else None, replayer=rp, snaps=snaps)
     else:
         order = list(dict.fromkeys(k for k in s["order"] if k in by_key))
         known = set(order)
@@ -545,7 +547,7 @@ def sequence(items: list[SeqItem], cfg: dict, pos: Pt = (0.0, 0.0),
 # closing zones
 # ---------------------------------------------------------------------------
 
-REPLAY_LIMIT = 150      # a zone order is replayed (:func:`is_supported`) up to this many cuts; more: only neighbours swap places
+REPLAY_LIMIT = 300      # a zone order is replayed (:func:`is_supported`) up to this many cuts; more: only neighbours swap places
 POLICY_STRATEGIES = ('small_first', 'centre_out', 'edges_in')   # an order with a purpose of its own: left as it is
 ZONE_RINGS = (1.5, 5.0)     # how far beyond the cut the material has to be there (the two rings next to it)
 
@@ -623,16 +625,40 @@ def apply_zones(order: list[str], blockers: dict[str, set[str]], items: dict[str
     return _pull(order, edges, items) if edges else order
 
 
+def touching(kerfs: list[tuple[str, list]], loose: list, grow: float = 0.3) -> list[str]:
+    """Keys of the cut areas ``(key, polygons)`` that touch (or reach into) the loose material ``loose``: only the loose
+    polygons next to a cut area are looked at, the loose material can be hundreds of polygons."""
+    if not loose or not kerfs:
+        return []
+    boxes = _bboxes([[p] for p in loose])
+    out = []
+    for key, polys in kerfs:
+        if not polys:
+            continue
+        a = np.asarray([q for poly in polys for q in poly])
+        lo, hi = a.min(axis=0) - grow, a.max(axis=0) + grow
+        near = _near(boxes, (*lo, *hi), 0.0)
+        if not len(near):
+            continue
+        grown = clip.offset([loose[i] for i in near], grow)
+        if clip.area(clip.boolean(polys, grown, "intersection")) > 1e-3:
+            out.append(key)
+    return out
+
+
 def zone_order(order: list[str], blockers: dict[str, set[str]], items: dict[str, SeqItem], reach: int,
-               settle, sheet: BBox | None = None, tries: int = 24) -> list[str]:
+               settle, sheet: BBox | None = None, tries: int = 24, replayer: Replayer | None = None,
+               snaps: list | None = None) -> list[str]:
     """:func:`apply_zones` that never leaves a cut in loose scrap (with a ``sheet``, the order is replayed).
 
     When the pulls leave a cut in scrap that the cuts around it have set loose, the cut that was brought in
     front of it from behind it and closes the scrap is the cause: it is left where the strategy had it, and
-    the order is made again, until nothing is loose."""
+    the order is made again, until nothing is loose. ``replayer`` and ``snaps`` (the cut areas before every cut
+    of ``order``, see :meth:`Replayer.first_loose`) save replaying what the pulls leave as it was."""
     base = {k: i for i, k in enumerate(order)}
     edges = _acyclic({a: {b for b in bs if base.get(a, 0) - base.get(b, 0) <= reach}
                       for a, bs in blockers.items() if bs}, base)
+    rp = replayer if replayer is not None else (Replayer(items, sheet) if sheet is not None else None)
     for _ in range(tries):
         if not edges:
             return order
@@ -640,9 +666,10 @@ def zone_order(order: list[str], blockers: dict[str, set[str]], items: dict[str,
         if zoned == order:
             return order
         zoned = settle(zoned)[0]
-        if sheet is None:
+        if rp is None:
             return zoned
-        found = first_loose(zoned, items, sheet)
+        d = _first_difference(order, zoned)
+        found = rp.first_loose(zoned, list(snaps[:d + 1]) if snaps else [], d)
         if found is None:
             return zoned
         i, loose = found
@@ -650,9 +677,7 @@ def zone_order(order: list[str], blockers: dict[str, set[str]], items: dict[str,
         new = {k: j for j, k in enumerate(zoned)}
         culprits = {zoned[j] for j in range(i) if base.get(zoned[j], -1) > base.get(x, -1)}   # brought in front of it
         if loose:
-            grown = clip.offset(loose, 0.3)
-            culprits = {k for k in culprits
-                        if items[k].kerf and clip.area(clip.boolean(items[k].kerf, grown, "intersection")) > 1e-3}
+            culprits = set(touching([(k, items[k].kerf) for k in culprits if items[k].kerf], loose))
         if not culprits:
             return order
         last = max(culprits, key=new.get)         # the one that closes the ring: without it the scrap is not loose yet
@@ -901,68 +926,113 @@ def _detached(cut_union: list, frame: _Frame) -> list:
     return out
 
 
-def first_loose(order: list[str], items: dict[str, SeqItem], sheet: BBox | None = None):
-    """``(index, loose paths)`` of the first cut of ``order`` that would run in material earlier cuts have set
-    loose, or ``None``: :func:`verify_support` worked out faster (the cut areas stay integer paths between the
-    cuts: no conversions) and stopping at the first. Sheets of any other shape than a rectangle are judged
-    by :func:`verify_support`, which gives no paths (an empty list)."""
-    seq_ = [items[k] for k in order if k in items]
-    if not any(it.kerf and it.frees for it in seq_):
-        return None                              # (nothing is cut free: nothing can be loose)
-    frame = _frame(seq_, sheet)
-    if frame.inner is not None:
-        bad = verify_support(order, items, sheet)
-        return (bad[0], []) if bad else None
-    f = frame.bb
-    if not all(math.isfinite(v) for v in (f.xmin, f.ymin, f.xmax, f.ymax)):
-        return None                              # (no sheet and no cut areas to go by)
-    base = clip._clean(frame.base)
-    border = round(1.0 * clip.SCALE)
-    lo_x, lo_y = round(f.xmin * clip.SCALE) + border, round(f.ymin * clip.SCALE) + border
-    hi_x, hi_y = round(f.xmax * clip.SCALE) - border, round(f.ymax * clip.SCALE) - border
-    kerf = {it.key: clip._clean(it.kerf) for it in seq_ if it.kerf}
-    solids = {it.key: clip._clean(it.solid) for it in seq_ if it.solid}
-    pc_ = clip.pyclipper
-    union: list = []
-    for i, it in enumerate(seq_):
-        if it.key in kerf and union:
-            pc = clip.Clipper()
-            pc.AddPaths(base, pc_.PT_SUBJECT, True)
-            pc.AddPaths(union, pc_.PT_CLIP, True)
-            tree = pc.Execute2(pc_.CT_DIFFERENCE, pc_.PFT_NONZERO, pc_.PFT_NONZERO)
-            loose: list = []
+def _lean(paths: list, tol: int) -> list:
+    """Integer paths with the points that lie within ``tol`` of the line between their neighbours taken out."""
+    out = []
+    for q in paths:
+        c = clip.pyclipper.CleanPolygon(q, tol)
+        if len(c) >= 3:
+            out.append(c)
+    return out
 
-            def walk(node):
-                for ch in node.Childs:
-                    if not ch.IsHole:
-                        xs = [q[0] for q in ch.Contour]
-                        ys = [q[1] for q in ch.Contour]
-                        if not (min(xs) <= lo_x or max(xs) >= hi_x or min(ys) <= lo_y or max(ys) >= hi_y):
-                            loose.append(ch.Contour)
-                            loose.extend(h.Contour for h in ch.Childs)
-                    for h in ch.Childs:
-                        walk(h)
 
-            walk(tree)
-            if loose:
-                mine = ancestors(it, items)
-                others = [q for o in seq_ if o is not it and o.key in solids and o.key not in mine for q in solids[o.key]]
+class Replayer:
+    """Replays cut orders of one set of items cut by cut and says whether a cut would run in material the earlier
+    cuts have set loose (:func:`verify_support` worked out faster: the cut areas stay integer paths between the
+    cuts, simplified by 0.05 mm). It remembers the cut areas before every cut, so an order that only changes late
+    in the sequence is replayed from there. Sheets of any other shape than a rectangle are judged by
+    :func:`verify_support`, which gives no paths of the loose material."""
+
+    def __init__(self, items: dict[str, SeqItem], sheet: BBox | None = None):
+        self.items, self.sheet = items, sheet
+        all_ = list(items.values())
+        self.nothing = not any(it.kerf and it.frees for it in all_)    # (nothing is cut free: nothing can be loose)
+        self.slow = False
+        if self.nothing:
+            return
+        frame = _frame(all_, sheet)
+        if frame.inner is not None:
+            self.slow = True
+            return
+        f = frame.bb
+        if not all(math.isfinite(v) for v in (f.xmin, f.ymin, f.xmax, f.ymax)):
+            self.nothing = True                    # (no sheet and no cut areas to go by)
+            return
+        self.base = clip._clean(frame.base)
+        border = round(1.0 * clip.SCALE)
+        self.lo = (round(f.xmin * clip.SCALE) + border, round(f.ymin * clip.SCALE) + border)
+        self.hi = (round(f.xmax * clip.SCALE) - border, round(f.ymax * clip.SCALE) - border)
+        tol = round(0.05 * clip.SCALE)
+        self.kerf = {it.key: _lean(clip._clean(it.kerf), tol) for it in all_ if it.kerf}
+        self.solids = {it.key: _lean(clip._clean(it.solid), tol) for it in all_ if it.solid}
+
+    def first_loose(self, order: list[str], snaps: list | None = None, valid: int = 0):
+        """``(index, loose paths)`` of the first cut of ``order`` that would run in loose material, or ``None``.
+
+        ``snaps`` (a list, filled in) keeps the cut areas before every cut; those up to index ``valid`` are
+        taken as they are (the order is the same up to there), the rest is worked out again."""
+        if self.nothing:
+            return None
+        if self.slow:
+            bad = verify_support(order, self.items, self.sheet)
+            return (bad[0], []) if bad else None
+        pc_ = clip.pyclipper
+        snaps = snaps if snaps is not None else []
+        if not snaps:
+            snaps.append([])
+            valid = 0
+        valid = min(valid, len(snaps) - 1)
+        del snaps[valid + 1:]
+        union = snaps[valid]
+        lo_x, lo_y = self.lo
+        hi_x, hi_y = self.hi
+        for i in range(valid, len(order)):
+            if i > valid:
+                snaps.append(union)
+            it = self.items[order[i]]
+            if it.key in self.kerf and union:
                 pc = clip.Clipper()
-                pc.AddPaths(kerf[it.key], pc_.PT_SUBJECT, True)
-                pc.AddPaths(loose, pc_.PT_CLIP, True)
-                hit = pc.Execute(pc_.CT_INTERSECTION, pc_.PFT_NONZERO, pc_.PFT_NONZERO)
-                if others and hit:
+                pc.AddPaths(self.base, pc_.PT_SUBJECT, True)
+                pc.AddPaths(union, pc_.PT_CLIP, True)
+                tree = pc.Execute2(pc_.CT_DIFFERENCE, pc_.PFT_NONZERO, pc_.PFT_NONZERO)
+                loose: list = []
+
+                def walk(node):
+                    for ch in node.Childs:
+                        if not ch.IsHole:
+                            xs = [q[0] for q in ch.Contour]
+                            ys = [q[1] for q in ch.Contour]
+                            if not (min(xs) <= lo_x or max(xs) >= hi_x or min(ys) <= lo_y or max(ys) >= hi_y):
+                                loose.append(ch.Contour)
+                                loose.extend(h.Contour for h in ch.Childs)
+                        for h in ch.Childs:
+                            walk(h)
+
+                walk(tree)
+                if loose:
+                    mine = ancestors(it, self.items)
+                    others = [q for k, paths in self.solids.items() if k != it.key and k not in mine for q in paths]
                     pc = clip.Clipper()
-                    pc.AddPaths(hit, pc_.PT_SUBJECT, True)
-                    pc.AddPaths(others, pc_.PT_CLIP, True)
-                    hit = pc.Execute(pc_.CT_DIFFERENCE, pc_.PFT_NONZERO, pc_.PFT_NONZERO)
-                if abs(sum(pc_.Area(q) for q in hit)) / (clip.SCALE * clip.SCALE) > 0.05:
-                    return i, [clip.from_int(q) for q in loose]
-        if it.frees and it.key in kerf:
-            pc = clip.Clipper()
-            pc.AddPaths(union + kerf[it.key], pc_.PT_SUBJECT, True)
-            union = pc.Execute(pc_.CT_UNION, pc_.PFT_NONZERO, pc_.PFT_NONZERO)
-    return None
+                    pc.AddPaths(self.kerf[it.key], pc_.PT_SUBJECT, True)
+                    pc.AddPaths(loose, pc_.PT_CLIP, True)
+                    hit = pc.Execute(pc_.CT_INTERSECTION, pc_.PFT_NONZERO, pc_.PFT_NONZERO)
+                    if others and hit:
+                        pc = clip.Clipper()
+                        pc.AddPaths(hit, pc_.PT_SUBJECT, True)
+                        pc.AddPaths(others, pc_.PT_CLIP, True)
+                        hit = pc.Execute(pc_.CT_DIFFERENCE, pc_.PFT_NONZERO, pc_.PFT_NONZERO)
+                    if abs(sum(pc_.Area(q) for q in hit)) / (clip.SCALE * clip.SCALE) > 0.05:
+                        return i, [clip.from_int(q) for q in loose]
+            if it.frees and it.key in self.kerf:
+                pc = clip.Clipper()
+                pc.AddPaths(union + self.kerf[it.key], pc_.PT_SUBJECT, True)
+                union = pc.Execute(pc_.CT_UNION, pc_.PFT_NONZERO, pc_.PFT_NONZERO)
+        return None
+
+
+def first_loose(order: list[str], items: dict[str, SeqItem], sheet: BBox | None = None):
+    """``(index, loose paths)`` of the first cut of ``order`` in loose material, or ``None`` (see :class:`Replayer`)."""
+    return Replayer(items, sheet).first_loose([k for k in order if k in items])
 
 
 def is_supported(order: list[str], items: dict[str, SeqItem], sheet: BBox | None = None) -> bool:
@@ -970,29 +1040,33 @@ def is_supported(order: list[str], items: dict[str, SeqItem], sheet: BBox | None
     return first_loose(order, items, sheet) is None
 
 
-def fix_loose(order: list[str], items: dict[str, SeqItem], sheet: BBox | None = None,
-              tries: int = 30) -> tuple[list[str], list[str]]:
-    """``(order, keys moved)``: a cut that would run in scrap earlier cuts have set loose is brought in front of
-    the last of the cuts that close the scrap round it (with what lies inside it), until nothing is loose.
-    Gives up (and keeps what it has) when a cut cannot be helped."""
+def _first_difference(a: list[str], b: list[str]) -> int:
+    for i, (x, y) in enumerate(zip(a, b)):
+        if x != y:
+            return i
+    return min(len(a), len(b))
+
+
+def mend_loose(order: list[str], items: dict[str, SeqItem], rp: Replayer, tries: int = 30
+               ) -> tuple[list[str], list[str], list]:
+    """``(order, keys moved, cut areas before every cut)``: a cut that would run in scrap earlier cuts have set loose
+    is brought in front of the last of the cuts that close the scrap round it (with what lies inside it), until
+    nothing is loose. Gives up (and keeps what it has) when a cut cannot be helped: then the third part is empty."""
     moved: list[str] = []
+    snaps: list = []
+    valid = 0
     for _ in range(tries):
-        found = first_loose(order, items, sheet)
+        found = rp.first_loose(order, snaps, valid)
         if found is None:
-            break
+            return order, moved, snaps
         i, loose = found
         x = order[i]
         block_keys = {x} | descendants(x, items)
-        walls = []
-        if loose:
-            grown = clip.offset(loose, 0.3)
-            for j in range(i):
-                k = items[order[j]]
-                if order[j] not in block_keys and k.kerf and clip.area(clip.boolean(k.kerf, grown, "intersection")) > 1e-3:
-                    walls.append(j)
+        walls = set(touching([(order[j], items[order[j]].kerf) for j in range(i)
+                              if order[j] not in block_keys and items[order[j]].kerf], loose))
         if not walls:
             break
-        last = max(walls)
+        last = max(j for j in range(i) if order[j] in walls)
         block = [k for k in order if k in block_keys]
         rest = [k for k in order if k not in block_keys]
         at = rest.index(order[last])
@@ -1000,9 +1074,17 @@ def fix_loose(order: list[str], items: dict[str, SeqItem], sheet: BBox | None = 
         new, _ = repair(new, items)
         if new == order:
             break
+        valid = _first_difference(order, new)
         order = new
         moved.append(x)
-    return order, moved
+    return order, moved, []
+
+
+def fix_loose(order: list[str], items: dict[str, SeqItem], sheet: BBox | None = None,
+              tries: int = 30) -> tuple[list[str], list[str]]:
+    """``(order, keys moved)`` with nothing loose where that can be had (see :func:`mend_loose`)."""
+    new, moved, _ = mend_loose(order, items, Replayer(items, sheet), tries)
+    return new, moved
 
 
 def verify_support(order: list[str], items: dict[str, SeqItem], sheet: BBox | None = None) -> list[int]:

@@ -109,7 +109,7 @@ Whatever strategy or manual order is chosen:
    vector: holes before their outline, a part nested in a hole before the hole,
    engravings before the part around them. A manual order that breaks this rule
    is corrected and the toolpath shows a warning.
-2. **No cut in loose scrap.** The order is replayed cut by cut (up to 150 cuts on a sheet): a cut that
+2. **No cut in loose scrap.** The order is replayed cut by cut (up to 300 cuts on a sheet): a cut that
    would run in material the cuts before it have already set loose is brought in front of the cut
    that closes the scrap round it. Also, when parts are so close that their cuts overlap,
    several cuts can together close a ring of scrap. All cut areas are removed
@@ -243,7 +243,7 @@ With smart start points on, an automatic order is made to suit the closing zones
   would take the sheet away from the closing zone of a cut waits until that cut is made, as long as there is
   another cut to go to.
 * Cuts that want to come before each other keep the order of the strategy.
-* **Every order is replayed** (up to 150 cuts on a sheet): a pull that would leave a cut in loose scrap is
+* **Every order is replayed** (up to 300 cuts on a sheet): a pull that would leave a cut in loose scrap is
   given up (the one that closes the scrap first, then the next one, until nothing is loose), and
   a cut that the strategy's own order leaves in loose scrap goes in front of the cut that closes it.
   Bigger jobs only let neighbours swap places.
