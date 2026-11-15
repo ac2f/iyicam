@@ -227,7 +227,7 @@ def sample(walker: PathWalker, s: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 
 DEFAULT_HOLD = (math.sqrt(0.5), math.sqrt(0.5))  # bottom left -> top right: held from the right and the top
 EDGE_HOLD = 0.6        # beyond the sheet edge there is nothing, but the rim of the sheet is still held
-SUPPORT_MIN = 0.79     # the two rings next to the cut (weights 0.5 + 0.3) must be material
+SUPPORT_COST = 150.0   # mm along the loop that a whole missing support is worth (the two rings next to the cut)
 ZONE_FRACTION = 0.05   # the cut closes this fraction of the side above (or before) the corner
 ZONE_MAX = 100.0       # ... but never further than this from the corner
 COMFORT = 4.0          # free material wanted between the plunging tool and the cuts before it, beyond the margin
@@ -327,7 +327,7 @@ def support(walker: PathWalker, r: float, machined: Machined, hold: Pt | None, s
     else:
         edge = np.full(len(Q), EDGE_HOLD)
     present = np.where(cut, 0.0, np.where(on, 1.0, edge))
-    local = sum(wgt * present[k * n:(k + 1) * n] for k, (_, wgt) in enumerate(rings))
+    local = (0.6 * present[0:n] + 0.4 * present[n:2 * n])      # the two rings next to the cut (a third one is too far to hold it)
     solid = sum(wgt * (~cut & on)[k * n:(k + 1) * n] for k, (_, wgt) in enumerate(rings))
     pw = 0.5 if hold is not None else 0.25
     return ss, P, pw * prior + (1 - pw) * solid, cw, local
@@ -406,19 +406,17 @@ def choose_start(walker: PathWalker, r: float, entry: Callable[[float], list[Pt]
     soft = keep + 0.6 * end - 0.02 * travel / (travel.max() + L)           # (the older, physical, taste)
     # room around the plunge: an earlier cut closer than COMFORT costs as much as a stretch along the loop
     cost = zone_cost(zone, cand, L) + COMFORT_WEIGHT * np.clip(margin + COMFORT - gap, 0.0, COMFORT)
-    good = ok & (sup >= SUPPORT_MIN)
-    if good.any():  # in the zone, or as near to it as the sheet allows
-        pick = np.flatnonzero(good)
-        score = -cost / L + 1e-4 * soft
-        tol = max(1.0, 0.1 * zone.delta) / L
-    elif ok.any():  # nowhere is fully supported: the best supported place, the zone decides among equals
+    # what a place costs: the way along the loop to the zone, and every tenth of the sheet beyond the cut that has
+    # already been cut away is worth SUPPORT_COST mm of it (a corner's worth is nothing, a neighbour cut is a lot)
+    total = cost + SUPPORT_COST * (1.0 - np.minimum(sup, 1.0))
+    if ok.any():
         pick = np.flatnonzero(ok)
-        score = np.round(sup, 2) - 0.5 * cost / L + 1e-4 * soft
-        tol = 0.01
+        score = -total / L + 1e-4 * soft
+        tol = max(1.0, 0.1 * zone.delta) / L
     elif (gap >= margin).any():
         pick = np.flatnonzero(gap >= margin)
-        score = np.round(sup, 2) - 0.5 * cost / L + 1e-4 * soft
-        tol = 0.01
+        score = -total / L + 1e-4 * soft
+        tol = max(1.0, 0.1 * zone.delta) / L
     else:
         pick = np.arange(len(cand))
         score = gap  # nothing is clear: get as far from machined areas as possible

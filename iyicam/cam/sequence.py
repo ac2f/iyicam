@@ -621,12 +621,12 @@ def apply_zones(order: list[str], blockers: dict[str, set[str]], items: dict[str
 
 
 def zone_order(order: list[str], blockers: dict[str, set[str]], items: dict[str, SeqItem], reach: int,
-               settle, sheet: BBox | None = None, tries: int = 8) -> list[str]:
+               settle, sheet: BBox | None = None, tries: int = 24) -> list[str]:
     """:func:`apply_zones` that never leaves a cut in loose scrap (with a ``sheet``, the order is replayed).
 
-    When the pulls leave a cut in scrap that the cuts around it have set loose, the cuts that were brought
-    in front of it from behind it are the cause: they are left where the strategy had them, and the order is
-    made again, until nothing is loose."""
+    When the pulls leave a cut in scrap that the cuts around it have set loose, the cut that was brought in
+    front of it from behind it and closes the scrap is the cause: it is left where the strategy had it, and
+    the order is made again, until nothing is loose."""
     base = {k: i for i, k in enumerate(order)}
     edges = _acyclic({a: {b for b in bs if base.get(a, 0) - base.get(b, 0) <= reach}
                       for a, bs in blockers.items() if bs}, base)
@@ -652,7 +652,8 @@ def zone_order(order: list[str], blockers: dict[str, set[str]], items: dict[str,
                         if items[k].kerf and clip.area(clip.boolean(items[k].kerf, grown, "intersection")) > 1e-3}
         if not culprits:
             return order
-        edges = {a: bs for a, bs in edges.items() if a not in culprits}
+        last = max(culprits, key=new.get)         # the one that closes the ring: without it the scrap is not loose yet
+        edges = {a: bs for a, bs in edges.items() if a != last}
     return order
 
 

@@ -109,7 +109,9 @@ Whatever strategy or manual order is chosen:
    vector: holes before their outline, a part nested in a hole before the hole,
    engravings before the part around them. A manual order that breaks this rule
    is corrected and the toolpath shows a warning.
-2. **No cut in loose scrap.** When parts are so close that their cuts overlap,
+2. **No cut in loose scrap.** The order is replayed cut by cut (up to 150 cuts on a sheet): a cut that
+   would run in material the cuts before it have already set loose is brought in front of the cut
+   that closes the scrap round it. Also, when parts are so close that their cuts overlap,
    several cuts can together close a ring of scrap. All cut areas are removed
    from the sheet at once; any piece of material that no longer reaches the
    sheet frame is an *island*. Whatever lies in an island (a small part nested
@@ -147,7 +149,9 @@ toolpath at once. What was chosen last (the strategy too) is remembered and is u
 by the toolpaths made later, also in the next session.
 
 Rows and columns are found automatically (a new row starts where the next part is more
-than half a part size further on) or use a fixed **row / column size**.
+than half a part size further on) or use a fixed **row / column size**. A part is where the sweep
+first reaches it: its corner on the side the sweep starts from (the bottom edge for rows from the
+bottom), so parts standing on one line are one row however tall they are.
 
 ### Cutting direction per strategy
 
@@ -227,26 +231,33 @@ mode (shown as squares while the tool is active); right click one, or use
 
 ### Order and start points work together
 
-With smart start points on, an automatic order is made to suit the closing zones. After the
-strategy has made its order (rows, columns, diagonal, zig-zag, shortest travel, smart route), every
-cut is brought **in front of the neighbours that lie next to its closing zone**: if the part's
-right side, just above its bottom right corner, faces a part the sweep would cut first, the
-part is cut first. It is pulled forward to just before that neighbour (with its own inner pieces
-and with the cuts that in turn want to come before it), so the sweep stays as it was and only the
-neighbours trade places. Cuts that want to come before each other keep the order of the strategy.
+With smart start points on, an automatic order is made to suit the closing zones:
 
-* A cut is not brought forward when that would close a ring of cuts round a part that is cut later
-  (that part would be cut loose); the smart route is replayed cut by cut up to 40 cuts (a longer
-  one keeps its route).
+* **Sweeps** (rows, columns, diagonal, zig-zag): after the strategy has made its order, every cut is brought
+  **in front of the neighbours that lie next to its closing zone**: if the part's right side, just above
+  its bottom right corner, faces a part the sweep would cut first, the part is cut first. It is pulled
+  forward to just before that neighbour (with its own inner pieces and with the cuts that in turn want to
+  come before it), so the sweep stays as it was and only the neighbours trade places. A cut is only pulled
+  past its own neighbourhood in the sweep, never from one row to another.
+* **Route strategies** (shortest travel, smart route): the route is made with the same wish: a neighbour that
+  would take the sheet away from the closing zone of a cut waits until that cut is made, as long as there is
+  another cut to go to.
+* Cuts that want to come before each other keep the order of the strategy.
+* **Every order is replayed** (up to 150 cuts on a sheet): a pull that would leave a cut in loose scrap is
+  given up (the one that closes the scrap first, then the next one, until nothing is loose), and
+  a cut that the strategy's own order leaves in loose scrap goes in front of the cut that closes it.
+  Bigger jobs only let neighbours swap places.
 * Strategies with a purpose of their own (**smallest first**, **from the centre outwards**,
-  **from the edges inwards**) and orders fixed by hand are left as they are; their start points
-  still go to the best held place there is.
+  **from the edges inwards**), orders fixed by hand and the one-time **Optimise now** are left as they are;
+  their start points still go to the best held place there is.
+
+Where a wish cannot be fulfilled (a part packed between big letters that are cut first) the start goes to the
+nearest place along the part that is held, and the cut explanation says how far from the zone it closes.
 
 Measured on the 543 letters of a real sign (nested every way: free with every gravity, in rows
-and columns from every corner, turned in 90° and 15° steps, with 8 mm and 24 mm between the parts),
-with the sweeps and the shortest travel: every outline closes within a few mm of the target of its
-closing zone (5 % above the corner), none closes next to an area cut before it, and no cut is made
-in loose scrap.
+and columns from every corner, turned in 90° and 15° steps, with 8 mm and 24 mm between the parts), each cut
+judged on its own: the cuts that do not close in the zone are the few that are packed between big letters;
+none of them closes next to an area cut before it, and no cut is made in loose scrap.
 
 ## What a start point change recalculates
 
