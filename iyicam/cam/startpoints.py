@@ -226,8 +226,9 @@ def sample(walker: PathWalker, s: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 
 
 DEFAULT_HOLD = (math.sqrt(0.5), math.sqrt(0.5))  # bottom left -> top right: held from the right and the top
-EDGE_HOLD = 0.6        # beyond the sheet edge there is nothing, but the rim of the sheet is still held
-SUPPORT_COST = 150.0   # mm along the loop that a whole missing support is worth (the two rings next to the cut)
+EDGE_HOLD = 1.0        # beyond the sheet edge there is nothing, but the rim of the sheet is still held (as good as sheet)
+SUPPORT_COST = 1000.0  # mm along the loop that a whole missing support is worth: a held place beats a near one
+SUPPORT_OK = 0.97      # what is held for all that counts: the places that are not worse than this are judged by the zone alone
 ZONE_FRACTION = 0.05   # the cut closes this fraction of the side above (or before) the corner
 ZONE_MAX = 100.0       # ... but never further than this from the corner
 COMFORT = 4.0          # free material wanted between the plunging tool and the cuts before it, beyond the margin
@@ -409,7 +410,7 @@ def choose_start(walker: PathWalker, r: float, entry: Callable[[float], list[Pt]
     cost = zone_cost(zone, cand, L) + COMFORT_WEIGHT * np.clip(margin + COMFORT - gap, 0.0, COMFORT)
     # what a place costs: the way along the loop to the zone, and every tenth of the sheet beyond the cut that has
     # already been cut away is worth SUPPORT_COST mm of it (a corner's worth is nothing, a neighbour cut is a lot)
-    total = cost + SUPPORT_COST * (1.0 - np.minimum(sup, 1.0))
+    total = cost + SUPPORT_COST * np.maximum(0.0, SUPPORT_OK - sup)         # (a speck short of whole is as good as whole)
     if ok.any():
         pick = np.flatnonzero(ok)
         score = -total / L + 1e-4 * soft

@@ -29,7 +29,7 @@ import numpy as np
 from ..core import clip
 from ..core.geom import BBox, Contour, Pt, dist, point_in_polygon, polygon_area
 from .pathutil import PathWalker
-from .startpoints import closing_zone, corners, sample
+from .startpoints import EDGE_HOLD, _span_distance, closing_zone, corners, sample
 
 STRATEGIES: list[tuple[str, str]] = [
     ("smart", "Smart: shortest route (optimised)"),
@@ -536,6 +536,12 @@ def sequence(items: list[SeqItem], cfg: dict, pos: Pt = (0.0, 0.0),
         if zoning and blockers and (rp is None or ok):
             order = zone_order(order, blockers, by_key, pull_reach(n) if rp is not None else 2, settle,
                                sheet if rp is not None else None, replayer=rp, snaps=snaps)
+        if zoning and (rp is None or ok):
+            # every cut has to close held by sheet that is still there: whatever is not yet, goes in front of what takes it
+            order, unheld = support_order(order, by_key, SupportMap(items, s, sheet), settle, sheet, rp)
+            if unheld:
+                notes.append(f"{len(unheld)} cut(s) cannot be made to close held by sheet that is still there: "
+                             "parts packed round them are cut before them whatever the order")
     else:
         order = list(dict.fromkeys(k for k in s["order"] if k in by_key))
         known = set(order)
@@ -563,6 +569,158 @@ def sequence(items: list[SeqItem], cfg: dict, pos: Pt = (0.0, 0.0),
 REPLAY_LIMIT = 300      # a zone order is replayed (:func:`is_supported`) up to this many cuts; more: only neighbours swap places
 POLICY_STRATEGIES = ('small_first', 'centre_out', 'edges_in')   # an order with a purpose of its own: left as it is
 ZONE_RINGS = (1.5, 5.0)     # how far beyond the cut the material has to be there (the two rings next to it)
+
+
+FULL_SUPPORT = 0.99    # a cut is held when what is beyond it where it closes is there (all but a speck)
+ZONE_BAND = 8.0        # mm along the loop from the target of the closing zone that still count as closing in it
+ZONE_BAND_FRACTION = 0.08   # ... or this fraction of the part, whichever is more
+
+
+class SupportMap:
+    """Where along its outline every cut could close held by sheet that is still there, and which other cuts would take
+    that sheet away: the places and the cuts are worked out once, then asked for any order.
+
+    The sheet beyond a cut is probed in the two rings next to it (1.5 and 5 mm beyond the cut width) at ``samples``
+    places along the loop; a place holds the cut when the rings are there at it, at its neighbours and along the stretch
+    cut last before it (6 tool radii), the way :func:`startpoints.choose_start` judges it.
+    """
+
+    def __init__(self, items: list[SeqItem], cfg: dict, sheet: BBox | None = None):
+        cand = [it for it in items if it.loop is not None and it.closed and it.frees and it.depth % 2 == 0 and it.radius > 0]
+        kerfed = [it for it in items if it.kerf]
+        boxes = _bboxes([it.kerf for it in kerfed])
+        by_key = {it.key: it for it in items}
+        self.info: dict[str, dict] = {}
+        region = getattr(sheet, "region", None)
+        for it in cand:
+            loop = it.loop
+            walker = PathWalker(loop.segs, True)
+            L = walker.length
+            if L <= 1e-6:
+                continue
+            r = it.radius
+            corner = cfg.get("corner_distance") or max(2.0, r)
+            corner = min(corner, L / 8)
+            S = int(min(360, max(60, L / 2.0)))
+            ss = np.arange(S) * L / S
+            P, T = sample(walker, ss)
+            cw = not loop.is_ccw()
+            N = np.c_[-T[:, 1], T[:, 0]] if cw else np.c_[T[:, 1], -T[:, 0]]
+            spans = corners(walker, tight=2 * r + 1.0)
+            valid = _span_distance(ss, spans, L) >= corner - 1e-6
+            if it.fixed is not None:                       # a start set by hand stays: only that place
+                i0, t0, _, _ = loop.nearest(it.fixed)
+                s0 = walker.cum[i0] + t0 * (walker.cum[i0 + 1] - walker.cum[i0])
+                near = np.abs(((ss - s0 + L / 2) % L) - L / 2) <= L / S
+                valid = near
+            rings = []
+            for d in ZONE_RINGS:
+                Q = P + N * (r + d)
+                if region:
+                    on = clip.region_mask(Q, region)
+                    p_on = clip.region_mask(P, region)
+                elif sheet is not None:
+                    on = (Q[:, 0] >= sheet.xmin) & (Q[:, 0] <= sheet.xmax) & (Q[:, 1] >= sheet.ymin) & (Q[:, 1] <= sheet.ymax)
+                    p_on = (P[:, 0] >= sheet.xmin) & (P[:, 0] <= sheet.xmax) & (P[:, 1] >= sheet.ymin) & (P[:, 1] <= sheet.ymax)
+                else:
+                    on, p_on = np.ones(len(Q), bool), np.ones(len(Q), bool)
+                edge = np.where(on, 1.0, np.where(p_on, EDGE_HOLD, 1.0))     # (off the sheet: its rim is still held)
+                rings.append((Q, edge))
+            lo, hi = np.min([q.min(axis=0) for q, _ in rings], axis=0), np.max([q.max(axis=0) for q, _ in rings], axis=0)
+            hits: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+            related = ancestors(it, by_key) | descendants(it.key, by_key)
+            for j in _near(boxes, (*lo, *hi), 0.01):
+                o = kerfed[j]
+                if o is it or o.key in related:
+                    continue
+                h = [clip.region_mask(q, o.kerf) for q, _ in rings]
+                if h[0].any() or h[1].any():
+                    hits[o.key] = (h[0], h[1])
+            m = max(2, int(round((6 * r + corner) / (L / S))))
+            zone = closing_zone(walker, hold_direction(cfg["strategy"], it.center, sheet), cw, corner, spans)
+            target = zone.target / L * S
+            gap = np.abs(((np.arange(S) - target + S / 2) % S) - S / 2) * (L / S)        # mm along the loop from the zone
+            width = max(ZONE_BAND, ZONE_BAND_FRACTION * max(float(np.ptp(P[:, 0])), float(np.ptp(P[:, 1]))))
+            band = valid & (gap <= width)
+            self.info[it.key] = dict(S=S, m=min(m, S - 1), valid=valid, band=band if band.any() else valid,
+                                     edge=(rings[0][1], rings[1][1]), hits=hits, target=target, gap=gap)
+
+    def best(self, key: str, earlier: set[str], band: bool = False) -> tuple[float, int, set[str]]:
+        """``(support, place, cuts that take it away)`` of the best place for the cut ``key`` to close at when the cuts
+        ``earlier`` have been made: the place with the most support, the zone deciding among equals. With ``band``
+        only the places that still count as the closing zone are looked at."""
+        inf = self.info[key]
+        S, m = inf["S"], inf["m"]
+        any1 = np.zeros(S, bool)
+        any5 = np.zeros(S, bool)
+        for b, (h1, h5) in inf["hits"].items():
+            if b in earlier:
+                any1 |= h1
+                any5 |= h5
+        loc = 0.6 * np.where(any1, 0.0, inf["edge"][0]) + 0.4 * np.where(any5, 0.0, inf["edge"][1])
+        near = np.minimum.reduce([np.roll(loc, d) for d in (-1, 0, 1)])
+        c = np.concatenate([[0.0], np.cumsum(np.concatenate([loc, loc]))])
+        idx = np.arange(S) + S                                      # (the stretch before a place: the m places up to it)
+        mean = (c[idx + 1] - c[idx + 1 - m]) / m
+        ok = inf["band"] if band else inf["valid"]
+        sup = np.where(ok, np.minimum(near, mean), -1.0)
+        k = int(np.argmax(np.round(sup, 3) - 1e-4 * inf["gap"]))
+        blockers = {b for b, (h1, h5) in inf["hits"].items() if b in earlier
+                    and (h1 | h5)[(np.arange(k - m, k + 2)) % S].any()}
+        return float(sup[k]), k, blockers
+
+    def cheapest(self, key: str, earlier: set[str], band: bool = False) -> set[str]:
+        """The fewest cuts that would have to come after ``key`` for some place to hold it fully (the zone deciding
+        among equals); with ``band`` only the places that still count as the closing zone."""
+        inf = self.info[key]
+        S, m = inf["S"], inf["m"]
+        cover = []
+        names = [b for b in inf["hits"] if b in earlier]
+        for b in names:
+            h1, h5 = inf["hits"][b]
+            x = (h1 | h5)
+            c = np.concatenate([[0], np.cumsum(np.concatenate([x, x]).astype(int))])
+            idx = np.arange(S) + S
+            cover.append((c[idx + 2] - c[idx - m]) > 0)               # the stretch before a place and its neighbour
+        if not names:
+            return set()
+        M = np.array(cover)                                         # (cuts x places): does the cut take this place away
+        ok = inf["band"] if band else inf["valid"]
+        cost = np.where(ok, M.sum(axis=0), 10 ** 6)
+        k = int(np.argmin(cost * 1000.0 + inf["gap"]))
+        return {names[i] for i in range(len(names)) if M[i, k]}
+
+
+def support_order(order: list[str], items: dict[str, SeqItem], smap: SupportMap, settle, sheet: BBox | None,
+                  replayer: Replayer | None = None, tries: int = 6) -> tuple[list[str], list[str]]:
+    """``(order, keys still not held)``: every cut that would not close held by sheet that is still there, in its
+    closing zone (a neighbour that is cut before it takes the sheet away from every place of the zone), is brought in
+    front of the fewest cuts that make a place of the zone hold it. What cannot be had in the zone is then asked
+    anywhere along the cut. Pulls that would leave a cut in loose scrap are given up (:func:`zone_order`)."""
+    def unheld(order: list[str], band: bool) -> dict[str, set[str]]:
+        pos = {k: i for i, k in enumerate(order)}
+        out: dict[str, set[str]] = {}
+        for k in order:
+            if k in smap.info:
+                earlier = set(order[:pos[k]])
+                if smap.best(k, earlier, band)[0] < FULL_SUPPORT:
+                    out[k] = smap.cheapest(k, earlier, band)
+        return out
+
+    for band in (True, False):
+        for _ in range(tries):
+            wishes = {k: w for k, w in unheld(order, band).items() if w}
+            if not wishes:
+                break
+            snaps: list = []
+            if replayer is not None:
+                replayer.first_loose(order, snaps)
+            new = zone_order(order, wishes, items, len(order), settle, sheet if replayer is not None else None,
+                             replayer=replayer, snaps=snaps if replayer is not None else None)
+            if new == order:
+                break
+            order = new
+    return order, list(unheld(order, False))
 
 
 def zone_blockers(items: list[SeqItem], cfg: dict, sheet: BBox | None = None) -> dict[str, set[str]]:
