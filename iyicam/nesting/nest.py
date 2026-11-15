@@ -169,19 +169,22 @@ def convex_hull(pts: IntPath) -> IntPath:
     return lower[:-1] + upper[:-1]
 
 
-def convex_minkowski(a: IntPath, b: IntPath) -> IntPath:
-    """Minkowski sum of two counter-clockwise convex polygons (O(n + m) edge merge)."""
-    def start(p):
-        return min(range(len(p)), key=lambda i: (p[i][1], p[i][0]))
+def prepare_convex(p: IntPath) -> tuple[tuple[int, int], list[tuple[int, int]]]:
+    """A counter-clockwise convex polygon ready for :func:`convex_minkowski`: its lowest (then leftmost) vertex and its
+    edges from there. A piece is summed with many others, so this is done once."""
+    n = len(p)
+    k = min(range(n), key=lambda i: (p[i][1], p[i][0]))
+    q = p[k:] + p[:k]
+    q.append(q[0])
+    return q[0], [(q[i + 1][0] - q[i][0], q[i + 1][1] - q[i][1]) for i in range(n)]
 
-    def edges(p, k):
-        n = len(p)
-        return [(p[(k + i + 1) % n][0] - p[(k + i) % n][0], p[(k + i + 1) % n][1] - p[(k + i) % n][1])
-                for i in range(n)]
 
-    ia, ib = start(a), start(b)
-    ea, eb = edges(a, ia), edges(b, ib)
-    x, y = a[ia][0] + b[ib][0], a[ia][1] + b[ib][1]
+def convex_minkowski(a, b) -> IntPath:
+    """Minkowski sum of two counter-clockwise convex polygons (O(n + m) edge merge); each is a path or
+    already :func:`prepare_convex`d."""
+    (ax, ay), ea = prepare_convex(a) if isinstance(a, list) else a
+    (bx, by), eb = prepare_convex(b) if isinstance(b, list) else b
+    x, y = ax + bx, ay + by
     out = [(x, y)]
     i = j = 0
     while i < len(ea) or j < len(eb):
@@ -277,7 +280,7 @@ def convex_parts(path: IntPath) -> list[IntPath] | None:
 
 
 class _Variant:
-    __slots__ = ("paths", "bbox", "area", "convex", "pieces", "sig", "holes", "solid")
+    __slots__ = ("paths", "bbox", "area", "convex", "pieces", "sig", "holes", "solid", "_prep", "_negprep")
 
     def __init__(self, paths: list[IntPath], holes: list[IntPath] | None = None):
         self.paths = paths
@@ -302,6 +305,20 @@ class _Variant:
                 break
             pieces += parts
         self.pieces = pieces
+        self._prep = None
+        self._negprep = None
+
+    def prep(self) -> list:
+        """The convex pieces ready for summing (made once)."""
+        if self._prep is None:
+            self._prep = [prepare_convex(pc) for pc in self.pieces or []]
+        return self._prep
+
+    def negprep(self) -> list:
+        """The pieces turned half round about the origin (negated), ready for summing (made once)."""
+        if self._negprep is None:
+            self._negprep = [prepare_convex([(-x, -y) for x, y in pc]) for pc in self.pieces or []]
+        return self._negprep
 
 
 def _rotate_int(paths: list[list[Pt]], ang: float) -> list[IntPath]:
@@ -522,6 +539,7 @@ class Nester:
             self.angles.append(keep)
             self.skey.append((c, tuple(keep), sh.tilt))
         self._nfp_cache: dict[tuple, list[IntPath]] = {}
+        self._nfp_np_cache: dict[tuple, list[tuple]] = {}   # the same as arrays with their bounding boxes
         self._nfp0_cache: dict[tuple, list[IntPath]] = {}
         self.stats = {"nfp": 0, "overlap_tests": 0}  # work done: no-fit polygons made, overlaps tested
         self.cancel: Callable[[], bool] | None = None
@@ -545,6 +563,21 @@ class Nester:
         self._nfp_cache[key] = res
         return res
 
+    def _nfp_np(self, a: int, aa: float, b: int, ba: float) -> list[tuple]:
+        """:meth:`_nfp` as ``(array, x0, y0, x1, y1)`` per path: moving one is an addition, and whether it can
+        matter somewhere is a test of its bounding box."""
+        key = (a, aa, b, ba)
+        hit = self._nfp_np_cache.get(key)
+        if hit is None:
+            hit = []
+            for path in self._nfp(a, aa, b, ba):
+                arr = np.asarray(path, dtype=np.int64).reshape(-1, 2)
+                if len(arr):
+                    lo, hi = arr.min(axis=0), arr.max(axis=0)
+                    hit.append((arr, int(lo[0]), int(lo[1]), int(hi[0]), int(hi[1])))
+            self._nfp_np_cache[key] = hit
+        return hit
+
     def _nfp0(self, a: int, b: int, rel: float) -> list[IntPath]:
         """NFP of shape ``b`` turned by ``rel`` against shape ``a`` (not turned)."""
         key = (a, b, rel)
@@ -560,8 +593,8 @@ class Nester:
         elif VA.pieces is not None and VB.pieces is not None:
             # Minkowski sums distribute over unions: combine the convex pieces
             pc = clip.Clipper()
-            negs = [[(-x, -y) for x, y in pb] for pb in VB.pieces]
-            for pa in VA.pieces:
+            negs = VB.negprep()
+            for pa in VA.prep():
                 for nb in negs:
                     pc.AddPath(convex_minkowski(pa, nb), pyclipper.PT_SUBJECT, True)
             res = pc.Execute(pyclipper.CT_UNION, pyclipper.PFT_NONZERO, pyclipper.PFT_NONZERO)
@@ -778,23 +811,25 @@ class Nester:
         # the no-fit polygons that cost nothing are in from the start, the others only when needed
         included: set[int] = {j for j, (pi, pa, _, _) in enumerate(placed) if self._cheap(pi, pa, c, ang)}
         off_plate: set[tuple[int, int]] = set()
+        feas = ifp
+        applied: set[int] = set()       # the no-fit polygons already taken out of ``feas``: only new ones are taken out next
         while True:
             self._check()
-            feas = ifp
-            if included:
+            fresh = included - applied
+            if fresh:
                 pc = clip.Clipper()
                 n_added = 0
-                for j in included:
+                for j in fresh:
                     pi, pa, px, py = placed[j]
-                    for path in self._nfp(pi, pa, c, ang):
-                        xs = [q[0] + px for q in path]
-                        ys = [q[1] + py for q in path]
-                        if max(xs) < ix0 or min(xs) > ix1 or max(ys) < iy0 or min(ys) > iy1:
+                    shift = (px, py)
+                    for arr, x0, y0, x1, y1 in self._nfp_np(pi, pa, c, ang):
+                        if x1 + px < ix0 or x0 + px > ix1 or y1 + py < iy0 or y0 + py > iy1:
                             continue
-                        pc.AddPath([(q[0] + px, q[1] + py) for q in path], pyclipper.PT_CLIP, True)
+                        pc.AddPath((arr + shift).tolist(), pyclipper.PT_CLIP, True)
                         n_added += 1
+                applied |= fresh
                 if n_added:
-                    pc.AddPaths(ifp, pyclipper.PT_SUBJECT, True)
+                    pc.AddPaths(feas, pyclipper.PT_SUBJECT, True)
                     feas = pc.Execute(pyclipper.CT_DIFFERENCE, pyclipper.PFT_NONZERO, pyclipper.PFT_NONZERO)
             V = np.array([q for poly in feas for q in poly], dtype=np.int64).reshape(-1, 2)
             if not len(V):
