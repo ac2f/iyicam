@@ -109,7 +109,7 @@ Whatever strategy or manual order is chosen:
    vector: holes before their outline, a part nested in a hole before the hole,
    engravings before the part around them. A manual order that breaks this rule
    is corrected and the toolpath shows a warning.
-2. **No cut in loose scrap.** The order is replayed cut by cut (up to 300 cuts on a sheet): a cut that
+2. **No cut in loose scrap.** The order is replayed cut by cut (up to 400 cuts on a sheet): a cut that
    would run in material the cuts before it have already set loose is brought in front of the cut
    that closes the scrap round it. Also, when parts are so close that their cuts overlap,
    several cuts can together close a ring of scrap. All cut areas are removed
@@ -242,8 +242,15 @@ With smart start points on, an automatic order is made to suit the closing zones
 * **Route strategies** (shortest travel, smart route): the route is made with the same wish: a neighbour that
   would take the sheet away from the closing zone of a cut waits until that cut is made, as long as there is
   another cut to go to.
+* **Support map.** After that, every outline is looked at on its own: where along it could the cut close with the
+  sheet beyond it (two rings, 1.5 and 5 mm beyond the cut width, at the close and along the 6 tool radii cut last)
+  still there, given the cuts that come before it? A cut that has no such place in its closing zone (the zone
+  itself, or up to 8 mm / 20 % of the part along the side from it) is brought in front of the fewest cuts that
+  would give it one; when that cannot be had in the zone it is asked anywhere along the cut. Pulls that would leave
+  a cut in loose scrap are given up one by one (the harmless ones stay), and a last pass brings the cuts that
+  would then be loose in front of what closes them when that holds more cuts than before.
 * Cuts that want to come before each other keep the order of the strategy.
-* **Every order is replayed** (up to 300 cuts on a sheet): a pull that would leave a cut in loose scrap is
+* **Every order is replayed** (up to 400 cuts on a sheet): a pull that would leave a cut in loose scrap is
   given up (the one that closes the scrap first, then the next one, until nothing is loose), and
   a cut that the strategy's own order leaves in loose scrap goes in front of the cut that closes it.
   Bigger jobs only let neighbours swap places.
