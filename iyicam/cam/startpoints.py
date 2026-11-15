@@ -400,7 +400,8 @@ def choose_start(walker: PathWalker, r: float, entry: Callable[[float], list[Pt]
     # the sheet beyond the cut where it closes and along the stretch cut last
     at = np.clip(np.rint(cand / (L / n)).astype(int) % n, 0, n - 1)
     near = np.minimum.reduce([loc[(at + d) % n] for d in (-1, 0, 1)])
-    held_end = (last * loc[None, :]).sum(axis=1) / np.maximum(last.sum(axis=1), 1)
+    stretch = late >= 1.0 - min(L / 3, 6 * r + corner) / L       # the stretch cut last that has to be held: 6 tool radii
+    held_end = (stretch * loc[None, :]).sum(axis=1) / np.maximum(stretch.sum(axis=1), 1)
     sup = np.minimum(near, held_end)
     travel = np.hypot(*(first - np.asarray(prev, float)).T) if prev is not None else np.zeros(len(cand))
     soft = keep + 0.6 * end - 0.02 * travel / (travel.max() + L)           # (the older, physical, taste)

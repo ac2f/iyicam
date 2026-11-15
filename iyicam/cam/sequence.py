@@ -497,11 +497,14 @@ def sequence(items: list[SeqItem], cfg: dict, pos: Pt = (0.0, 0.0),
     if s["auto_order"] or not s["order"]:
         zoning = zones and s["strategy"] not in POLICY_STRATEGIES
         blockers = zone_blockers(items, s, sheet) if zoning else {}
-        wait: dict[str, set[str]] = defaultdict(set)      # a route strategy keeps the neighbours that would take the
-        for a, bs in blockers.items():                     # sheet away from the closing zone of a cut for after it
-            for b in bs:
-                wait[b].add(a)
         route = s["strategy"] in ("nearest", "smart")
+        wait: dict[str, set[str]] = defaultdict(set)      # a route strategy keeps the neighbours that would take the
+        if route and blockers:                             # sheet away from the closing zone of a cut for after it
+            plain = order_items(items, s["strategy"], s["grouping"], pos, s["band"], sheet)
+            wishes = _acyclic({a: set(bs) for a, bs in blockers.items()}, {k: i for i, k in enumerate(plain)})
+            for a, bs in wishes.items():                   # (wishes that can all be had: none waits for itself)
+                for b in bs:
+                    wait[b].add(a)
         n = len(items)
         check = n <= REPLAY_LIMIT           # (bigger jobs are not replayed: it takes too long)
 
@@ -579,8 +582,8 @@ def zone_blockers(items: list[SeqItem], cfg: dict, sheet: BBox | None = None) ->
         if it.fixed is not None:
             i, t, _, _ = loop.nearest(it.fixed)
             target = walker.cum[i] + t * (walker.cum[i + 1] - walker.cum[i])
-        bridge = min(L / 3, max(6 * r, 0.1 * L))
-        span = bridge + corner                      # the stretch cut last, then the close itself
+        bridge = min(L / 3, 6 * r)
+        span = bridge + corner                      # the stretch cut last (6 tool radii), then the close itself
         m = int(max(8, min(40, span / 2.0)))
         s_probe = (target - bridge + np.arange(m + 1) * span / m) % L
         P, T = sample(walker, s_probe)
