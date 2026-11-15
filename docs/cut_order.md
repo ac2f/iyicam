@@ -242,6 +242,18 @@ With smart start points on, an automatic order is made to suit the closing zones
 * **Route strategies** (shortest travel, smart route): the route is made with the same wish: a neighbour that
   would take the sheet away from the closing zone of a cut waits until that cut is made, as long as there is
   another cut to go to.
+* **The hold side.** A part is held by the sheet on the side the sweep has not reached (up and to the right for
+  bottom left → top right), so no cut may be made after a neighbour that stands on that side of it. Every outline
+  is looked at on its own: along the part of it that faces the hold side (the outward normal points towards it)
+  rays go up to 30 mm beyond the cut area, and the neighbours they run into are the ones standing on its hold side.
+  The mm of outline that face a neighbour are counted both ways; when a part faces a neighbour clearly more than the
+  neighbour faces it (at least 4 mm and 15 % more) the part is cut before it. This is done for all neighbours, not
+  only those next to the place where the part closes, and wherever they are in the order: a part that stands under or
+  to the left of another is cut first even when the row would have put it second. Neighbours that face each other
+  about equally interlock (a small letter in the notch of a big one) and are left to the closing zone; when
+  wishes form a ring (a before b before c before a) the weakest one gives way. Pulls that would leave a cut in loose
+  scrap are tried again one at a time, with the cuts that have to come before the pulled one coming along. The
+  rays start at the lowest left point of the outline, so moving a start point never changes a wish.
 * **Support map.** After that, every outline is looked at on its own: where along it could the cut close with the
   sheet beyond it (two rings, 1.5 and 5 mm beyond the cut width, at the close and along the 6 tool radii cut last)
   still there, given the cuts that come before it, and the plunging tool keeping the start margin from the cut
@@ -267,12 +279,14 @@ nearest place along the part that is held, and the cut explanation says how far 
 
 Measured on the 543 letters of a real sign nested on three 156 x 305 cm sheets (free, gravity to the left,
 bottom left to top right, 6 mm end mill, smart start points), each cut judged on its own: no cut is made in loose
-scrap, no cut is cut before something inside it, none closes with a cut area of an earlier cut facing the stretch
-cut last, and 9 of them (1.7 %) close 18 to 78 mm away from their zone (more than 8 mm / 8 % of the part): the
-parts cut before them stand where the zone is (a small letter packed between big ones that must be cut first to
-keep it from loose scrap); they close on a place that is held. The parts that do not fit on a sheet at all (the
-page of the drawing is bigger than one sheet) were left out. Nesting the sheets and calculating all 543 cuts took
-about nine minutes in all (the support map and the replay are the slow part on a sheet with hundreds of cuts).
+scrap, none is cut before something inside it, none closes with a cut area of an earlier cut facing the stretch
+cut last, no zone is more than 8 mm / 8 % of the part away except one (10 mm), and for one cut of 543 an earlier
+neighbour stands on its hold side because the neighbours form a ring (each wants to be first, 11 mm of outline).
+The same judging on 21 layouts (free with every gravity, turned, rows and columns from every corner, wide) of 91
+cuts with the strategies rows, diagonal, columns, shortest travel and smart route found nothing, except in a
+layout with the parts only 2 mm apart (closer than the tool: the cut areas overlap) and for 5 cuts of one mixed
+layout (a zone 28 mm away). The parts that do not fit on a sheet at all (the page of the drawing is bigger than
+one sheet) were left out. Nesting the sheets and calculating all 543 cuts took about two minutes.
 
 ## What a start point change recalculates
 

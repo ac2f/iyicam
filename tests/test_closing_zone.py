@@ -552,3 +552,62 @@ def test_the_closing_band_is_eight_mm_or_eight_percent_of_the_part():
     expect = max(seq.ZONE_BAND, seq.ZONE_BAND_FRACTION * max(bb.width, bb.height))
     assert abs(smap.info[items[0].key]["width"] - expect) < 1e-6
     assert seq.ZONE_BAND_FRACTION <= 0.1                        # (a wider band lets a cut close far from the corner)
+
+
+def test_a_part_faces_the_neighbours_on_the_side_where_the_sheet_holds_it():
+    """Left to right, bottom to top: a part is held from the right and from above. A neighbour on its right (or
+    above it) is on its hold side; one on its left (or below) is not. The wish is: cut the part before the neighbour
+    that stands on its hold side, never the other way round."""
+    smap, items = _map_of([(20, 60, 50, 80), (78, 20, 50, 80)])         # the second one is 8 mm to the right and lower
+    a, b = items[0].key, items[1].key
+    face = seq.hold_contacts(items, {"strategy": "rows_bl"}, seq.BBox(0, 0, 220, 300))
+    assert face[a][b] > 10                                              # a's right side looks at b
+    assert face.get(b, {}).get(a, 0.0) < face[a][b]                     # b's side towards a is not its hold side
+    wishes, strength = seq.hold_blockers(items, {"strategy": "rows_bl"}, seq.BBox(0, 0, 220, 300))
+    assert wishes == {a: {b}} and strength[(a, b)] > 0                  # a before b
+
+
+def test_the_part_underneath_is_cut_before_the_part_above_it_even_when_the_row_would_put_it_second():
+    """Two parts one above the other, in one row by their corners (so left to right: the higher one, which stands
+    further left, first). The lower part is held from above, by the higher one: the higher one is on its hold side, so
+    the lower one goes first."""
+    upper, lower = shapes.rectangle(20, 40, 50, 80), shapes.rectangle(30, 10, 50, 22)          # (8 mm between them)
+    p, s, objs = make_project([[upper], [lower], [shapes.rectangle(150, 200, 50, 80)]], size=(220, 300))
+    t = add_tp(p, "profile", end_mill(6), {"through": True}, objs)
+    t.sequence = {"strategy": "rows_bl", "smart_starts": True}
+    tp = compute_toolpath(p, t, s).toolpaths[0]
+    ids = {o.id: n for n, o in enumerate(objs)}
+    order = [ids[c["key"].split(":")[0]] for c in tp.cuts]
+    assert order.index(1) < order.index(0)                              # the lower part first
+    t.sequence = {"strategy": "rows_bl", "smart_starts": False}
+    plain = [ids[c["key"].split(":")[0]] for c in compute_toolpath(p, t, s).toolpaths[0].cuts]
+    assert plain.index(0) < plain.index(1)                              # (the row alone would have put the higher one first)
+    assert replay(tp, s) == []
+
+
+def test_a_route_strategy_has_no_sweep_but_the_same_hold_side_as_the_start_points():
+    """'Shortest travel' and 'smart route' have no sweep direction; the start points are made for bottom left -> top right
+    then, and so is the hold side."""
+    smap, items = _map_of([(20, 60, 50, 80), (78, 20, 50, 80)])
+    a, b = items[0].key, items[1].key
+    for strategy in ("nearest", "smart", "rows_bl", "diag_bl"):
+        wishes, _ = seq.hold_blockers(items, {"strategy": strategy}, seq.BBox(0, 0, 220, 300))
+        assert wishes == {a: {b}}, strategy
+    wishes, _ = seq.hold_blockers(items, {"strategy": "rows_br"}, seq.BBox(0, 0, 220, 300))
+    assert wishes == {b: {a}}                       # from the bottom right the other way round: the left one is on b's hold side
+
+
+def test_the_wishes_do_not_depend_on_where_the_outline_starts():
+    """Moving a start point (the loop is rotated) never changes the wishes: the samples start at the lowest left point."""
+    smap, items = _map_of([(20, 60, 50, 80), (78, 20, 50, 80), (20, 150, 50, 80)])
+    cfg, box = {"strategy": "rows_bl"}, seq.BBox(0, 0, 220, 300)
+    before = seq.hold_contacts(items, cfg, box)
+    from iyicam.core import vectorops
+    for it in items:                                    # start every loop somewhere else
+        start = it.loop.point_at_length(0.37 * it.loop.length())
+        moved = vectorops.set_start_point(it.loop, start)
+        assert moved.start != it.loop.start                 # (the start really moved)
+        it.loop = moved
+    after = seq.hold_contacts(items, cfg, box)
+    assert {k: {j: round(v, 1) for j, v in d.items()} for k, d in before.items()} == \
+           {k: {j: round(v, 1) for j, v in d.items()} for k, d in after.items()}

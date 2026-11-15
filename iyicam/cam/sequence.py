@@ -29,7 +29,7 @@ import numpy as np
 from ..core import clip
 from ..core.geom import BBox, Contour, Pt, dist, point_in_polygon, polygon_area
 from .pathutil import PathWalker
-from .startpoints import EDGE_HOLD, _span_distance, closing_zone, corners, sample
+from .startpoints import DEFAULT_HOLD, EDGE_HOLD, _span_distance, closing_zone, corners, sample
 
 STRATEGIES: list[tuple[str, str]] = [
     ("smart", "Smart: shortest route (optimised)"),
@@ -515,6 +515,7 @@ def sequence(items: list[SeqItem], cfg: dict, pos: Pt = (0.0, 0.0),
     if s["auto_order"] or not s["order"]:
         zoning = zones and s["strategy"] not in POLICY_STRATEGIES
         blockers = zone_blockers(items, s, sheet) if zoning else {}
+        holds, hold_w = hold_blockers(items, s, sheet) if zoning else ({}, {})
         route = s["strategy"] in ("nearest", "smart")
         wait: dict[str, set[str]] = defaultdict(set)      # a route strategy keeps the neighbours that would take the
         if route and blockers:                             # sheet away from the closing zone of a cut for after it
@@ -538,12 +539,25 @@ def sequence(items: list[SeqItem], cfg: dict, pos: Pt = (0.0, 0.0),
         order, ok, snaps = made(wait if route and wait else None)
         if route and wait and rp is not None and not ok:
             order, ok, snaps = made(None)                                 # (the plain route)
-        if zoning and blockers and (rp is None or ok):
-            order = zone_order(order, blockers, by_key, pull_reach(n) if rp is not None else 2, settle,
-                               sheet if rp is not None else None, replayer=rp, snaps=snaps)
+        if zoning and (blockers or holds) and (rp is None or ok):
+            # the wishes: a cut before the neighbours next to where it closes (a few places), and before the neighbours
+            # that stand on the side where the sheet holds it (wherever they are in the order)
+            reach = pull_reach(n) if rp is not None else 2
+            base = {k: i for i, k in enumerate(order)}
+            wish = {a: {b for b in bs if base.get(a, 0) - base.get(b, 0) <= reach} for a, bs in blockers.items()}
+            weight = {(a, b): ZONE_WISH for a, bs in wish.items() for b in bs}
+            for a, bs in holds.items():
+                for b in bs:
+                    if rp is not None or base.get(a, 0) - base.get(b, 0) <= reach:
+                        wish.setdefault(a, set()).add(b)
+                        weight[(a, b)] = max(weight.get((a, b), 0.0), hold_w[(a, b)])
+            order = zone_order(order, wish, by_key, n, settle, sheet if rp is not None else None,
+                               tries=60, replayer=rp, snaps=snaps, weight=weight)
+            if rp is not None and hold_w:
+                order = hold_repair(order, hold_w, by_key, settle, sheet, rp)
         if zoning and rp is not None and ok:
             # every cut has to close held by sheet that is still there: whatever is not yet, goes in front of what takes it
-            order, unheld = support_order(order, by_key, SupportMap(items, s, sheet), settle, sheet, rp)
+            order, unheld = support_order(order, by_key, SupportMap(items, s, sheet), settle, sheet, rp, holds=hold_w)
             if unheld:
                 notes.append(f"{len(unheld)} cut(s) cannot be made to close held by sheet that is still there: "
                              "parts packed round them are cut before them whatever the order")
@@ -727,11 +741,19 @@ class SupportMap:
 
 
 def support_order(order: list[str], items: dict[str, SeqItem], smap: SupportMap, settle, sheet: BBox | None,
-                  replayer: Replayer | None = None, tries: int = 6) -> tuple[list[str], list[str]]:
+                  replayer: Replayer | None = None, tries: int = 6,
+                  holds: dict[tuple[str, str], float] | None = None) -> tuple[list[str], list[str]]:
     """``(order, keys still not held)``: every cut that would not close held by sheet that is still there, in its
     closing zone (a neighbour that is cut before it takes the sheet away from every place of the zone), is brought in
     front of the fewest cuts that make a place of the zone hold it. What cannot be had in the zone is then asked
     anywhere along the cut. Pulls that would leave a cut in loose scrap are given up (:func:`zone_order`)."""
+    def hold_cost(o: list[str]) -> float:
+        """mm of outline that face, on their hold side, a neighbour that is cut first (``holds``: (a, b) = a before b)."""
+        if not holds:
+            return 0.0
+        ps = {k: i for i, k in enumerate(o)}
+        return sum(w for (a, b), w in holds.items() if a in ps and b in ps and ps[b] < ps[a])
+
     def unheld(order: list[str], band: bool) -> dict[str, set[str]]:
         pos = {k: i for i, k in enumerate(order)}
         out: dict[str, set[str]] = {}
@@ -755,7 +777,7 @@ def support_order(order: list[str], items: dict[str, SeqItem], smap: SupportMap,
                 fresh = []
                 batch = zone_order(order, wishes, items, len(order), settle, sheet, tries=6,
                                    replayer=replayer, snaps=snaps, out_snaps=fresh)
-                if batch != order:
+                if batch != order and hold_cost(batch) <= hold_cost(order) + 1e-6:
                     order, snaps, progressed = batch, fresh, True
             for k in [k for k in order if k in wishes]:         # one cut at a time: a pull that leaves scrap loose is
                 pos = {x: i for i, x in enumerate(order)}      # given up without the harmless ones going with it
@@ -768,8 +790,8 @@ def support_order(order: list[str], items: dict[str, SeqItem], smap: SupportMap,
                 fresh: list = []
                 new = zone_order(order, {k: w}, items, len(order), settle, sheet if replayer is not None else None,
                                  replayer=replayer, snaps=snaps if replayer is not None else None, out_snaps=fresh)
-                if new == order:
-                    continue
+                if new == order or hold_cost(new) > hold_cost(order) + 1e-6:
+                    continue                                    # (nor a pull that puts a cut on the hold side of another)
                 if replayer is not None:
                     snaps = fresh
                 order = new
@@ -811,6 +833,8 @@ def support_order(order: list[str], items: dict[str, SeqItem], smap: SupportMap,
                     now = (len(unheld(order, False)), len(unheld(order, True)))
                     new = (len(unheld(mended, False)), len(unheld(mended, True)))
                     ex = excess(mended)
+                    if hold_cost(mended) > hold_cost(order) + 1e-6:
+                        continue
                     if new[0] <= now[0] and ((new[1] <= now[1] and new != now) or ex < cur - 1e-6):
                         order, cur, improved = mended, ex, True
             if not improved:
@@ -873,6 +897,134 @@ def zone_blockers(items: list[SeqItem], cfg: dict, sheet: BBox | None = None) ->
     return out
 
 
+HOLD_REACH = 30.0       # mm beyond a cut that count as its neighbourhood for the sheet that holds it
+HOLD_FACING = 0.05      # the part of an outline whose outward normal points this far towards the hold side (cosine)
+HOLD_MIN = 4.0          # mm of outline that have to face a neighbour (and more than it faces back) to make a wish of it
+HOLD_ASYM = 0.15        # ... and by at least this fraction of the longer of the two (about equal: they interlock, no wish)
+ZONE_WISH = 5.0         # how a wish for the closing zone counts against the ones for the hold side when they contradict
+
+
+def hold_contacts(items: list[SeqItem], cfg: dict, sheet: BBox | None = None, reach: float = HOLD_REACH,
+                  ) -> dict[str, dict[str, float]]:
+    """``{key of a cut: {key of a neighbour: mm of its outline that face the neighbour on the hold side}}``.
+
+    A part is held by the sheet that is still there on the side the sweep has not reached (up and to the right for
+    bottom left -> top right). The part of its outline that faces that side (the outward normal points towards the
+    hold direction) is looked at with rays up to ``reach`` mm beyond the cut area: what they run into is a neighbour
+    that stands on its hold side. If that neighbour is cut first, the part is cut with nothing but loose scrap and
+    void on the side where the sheet should be (:func:`hold_blockers`).
+    """
+    cand = [it for it in items if it.loop is not None and it.closed and it.frees and it.depth % 2 == 0 and it.radius > 0
+            and it.kerf]
+    if len(cand) < 2:
+        return {}
+    boxes = _bboxes([it.kerf for it in cand])
+    by_key = {it.key: it for it in items}
+    out: dict[str, dict[str, float]] = {}
+    for it in cand:
+        hold = hold_direction(cfg["strategy"], it.center, sheet) or DEFAULT_HOLD     # (a route has no sweep: as the start points)
+        H = np.asarray(hold, float)
+        H = H / (np.hypot(*H) or 1.0)
+        walker = PathWalker(it.loop.segs, True)
+        L = walker.length
+        if L <= 1e-6:
+            continue
+        r = it.radius
+        n = int(max(12, min(600, L / 2.0)))
+        a0 = np.arange(360) * L / 360                       # (the samples start at the outline's lowest left point, not at
+        Pa, _ = sample(walker, a0)                          # its start point: moving the start does not change the wishes)
+        ss = (a0[int(np.argmin(Pa @ np.array([1.0, 1.0]) + 1e-9 * np.arange(360)))] + np.arange(n) * L / n) % L
+        P, T = sample(walker, ss)
+        cw = not it.loop.is_ccw()
+        N = np.c_[-T[:, 1], T[:, 0]] if cw else np.c_[T[:, 1], -T[:, 0]]
+        face = (N @ H) > HOLD_FACING
+        if not face.any():
+            continue
+        Pf, Nf = P[face], N[face]
+        rhos = np.arange(r + 1.0, r + reach + 1e-9, 2.0)
+        Q = (Pf[:, None, :] + Nf[:, None, :] * rhos[None, :, None]).reshape(-1, 2)
+        lo, hi = Q.min(axis=0), Q.max(axis=0)
+        related = ancestors(it, by_key) | descendants(it.key, by_key)
+        found: dict[str, float] = {}
+        for j in _near(boxes, (*lo, *hi), 0.01):
+            o = cand[j]
+            if o is it or o.key in related:
+                continue
+            hit = clip.region_mask(Q, o.kerf).reshape(len(Pf), len(rhos)).any(axis=1)
+            if hit.any():
+                found[o.key] = float(hit.sum()) * L / n
+        if found:
+            out[it.key] = found
+    return out
+
+
+def hold_blockers(items: list[SeqItem], cfg: dict, sheet: BBox | None = None,
+                  ) -> tuple[dict[str, set[str]], dict[tuple[str, str], float]]:
+    """``(wishes, strength)``: ``wishes[a]`` are the cuts that ``a`` is to be made before because they stand on the side
+    where the sheet holds ``a`` (:func:`hold_contacts`) more than ``a`` stands on theirs; ``strength[(a, b)]`` is by how
+    many mm of outline. Neighbours that face each other about equally cannot both have it and are left alone."""
+    face = hold_contacts(items, cfg, sheet)
+    wishes: dict[str, set[str]] = {}
+    strength: dict[tuple[str, str], float] = {}
+    for a, nb in face.items():
+        for b, mm in nb.items():
+            back = face.get(b, {}).get(a, 0.0)
+            net = mm - back
+            if net >= HOLD_MIN and net >= HOLD_ASYM * max(mm, back):
+                wishes.setdefault(a, set()).add(b)
+                strength[(a, b)] = net
+    return wishes, strength
+
+
+def hold_repair(order: list[str], strength: dict[tuple[str, str], float], items: dict[str, SeqItem], settle,
+                sheet: BBox | None, replayer: Replayer, rounds: int = 3) -> list[str]:
+    """The wishes for the hold side (``strength[(a, b)]``: a before b) that the pulls all together could not have, one at
+    a time, the strongest first: a pull that leaves a cut in loose scrap is given up without the harmless ones going with
+    it. Kept when the mm of outline that face a neighbour cut first become fewer."""
+    def cost(o: list[str]) -> float:
+        ps = {k: i for i, k in enumerate(o)}
+        return sum(w for (a, b), w in strength.items() if a in ps and b in ps and ps[b] < ps[a])
+
+    wanting: dict[str, list[str]] = defaultdict(list)             # who wants to be before a cut
+    for (x, y) in strength:
+        wanting[y].append(x)
+
+    def with_owners(a: str, b: str) -> dict[str, set[str]]:
+        """The wish a before b and, so that a does not leave them behind, the wishes of those that are to be before a
+        (and before them): they come along."""
+        edges: dict[str, set[str]] = {a: {b}}
+        seen, stack = {a}, [a]
+        while stack and len(seen) < 40:
+            y = stack.pop()
+            for x in wanting.get(y, ()):
+                edges.setdefault(x, set()).add(y)
+                if x not in seen:
+                    seen.add(x)
+                    stack.append(x)
+        return edges
+
+    snaps: list = []
+    replayer.first_loose(order, snaps)
+    cur = cost(order)
+    for _ in range(rounds):
+        ps = {k: i for i, k in enumerate(order)}
+        todo = sorted((ab for ab in strength if ab[0] in ps and ab[1] in ps and ps[ab[1]] < ps[ab[0]]),
+                      key=lambda ab: -strength[ab])
+        progressed = False
+        for a, b in todo:
+            ps = {k: i for i, k in enumerate(order)}
+            if ps[b] > ps[a]:
+                continue                                          # (an earlier pull has done it)
+            fresh: list = []
+            new = zone_order(order, with_owners(a, b), items, len(order), settle, sheet, tries=6, replayer=replayer,
+                             snaps=snaps, out_snaps=fresh)
+            if new != order and cost(new) < cur - 1e-6:
+                order, snaps, cur, progressed = new, fresh, cost(new), True
+        if not progressed:
+            break
+    return order
+
+
 def apply_zones(order: list[str], blockers: dict[str, set[str]], items: dict[str, SeqItem],
                 reach: int | None = None) -> list[str]:
     """Bring every cut in front of the neighbours that would be cut away next to its closing zone.
@@ -914,7 +1066,8 @@ def touching(kerfs: list[tuple[str, list]], loose: list, grow: float = 0.3) -> l
 
 def zone_order(order: list[str], blockers: dict[str, set[str]], items: dict[str, SeqItem], reach: int,
                settle, sheet: BBox | None = None, tries: int = 24, replayer: Replayer | None = None,
-               snaps: list | None = None, out_snaps: list | None = None) -> list[str]:
+               snaps: list | None = None, out_snaps: list | None = None,
+               weight: dict[tuple[str, str], float] | None = None) -> list[str]:
     """:func:`apply_zones` that never leaves a cut in loose scrap (with a ``sheet``, the order is replayed).
 
     When the pulls leave a cut in scrap that the cuts around it have set loose, the cut that was brought in
@@ -923,7 +1076,7 @@ def zone_order(order: list[str], blockers: dict[str, set[str]], items: dict[str,
     of ``order``, see :meth:`Replayer.first_loose`) save replaying what the pulls leave as it was."""
     base = {k: i for i, k in enumerate(order)}
     edges = _acyclic({a: {b for b in bs if base.get(a, 0) - base.get(b, 0) <= reach}
-                      for a, bs in blockers.items() if bs}, base)
+                      for a, bs in blockers.items() if bs}, base, weight)
     rp = replayer if replayer is not None else (Replayer(items, sheet) if sheet is not None else None)
     for _ in range(tries):
         if not edges:
@@ -959,11 +1112,13 @@ def pull_reach(n: int) -> int:
     return max(6, min(25, round(0.35 * n)))
 
 
-def _acyclic(edges: dict[str, set[str]], pos: dict[str, int]) -> dict[str, set[str]]:
+def _acyclic(edges: dict[str, set[str]], pos: dict[str, int], weight: dict[tuple[str, str], float] | None = None
+             ) -> dict[str, set[str]]:
     """The wishes "a before b" that can all be had at once. When some contradict each other (a wants to be
-    before b, b before a) the ones the strategy's order already fulfils win, then the smallest changes."""
+    before b, b before a) the ones the strategy's order already fulfils win, then the smallest changes; with
+    ``weight`` the strongest wishes first."""
     wishes = sorted(((a, b) for a, bs in edges.items() for b in bs if a in pos and b in pos),
-                    key=lambda ab: (pos[ab[0]] > pos[ab[1]], abs(pos[ab[0]] - pos[ab[1]])))
+                    key=lambda ab: (-(weight or {}).get(ab, 0.0), pos[ab[0]] > pos[ab[1]], abs(pos[ab[0]] - pos[ab[1]])))
     out: dict[str, set[str]] = defaultdict(set)
 
     def reaches(src: str, dst: str) -> bool:
