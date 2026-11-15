@@ -979,6 +979,49 @@ class Replayer:
         self.kerf = {it.key: _lean(clip._clean(it.kerf), tol) for it in all_ if it.kerf}
         self.solids = {it.key: _lean(clip._clean(it.solid), tol) for it in all_ if it.solid}
 
+    def loose_for(self, it: SeqItem, union: list):
+        """The loose material (integer paths) that the cut of ``it`` would run in when the cut areas ``union`` have
+        been cut before it, or ``None``."""
+        if it.key not in self.kerf or not union:
+            return None
+        pc_ = clip.pyclipper
+        lo_x, lo_y = self.lo
+        hi_x, hi_y = self.hi
+        pc = clip.Clipper()
+        pc.AddPaths(self.base, pc_.PT_SUBJECT, True)
+        pc.AddPaths(union, pc_.PT_CLIP, True)
+        tree = pc.Execute2(pc_.CT_DIFFERENCE, pc_.PFT_NONZERO, pc_.PFT_NONZERO)
+        loose: list = []
+
+        def walk(node):
+            for ch in node.Childs:
+                if not ch.IsHole:
+                    xs = [q[0] for q in ch.Contour]
+                    ys = [q[1] for q in ch.Contour]
+                    if not (min(xs) <= lo_x or max(xs) >= hi_x or min(ys) <= lo_y or max(ys) >= hi_y):
+                        loose.append(ch.Contour)
+                        loose.extend(h.Contour for h in ch.Childs)
+                for h in ch.Childs:
+                    walk(h)
+
+        walk(tree)
+        if not loose:
+            return None
+        mine = ancestors(it, self.items)
+        others = [q for k, paths in self.solids.items() if k != it.key and k not in mine for q in paths]
+        pc = clip.Clipper()
+        pc.AddPaths(self.kerf[it.key], pc_.PT_SUBJECT, True)
+        pc.AddPaths(loose, pc_.PT_CLIP, True)
+        hit = pc.Execute(pc_.CT_INTERSECTION, pc_.PFT_NONZERO, pc_.PFT_NONZERO)
+        if others and hit:
+            pc = clip.Clipper()
+            pc.AddPaths(hit, pc_.PT_SUBJECT, True)
+            pc.AddPaths(others, pc_.PT_CLIP, True)
+            hit = pc.Execute(pc_.CT_DIFFERENCE, pc_.PFT_NONZERO, pc_.PFT_NONZERO)
+        if abs(sum(pc_.Area(q) for q in hit)) / (clip.SCALE * clip.SCALE) > 0.05:
+            return loose
+        return None
+
     def first_loose(self, order: list[str], snaps: list | None = None, valid: int = 0):
         """``(index, loose paths)`` of the first cut of ``order`` that would run in loose material, or ``None``.
 
@@ -997,45 +1040,13 @@ class Replayer:
         valid = min(valid, len(snaps) - 1)
         del snaps[valid + 1:]
         union = snaps[valid]
-        lo_x, lo_y = self.lo
-        hi_x, hi_y = self.hi
         for i in range(valid, len(order)):
             if i > valid:
                 snaps.append(union)
             it = self.items[order[i]]
-            if it.key in self.kerf and union:
-                pc = clip.Clipper()
-                pc.AddPaths(self.base, pc_.PT_SUBJECT, True)
-                pc.AddPaths(union, pc_.PT_CLIP, True)
-                tree = pc.Execute2(pc_.CT_DIFFERENCE, pc_.PFT_NONZERO, pc_.PFT_NONZERO)
-                loose: list = []
-
-                def walk(node):
-                    for ch in node.Childs:
-                        if not ch.IsHole:
-                            xs = [q[0] for q in ch.Contour]
-                            ys = [q[1] for q in ch.Contour]
-                            if not (min(xs) <= lo_x or max(xs) >= hi_x or min(ys) <= lo_y or max(ys) >= hi_y):
-                                loose.append(ch.Contour)
-                                loose.extend(h.Contour for h in ch.Childs)
-                        for h in ch.Childs:
-                            walk(h)
-
-                walk(tree)
-                if loose:
-                    mine = ancestors(it, self.items)
-                    others = [q for k, paths in self.solids.items() if k != it.key and k not in mine for q in paths]
-                    pc = clip.Clipper()
-                    pc.AddPaths(self.kerf[it.key], pc_.PT_SUBJECT, True)
-                    pc.AddPaths(loose, pc_.PT_CLIP, True)
-                    hit = pc.Execute(pc_.CT_INTERSECTION, pc_.PFT_NONZERO, pc_.PFT_NONZERO)
-                    if others and hit:
-                        pc = clip.Clipper()
-                        pc.AddPaths(hit, pc_.PT_SUBJECT, True)
-                        pc.AddPaths(others, pc_.PT_CLIP, True)
-                        hit = pc.Execute(pc_.CT_DIFFERENCE, pc_.PFT_NONZERO, pc_.PFT_NONZERO)
-                    if abs(sum(pc_.Area(q) for q in hit)) / (clip.SCALE * clip.SCALE) > 0.05:
-                        return i, [clip.from_int(q) for q in loose]
+            loose = self.loose_for(it, union)
+            if loose is not None:
+                return i, [clip.from_int(q) for q in loose]
             if it.frees and it.key in self.kerf:
                 pc = clip.Clipper()
                 pc.AddPaths(union + self.kerf[it.key], pc_.PT_SUBJECT, True)
@@ -1080,6 +1091,11 @@ def mend_loose(order: list[str], items: dict[str, SeqItem], rp: Replayer, tries:
         if not walls:
             break
         last = max(j for j in range(i) if order[j] in walls)
+        if not rp.slow and len(snaps) > i:
+            # the latest place in front of it where its cut is not in loose material (the cut areas before every place
+            # are known): in front of the cut that closes the scrap, or earlier when that is loose still
+            while last > 0 and rp.loose_for(items[x], snaps[last]) is not None:
+                last -= 1
         block = [k for k in order if k in block_keys]
         rest = [k for k in order if k not in block_keys]
         at = rest.index(order[last])
