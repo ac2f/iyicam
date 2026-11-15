@@ -904,12 +904,16 @@ def first_loose(order: list[str], items: dict[str, SeqItem], sheet: BBox | None 
     cuts: no conversions) and stopping at the first. Sheets of any other shape than a rectangle are judged
     by :func:`verify_support`, which gives no paths (an empty list)."""
     seq_ = [items[k] for k in order if k in items]
+    if not any(it.kerf and it.frees for it in seq_):
+        return None                              # (nothing is cut free: nothing can be loose)
     frame = _frame(seq_, sheet)
     if frame.inner is not None:
         bad = verify_support(order, items, sheet)
         return (bad[0], []) if bad else None
-    base = clip._clean(frame.base)
     f = frame.bb
+    if not all(math.isfinite(v) for v in (f.xmin, f.ymin, f.xmax, f.ymax)):
+        return None                              # (no sheet and no cut areas to go by)
+    base = clip._clean(frame.base)
     border = round(1.0 * clip.SCALE)
     lo_x, lo_y = round(f.xmin * clip.SCALE) + border, round(f.ymin * clip.SCALE) + border
     hi_x, hi_y = round(f.xmax * clip.SCALE) - border, round(f.ymax * clip.SCALE) - border
@@ -975,17 +979,17 @@ def fix_loose(order: list[str], items: dict[str, SeqItem], sheet: BBox | None = 
             break
         i, loose = found
         x = order[i]
+        block_keys = {x} | descendants(x, items)
         walls = []
         if loose:
             grown = clip.offset(loose, 0.3)
             for j in range(i):
                 k = items[order[j]]
-                if k.kerf and clip.area(clip.boolean(k.kerf, grown, "intersection")) > 1e-3:
+                if order[j] not in block_keys and k.kerf and clip.area(clip.boolean(k.kerf, grown, "intersection")) > 1e-3:
                     walls.append(j)
         if not walls:
             break
         last = max(walls)
-        block_keys = {x} | descendants(x, items)
         block = [k for k in order if k in block_keys]
         rest = [k for k in order if k not in block_keys]
         at = rest.index(order[last])

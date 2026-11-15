@@ -454,3 +454,19 @@ def test_pulls_that_would_leave_a_cut_in_loose_scrap_are_given_up_and_the_rest_k
     # the same wish the other way round: the first bar wants to be after nothing but the small part is last
     out = seq.zone_order(base, {bars[-1]: {small}}, items, 10, lambda o: (o, False, []), box)
     assert seq.is_supported(out, items, box)
+
+
+def test_the_replay_has_nothing_to_say_without_cut_areas_or_a_sheet():
+    items = {k: seq.SeqItem(k, shapes.rectangle(30 * i, 0, 20, 20)) for i, k in enumerate("abc")}
+    assert seq.first_loose(list("abc"), items, None) is None              # (no cut areas, no sheet: nothing is loose)
+    assert seq.fix_loose(list("abc"), items, None) == (list("abc"), [])
+
+
+def test_a_part_with_inner_pieces_is_moved_with_them_when_it_is_brought_forward():
+    """The inner pieces of a cut that is moved in front of a wall can be walls themselves: it must not fail."""
+    outer = seq.SeqItem("o", shapes.rectangle(0, 0, 100, 100), kerf=[[(-3, -3), (103, -3), (103, 103), (-3, 103)]])
+    inner = seq.SeqItem("i", shapes.rectangle(40, 40, 20, 20), kerf=[[(37, 37), (63, 37), (63, 63), (37, 63)]])
+    seq.containment([outer, inner])
+    items = {"o": outer, "i": inner}
+    order, moved = seq.fix_loose(["i", "o"], items, None)
+    assert sorted(order) == ["i", "o"]
