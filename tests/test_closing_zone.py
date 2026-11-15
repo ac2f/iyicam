@@ -480,3 +480,28 @@ def test_the_shortened_route_keeps_the_cuts_that_have_to_come_first_in_front():
     assert seq._two_opt(pts, start) == [0, 2, 1]                      # (shortest: left to right)
     assert seq._two_opt(pts, start, before=[(1, 2)]) == [0, 1, 2]     # point 1 first, then 2: the stretch stays
     assert seq._two_opt(pts, start, before=[(0, 1)]) == [0, 2, 1]     # (a wish the shorter route keeps: reversed)
+
+
+def test_the_support_map_names_the_cuts_that_take_the_sheet_away_from_a_closing_zone():
+    """A tall part with a lower part beside its lower right corner: cut after it, the lower part leaves the zone without sheet; the map
+    says so, says the lower part is what would have to come after, and that nothing is wrong when it does."""
+    tall = shapes.rectangle(20, 60, 60, 150)
+    low = shapes.rectangle(88, 0, 50, 100)                           # beside the tall one's lower right, higher than its zone reaches
+    p, s, objs = make_project([[tall], [low]], size=(220, 300))
+    t = add_tp(p, "profile", end_mill(6), {"through": True}, objs)
+    t.sequence = {"strategy": "rows_bl", "smart_starts": False}
+    tp = compute_toolpath(p, t, s).toolpaths[0]
+    items = []
+    for o in objs:
+        it = seq.SeqItem(f"{o.id}:0", o.contours[0], kerf=clip.offset_lines([o.contours[0].flatten(0.05)], R, closed=True))
+        c = next(c for c in tp.cuts if c["key"] == it.key)
+        it.loop, it.radius = c["loop"], R
+        items.append(it)
+    seq.containment(items)
+    smap = seq.SupportMap(items, {"strategy": "rows_bl", "corner_distance": 0.0}, seq.BBox(0, 0, 220, 300))
+    a, b = items[0].key, items[1].key
+    sup, _, blockers = smap.best(a, {b}, band=True)
+    assert sup < seq.FULL_SUPPORT and blockers == {b}                # the lower part first: no held place in the zone
+    assert smap.cheapest(a, {b}, band=True) == {b}
+    sup, _, blockers = smap.best(a, set(), band=True)
+    assert sup >= seq.FULL_SUPPORT and not blockers                  # the tall part first: held

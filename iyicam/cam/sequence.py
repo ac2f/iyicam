@@ -679,7 +679,7 @@ class SupportMap:
         for b in names:
             h1, h5 = inf["hits"][b]
             x = (h1 | h5)
-            c = np.concatenate([[0], np.cumsum(np.concatenate([x, x]).astype(int))])
+            c = np.concatenate([[0], np.cumsum(np.concatenate([x, x, x]).astype(int))])
             idx = np.arange(S) + S
             cover.append((c[idx + 2] - c[idx - m]) > 0)               # the stretch before a place and its neighbour
         if not names:
