@@ -541,7 +541,7 @@ def sequence(items: list[SeqItem], cfg: dict, pos: Pt = (0.0, 0.0),
         if zoning and blockers and (rp is None or ok):
             order = zone_order(order, blockers, by_key, pull_reach(n) if rp is not None else 2, settle,
                                sheet if rp is not None else None, replayer=rp, snaps=snaps)
-        if zoning and (rp is None or ok):
+        if zoning and rp is not None and ok:
             # every cut has to close held by sheet that is still there: whatever is not yet, goes in front of what takes it
             order, unheld = support_order(order, by_key, SupportMap(items, s, sheet), settle, sheet, rp)
             if unheld:
@@ -590,7 +590,7 @@ def _signature(items: list[SeqItem], s: dict, pos: Pt, sheet: BBox | None, zones
 # closing zones
 # ---------------------------------------------------------------------------
 
-REPLAY_LIMIT = 300      # a zone order is replayed (:func:`is_supported`) up to this many cuts; more: only neighbours swap places
+REPLAY_LIMIT = 400      # a zone order is replayed (:func:`is_supported`) up to this many cuts; more: only neighbours swap places
 POLICY_STRATEGIES = ('small_first', 'centre_out', 'edges_in')   # an order with a purpose of its own: left as it is
 ZONE_RINGS = (1.5, 5.0)     # how far beyond the cut the material has to be there (the two rings next to it)
 
@@ -1203,7 +1203,7 @@ class Replayer:
         border = round(1.0 * clip.SCALE)
         self.lo = (round(f.xmin * clip.SCALE) + border, round(f.ymin * clip.SCALE) + border)
         self.hi = (round(f.xmax * clip.SCALE) - border, round(f.ymax * clip.SCALE) - border)
-        tol = round(0.05 * clip.SCALE)
+        tol = round(0.3 * clip.SCALE)             # (the cut areas are simplified by 0.3 mm: a third of the points, the same answer)
         self.kerf = {it.key: _lean(clip._clean(it.kerf), tol) for it in all_ if it.kerf}
         self.solids = {it.key: _lean(clip._clean(it.solid), tol) for it in all_ if it.solid}
 
