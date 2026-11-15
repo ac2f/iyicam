@@ -244,11 +244,15 @@ With smart start points on, an automatic order is made to suit the closing zones
   another cut to go to.
 * **Support map.** After that, every outline is looked at on its own: where along it could the cut close with the
   sheet beyond it (two rings, 1.5 and 5 mm beyond the cut width, at the close and along the 6 tool radii cut last)
-  still there, given the cuts that come before it? A cut that has no such place in its closing zone (the zone
-  itself, or up to 8 mm / 20 % of the part along the side from it) is brought in front of the fewest cuts that
-  would give it one; when that cannot be had in the zone it is asked anywhere along the cut. Pulls that would leave
-  a cut in loose scrap are given up one by one (the harmless ones stay), and a last pass brings the cuts that
-  would then be loose in front of what closes them when that holds more cuts than before.
+  still there, given the cuts that come before it, and the plunging tool keeping the start margin from the cut
+  areas before it? The map samples the loop and measures the stretch cut last exactly the way the start point
+  choice does, so what it calls held is what the start point choice will find held. A cut that has no such place
+  in its closing zone (the zone itself, or up to 8 mm / 8 % of the part along the side from it) is brought in
+  front of the fewest cuts that would give it one; when that cannot be had in the zone it is asked anywhere along
+  the cut. Pulls that would leave a cut in loose scrap are given up one by one (the harmless ones stay), and a
+  last pass brings the cuts that would then be loose in front of what closes them, kept when the cuts then close
+  nearer to their zones in all (a cut that cannot be held counts for a lot, so a big letter's close is worth
+  more than a small piece's).
 * Cuts that want to come before each other keep the order of the strategy.
 * **Every order is replayed** (up to 400 cuts on a sheet): a pull that would leave a cut in loose scrap is
   given up (the one that closes the scrap first, then the next one, until nothing is loose), and
@@ -261,13 +265,14 @@ With smart start points on, an automatic order is made to suit the closing zones
 Where a wish cannot be fulfilled (a part packed between big letters that are cut first) the start goes to the
 nearest place along the part that is held, and the cut explanation says how far from the zone it closes.
 
-Measured on the 543 letters of a real sign (nested four ways: free with gravity to the left, free and turned,
-in rows from the bottom left, in columns from the bottom right; with the rows, diagonal, shortest travel and
-smart route strategies; 16 runs, 8688 cuts), each cut judged on its own: no cut is made in loose scrap, no cut is
-cut before something inside it, and 0.6 % of the cuts (49) close away from their zone because the parts that
-are cut before them stand where the zone is (parts packed between big letters, in dense columns of small ones);
-those close on a place that is held, except 3 where a corner of the last stretch still touches an area cut before.
-The parts that do not fit on a sheet at all (the page of the drawing is bigger than one sheet) were left out.
+Measured on the 543 letters of a real sign nested on three 156 x 305 cm sheets (free, gravity to the left,
+bottom left to top right, 6 mm end mill, smart start points), each cut judged on its own: no cut is made in loose
+scrap, no cut is cut before something inside it, none closes with a cut area of an earlier cut facing the stretch
+cut last, and 9 of them (1.7 %) close 18 to 78 mm away from their zone (more than 8 mm / 8 % of the part): the
+parts cut before them stand where the zone is (a small letter packed between big ones that must be cut first to
+keep it from loose scrap); they close on a place that is held. The parts that do not fit on a sheet at all (the
+page of the drawing is bigger than one sheet) were left out. Nesting the sheets and calculating all 543 cuts took
+about nine minutes in all (the support map and the replay are the slow part on a sheet with hundreds of cuts).
 
 ## What a start point change recalculates
 

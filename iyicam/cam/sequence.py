@@ -597,7 +597,7 @@ ZONE_RINGS = (1.5, 5.0)     # how far beyond the cut the material has to be ther
 
 FULL_SUPPORT = 0.99    # a cut is held when what is beyond it where it closes is there (all but a speck)
 ZONE_BAND = 8.0        # mm along the loop from the target of the closing zone that still count as closing in it
-ZONE_BAND_FRACTION = 0.2    # ... or this fraction of the part (its longer side), whichever is more
+ZONE_BAND_FRACTION = 0.08   # ... or this fraction of the part (its longer side), whichever is more
 
 
 class SupportMap:
@@ -606,7 +606,9 @@ class SupportMap:
 
     The sheet beyond a cut is probed in the two rings next to it (1.5 and 5 mm beyond the cut width) at ``samples``
     places along the loop; a place holds the cut when the rings are there at it, at its neighbours and along the stretch
-    cut last before it (6 tool radii), the way :func:`startpoints.choose_start` judges it.
+    cut last before it (6 tool radii), the way :func:`startpoints.choose_start` judges it. A place is also only usable
+    when the plunging tool keeps ``start_margin`` from the cut areas of the cuts before it (it never goes down in
+    them): :func:`startpoints.choose_start` leaves such places out, so this map does too.
     """
 
     def __init__(self, items: list[SeqItem], cfg: dict, sheet: BBox | None = None):
@@ -616,6 +618,8 @@ class SupportMap:
         by_key = {it.key: it for it in items}
         self.info: dict[str, dict] = {}
         region = getattr(sheet, "region", None)
+        margin = float(cfg.get("start_margin", 1.0))
+        grown: dict[tuple[str, float], list] = {}                  # the cut area of a cut grown by what the plunge keeps clear
         for it in cand:
             loop = it.loop
             walker = PathWalker(loop.segs, True)
@@ -625,7 +629,7 @@ class SupportMap:
             r = it.radius
             corner = cfg.get("corner_distance") or max(2.0, r)
             corner = min(corner, L / 8)
-            S = int(min(360, max(60, L / 2.0)))
+            S = int(min(240, max(64, L / 1.5)))                  # (the places choose_start samples the loop at)
             ss = np.arange(S) * L / S
             P, T = sample(walker, ss)
             cw = not loop.is_ccw()
@@ -651,16 +655,20 @@ class SupportMap:
                 edge = np.where(on, 1.0, np.where(p_on, EDGE_HOLD, 1.0))     # (off the sheet: its rim is still held)
                 rings.append((Q, edge))
             lo, hi = np.min([q.min(axis=0) for q, _ in rings], axis=0), np.max([q.max(axis=0) for q, _ in rings], axis=0)
-            hits: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+            hits: dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
             related = ancestors(it, by_key) | descendants(it.key, by_key)
             for j in _near(boxes, (*lo, *hi), 0.01):
                 o = kerfed[j]
                 if o is it or o.key in related:
                     continue
                 h = [clip.region_mask(q, o.kerf) for q, _ in rings]
-                if h[0].any() or h[1].any():
-                    hits[o.key] = (h[0], h[1])
-            m = max(2, int(round((6 * r + corner) / (L / S))))
+                g = grown.get((o.key, round(r, 3)))
+                if g is None:
+                    g = grown[(o.key, round(r, 3))] = clip.offset(o.kerf, r + margin)
+                h0 = clip.region_mask(P, g)                       # (the tool going down here would touch that cut area)
+                if h[0].any() or h[1].any() or h0.any():
+                    hits[o.key] = (h[0], h[1], h0)
+            m = max(1, int(math.floor(min(L / 3, 6 * r + corner) / (L / S) + 0.5)))      # (the samples cut last before a place)
             zone = closing_zone(walker, hold_direction(cfg["strategy"], it.center, sheet), cw, corner, spans)
             target = zone.target / L * S
             u = ((zone.corner[0] - ss) if zone.before else (ss - zone.corner[1])) % L       # mm from the corner of the zone
@@ -668,7 +676,7 @@ class SupportMap:
             width = max(ZONE_BAND, ZONE_BAND_FRACTION * max(float(np.ptp(P[:, 0])), float(np.ptp(P[:, 1]))))
             band = valid & (gap <= width)
             self.info[it.key] = dict(S=S, m=min(m, S - 1), valid=valid, band=band if band.any() else valid,
-                                     edge=(rings[0][1], rings[1][1]), hits=hits, target=target, gap=gap)
+                                     edge=(rings[0][1], rings[1][1]), hits=hits, target=target, gap=gap, width=width)
 
     def best(self, key: str, earlier: set[str], band: bool = False) -> tuple[float, int, set[str]]:
         """``(support, place, cuts that take it away)`` of the best place for the cut ``key`` to close at when the cuts
@@ -678,20 +686,22 @@ class SupportMap:
         S, m = inf["S"], inf["m"]
         any1 = np.zeros(S, bool)
         any5 = np.zeros(S, bool)
-        for b, (h1, h5) in inf["hits"].items():
+        any0 = np.zeros(S, bool)
+        for b, (h1, h5, h0) in inf["hits"].items():
             if b in earlier:
                 any1 |= h1
                 any5 |= h5
+                any0 |= h0
         loc = 0.6 * np.where(any1, 0.0, inf["edge"][0]) + 0.4 * np.where(any5, 0.0, inf["edge"][1])
         near = np.minimum.reduce([np.roll(loc, d) for d in (-1, 0, 1)])
         c = np.concatenate([[0.0], np.cumsum(np.concatenate([loc, loc]))])
-        idx = np.arange(S) + S                                      # (the stretch before a place: the m places up to it)
-        mean = (c[idx + 1] - c[idx + 1 - m]) / m
-        ok = inf["band"] if band else inf["valid"]
+        idx = np.arange(S) + S                                      # (the stretch before a place: the m samples in front of it)
+        mean = (c[idx] - c[idx - m]) / m
+        ok = (inf["band"] if band else inf["valid"]) & ~any0
         sup = np.where(ok, np.minimum(near, mean), -1.0)
         k = int(np.argmax(np.round(sup, 3) - 1e-4 * inf["gap"]))
-        blockers = {b for b, (h1, h5) in inf["hits"].items() if b in earlier
-                    and (h1 | h5)[(np.arange(k - m, k + 2)) % S].any()}
+        blockers = {b for b, (h1, h5, h0) in inf["hits"].items() if b in earlier
+                    and ((h1 | h5)[(np.arange(k - m, k + 2)) % S].any() or h0[k])}
         return float(sup[k]), k, blockers
 
     def cheapest(self, key: str, earlier: set[str], band: bool = False) -> set[str]:
@@ -702,11 +712,11 @@ class SupportMap:
         cover = []
         names = [b for b in inf["hits"] if b in earlier]
         for b in names:
-            h1, h5 = inf["hits"][b]
+            h1, h5, h0 = inf["hits"][b]
             x = (h1 | h5)
             c = np.concatenate([[0], np.cumsum(np.concatenate([x, x, x]).astype(int))])
             idx = np.arange(S) + S
-            cover.append((c[idx + 2] - c[idx - m]) > 0)               # the stretch before a place and its neighbour
+            cover.append(((c[idx + 2] - c[idx - m]) > 0) | h0)        # the stretch before a place and its neighbour, the plunge
         if not names:
             return set()
         M = np.array(cover)                                         # (cuts x places): does the cut take this place away
@@ -768,25 +778,43 @@ def support_order(order: list[str], items: dict[str, SeqItem], smap: SupportMap,
                 break
     if replayer is not None:
         # what is left: bring the cut in front of what takes its sheet away, and the cuts that would then be cut in loose
-        # scrap in front of what closes it; kept when fewer cuts are held back than before and none gets worse
-        for band in (False, True):
-            for k in list(unheld(order, band)):
-                pos = {x: i for i, x in enumerate(order)}
-                earlier = set(order[:pos[k]])
-                if smap.best(k, earlier, band)[0] >= FULL_SUPPORT:
-                    continue
-                w = smap.cheapest(k, earlier, band)
-                if not w:
-                    continue
-                pulled = settle(_pull(order, {k: w}, items))[0]
-                if pulled == order:
-                    continue
-                mended, _, ok = mend_loose(pulled, items, replayer)
-                if ok:
+        # scrap in front of what closes it; kept when the cuts close nearer their zones than before (a cut that cannot be
+        # held is worth a lot) and none gets worse
+        def excess(o: list[str]) -> float:
+            ps = {k: i for i, k in enumerate(o)}
+            tot = 0.0
+            for k in o:
+                if k in smap.info:
+                    sup, place, _ = smap.best(k, set(o[:ps[k]]), False)
+                    inf = smap.info[k]
+                    tot += 1000.0 if sup < FULL_SUPPORT else max(0.0, float(inf["gap"][place]) - inf["width"])
+            return tot
+
+        cur = excess(order)
+        for _ in range(3):
+            improved = False
+            for band in (True, False):
+                for k in list(unheld(order, band)):
+                    pos = {x: i for i, x in enumerate(order)}
+                    earlier = set(order[:pos[k]])
+                    if smap.best(k, earlier, band)[0] >= FULL_SUPPORT:
+                        continue
+                    w = smap.cheapest(k, earlier, band)
+                    if not w:
+                        continue
+                    pulled = settle(_pull(order, {k: w}, items))[0]
+                    if pulled == order:
+                        continue
+                    mended, _, ok = mend_loose(pulled, items, replayer)
+                    if not ok:
+                        continue
                     now = (len(unheld(order, False)), len(unheld(order, True)))
                     new = (len(unheld(mended, False)), len(unheld(mended, True)))
-                    if new[0] <= now[0] and new[1] <= now[1] and new != now:
-                        order = mended
+                    ex = excess(mended)
+                    if new[0] <= now[0] and ((new[1] <= now[1] and new != now) or ex < cur - 1e-6):
+                        order, cur, improved = mended, ex, True
+            if not improved:
+                break
     return order, list(unheld(order, False))
 
 

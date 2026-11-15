@@ -505,3 +505,50 @@ def test_the_support_map_names_the_cuts_that_take_the_sheet_away_from_a_closing_
     assert smap.cheapest(a, {b}, band=True) == {b}
     sup, _, blockers = smap.best(a, set(), band=True)
     assert sup >= seq.FULL_SUPPORT and not blockers                  # the tall part first: held
+
+
+def _map_of(rects, size=(220, 300), cfg=None):
+    """Support map of rectangles (x, y, w, h) cut with a 6 mm end mill, and their items."""
+    objs_shapes = [[shapes.rectangle(*r)] for r in rects]
+    p, s, objs = make_project(objs_shapes, size=size)
+    t = add_tp(p, "profile", end_mill(6), {"through": True}, objs)
+    t.sequence = {"strategy": "rows_bl", "smart_starts": False}
+    tp = compute_toolpath(p, t, s).toolpaths[0]
+    items = []
+    for o in objs:
+        it = seq.SeqItem(f"{o.id}:0", o.contours[0], kerf=clip.offset_lines([o.contours[0].flatten(0.05)], R, closed=True))
+        c = next(c for c in tp.cuts if c["key"] == it.key)
+        it.loop, it.radius = c["loop"], R
+        items.append(it)
+    seq.containment(items)
+    return seq.SupportMap(items, dict({"strategy": "rows_bl", "corner_distance": 0.0}, **(cfg or {})), seq.BBox(0, 0, *size)), items
+
+
+def test_the_support_map_keeps_the_plunge_clear_of_the_cut_areas_before_it():
+    """A place where the plunging tool would touch the cut area of an earlier cut is no place to close at, even when
+    the sheet beyond the cut is there (the rings only look away from the cut): a cut area that lies on the tool path
+    itself, but not in the rings."""
+    smap, items = _map_of([(20, 60, 60, 150), (150, 20, 6, 6)])
+    a, small = items[0].key, items[1].key
+    inf = smap.info[a]
+    # the small cut's area lies right on the closing zone of the first cut (a square of 6 mm around its target)
+    walker_pt = np.array(items[0].loop.point_at_length(inf["target"] / inf["S"] * items[0].loop.length()))
+    small_item = items[1]
+    small_item.kerf = [[(walker_pt[0] + dx, walker_pt[1] + dy) for dx, dy in ((-3, -3), (3, -3), (3, 3), (-3, 3))]]
+    smap = seq.SupportMap(items, {"strategy": "rows_bl", "corner_distance": 0.0}, seq.BBox(0, 0, 220, 300))
+    inf = smap.info[a]
+    h1, h5, h0 = inf["hits"][small]
+    assert h0.any() and not (h1 | h5).any()                       # (the plunge touches it, the rings do not)
+    sup, k, blockers = smap.best(a, {small}, band=True)
+    assert not h0[k]                                              # never the place it touches
+    sup0, k0, _ = smap.best(a, set(), band=True)
+    assert sup0 >= seq.FULL_SUPPORT
+
+
+def test_the_closing_band_is_eight_mm_or_eight_percent_of_the_part():
+    """The places that still count as the closing zone: 8 mm, or 8 % of the part's longer side, along the side."""
+    smap, items = _map_of([(20, 60, 60, 150)])
+    bb = items[0].loop.bbox()
+    expect = max(seq.ZONE_BAND, seq.ZONE_BAND_FRACTION * max(bb.width, bb.height))
+    assert abs(smap.info[items[0].key]["width"] - expect) < 1e-6
+    assert seq.ZONE_BAND_FRACTION <= 0.1                        # (a wider band lets a cut close far from the corner)
