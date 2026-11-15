@@ -470,3 +470,13 @@ def test_a_part_with_inner_pieces_is_moved_with_them_when_it_is_brought_forward(
     items = {"o": outer, "i": inner}
     order, moved = seq.fix_loose(["i", "o"], items, None)
     assert sorted(order) == ["i", "o"]
+
+
+def test_the_shortened_route_keeps_the_cuts_that_have_to_come_first_in_front():
+    """2-opt reverses stretches of the route; a stretch that holds a cut and the cut it has to come before is not
+    reversed (here the shorter route 1, 3, 2 would cut the second before the first)."""
+    pts = np.array([[1.0, 0.0], [3.0, 0.0], [2.0, 0.0]])
+    start = np.array([0.0, 0.0])
+    assert seq._two_opt(pts, start) == [0, 2, 1]                      # (shortest: left to right)
+    assert seq._two_opt(pts, start, before=[(1, 2)]) == [0, 1, 2]     # point 1 first, then 2: the stretch stays
+    assert seq._two_opt(pts, start, before=[(0, 1)]) == [0, 2, 1]     # (a wish the shorter route keeps: reversed)

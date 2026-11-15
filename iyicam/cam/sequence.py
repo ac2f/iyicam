@@ -308,12 +308,17 @@ def route_length(items: list[SeqItem], pos: Pt) -> float:
 SMART_LIMIT = 400     # more items than this: the smart strategy stays with the nearest-next order (it is O(n^2))
 
 
-def _two_opt(pts: np.ndarray, start: np.ndarray, passes: int = 60) -> list[int]:
-    """A short path through ``pts`` from ``start`` (2-opt: reverse stretches of the path while that shortens it)."""
+def _two_opt(pts: np.ndarray, start: np.ndarray, passes: int = 60, before: list[tuple[int, int]] | None = None
+             ) -> list[int]:
+    """A short path through ``pts`` from ``start`` (2-opt: reverse stretches of the path while that shortens it).
+    ``before`` are pairs ``(a, b)`` of points ``a`` has to be visited before ``b``: no stretch that holds both is reversed."""
     n = len(pts)
     P = np.vstack([start[None, :], pts])
     D = np.hypot(P[:, None, 0] - P[None, :, 0], P[:, None, 1] - P[None, :, 1])
     tour = list(range(n + 1))                 # (0 is the start: it stays first)
+    pa = np.array([a + 1 for a, _ in before or ()], int)
+    pb = np.array([b + 1 for _, b in before or ()], int)
+    at = np.arange(n + 1)                    # where every point stands in the tour
     for _ in range(passes):
         improved = False
         for i in range(1, n):
@@ -325,11 +330,16 @@ def _two_opt(pts: np.ndarray, start: np.ndarray, passes: int = 60) -> list[int]:
             old = D[a, ti] + np.where(nxt >= 0, D[tj, np.maximum(nxt, 0)], 0.0)
             new = D[a, tj] + np.where(nxt >= 0, D[ti, np.maximum(nxt, 0)], 0.0)
             gain = old - new
-            k = int(np.argmax(gain))
-            if gain[k] > 1e-9:
+            for k in np.argsort(-gain)[:8 if len(pa) else 1]:
+                if gain[k] <= 1e-9:
+                    break
                 j = int(js[k])
+                if len(pa) and np.any((at[pa] >= i) & (at[pa] <= j) & (at[pb] >= i) & (at[pb] <= j)):
+                    continue
                 tour[i:j + 1] = tour[i:j + 1][::-1]
+                at[tour[i:j + 1]] = np.arange(i, j + 1)
                 improved = True
+                break
         if not improved:
             break
     return [k - 1 for k in tour[1:]]
@@ -341,7 +351,10 @@ def _smart(items: list[SeqItem], pos: Pt, wait: dict[str, set[str]] | None = Non
     if len(greedy) < 4 or len(greedy) > SMART_LIMIT:
         return greedy
     pts = np.array([it.center for it in greedy], float)
-    better = [greedy[i] for i in _two_opt(pts, np.asarray(pos, float))]
+    where = {it.key: i for i, it in enumerate(greedy)}
+    before = [(where[a], where[b]) for b, owners in (wait or {}).items() for a in owners
+              if a in where and b in where and where[a] < where[b]]
+    better = [greedy[i] for i in _two_opt(pts, np.asarray(pos, float), before=before)]
     return better if route_length(better, pos) < route_length(greedy, pos) - 1e-9 else greedy
 
 
