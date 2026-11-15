@@ -486,7 +486,7 @@ def test_the_support_map_names_the_cuts_that_take_the_sheet_away_from_a_closing_
     """A tall part with a lower part beside its lower right corner: cut after it, the lower part leaves the zone without sheet; the map
     says so, says the lower part is what would have to come after, and that nothing is wrong when it does."""
     tall = shapes.rectangle(20, 60, 60, 150)
-    low = shapes.rectangle(88, 0, 50, 100)                           # beside the tall one's lower right, higher than its zone reaches
+    low = shapes.rectangle(88, 0, 50, 180)                           # beside the tall one's lower right, higher than its zone reaches
     p, s, objs = make_project([[tall], [low]], size=(220, 300))
     t = add_tp(p, "profile", end_mill(6), {"through": True}, objs)
     t.sequence = {"strategy": "rows_bl", "smart_starts": False}

@@ -21,7 +21,7 @@ cut made in material that is no longer connected to the sheet frame.
 from __future__ import annotations
 
 import math
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -499,6 +499,11 @@ def sequence(items: list[SeqItem], cfg: dict, pos: Pt = (0.0, 0.0),
     by_key = {it.key: it for it in items}
     containment(items)
     notes: list[str] = []
+    sig = _signature(items, s, pos, sheet, zones)
+    hit = _ORDER_CACHE.get(sig)
+    if hit is not None:
+        _ORDER_CACHE.move_to_end(sig)
+        return list(hit[0]), list(hit[1])
     islands = island_constraints(items, sheet)
     loose_fixed: list[str] = []
 
@@ -559,7 +564,26 @@ def sequence(items: list[SeqItem], cfg: dict, pos: Pt = (0.0, 0.0),
     bad = gouges(items)
     if bad:
         notes.append(f"{len(bad)} cut(s) run into neighbouring parts: the parts are closer than the tool allows")
+    _ORDER_CACHE[sig] = (list(order), list(notes))
+    while len(_ORDER_CACHE) > 8:
+        _ORDER_CACHE.popitem(last=False)
     return order, notes
+
+
+_ORDER_CACHE: "OrderedDict[tuple, tuple[list[str], list[str]]]" = OrderedDict()
+
+
+def _signature(items: list[SeqItem], s: dict, pos: Pt, sheet: BBox | None, zones: bool) -> tuple:
+    """What an order depends on: the settings, the sheet and every item's place, size and cut area (not where along
+    its outline it starts: moving the start points does not change the order)."""
+    sh = None if sheet is None else (round(sheet.xmin, 3), round(sheet.ymin, 3), round(sheet.xmax, 3), round(sheet.ymax, 3),
+                                     repr(getattr(sheet, "region", None)))
+    cfg = (s["strategy"], s["grouping"], s["band"], s["auto_order"], () if s["auto_order"] else tuple(s["order"]),
+           s["corner_distance"], bool(zones))   # (an automatic order does not depend on the one made last time)
+    rows = tuple((it.key, round(it.bbox.xmin, 3), round(it.bbox.ymin, 3), round(it.bbox.xmax, 3), round(it.bbox.ymax, 3),
+                  round(it.area, 0), it.frees, round(it.radius, 3), None if it.fixed is None else tuple(round(v, 3) for v in it.fixed),
+                  len(it.kerf or ()), len(it.solid or ())) for it in items)
+    return (cfg, sh, tuple(round(v, 3) for v in pos), rows)
 
 
 # ---------------------------------------------------------------------------
@@ -573,7 +597,7 @@ ZONE_RINGS = (1.5, 5.0)     # how far beyond the cut the material has to be ther
 
 FULL_SUPPORT = 0.99    # a cut is held when what is beyond it where it closes is there (all but a speck)
 ZONE_BAND = 8.0        # mm along the loop from the target of the closing zone that still count as closing in it
-ZONE_BAND_FRACTION = 0.08   # ... or this fraction of the part, whichever is more
+ZONE_BAND_FRACTION = 0.2    # ... or this fraction of the part (its longer side), whichever is more
 
 
 class SupportMap:
@@ -639,7 +663,8 @@ class SupportMap:
             m = max(2, int(round((6 * r + corner) / (L / S))))
             zone = closing_zone(walker, hold_direction(cfg["strategy"], it.center, sheet), cw, corner, spans)
             target = zone.target / L * S
-            gap = np.abs(((np.arange(S) - target + S / 2) % S) - S / 2) * (L / S)        # mm along the loop from the zone
+            u = ((zone.corner[0] - ss) if zone.before else (ss - zone.corner[1])) % L       # mm from the corner of the zone
+            gap = np.where(u <= L / 2, np.abs(u - zone.delta), 1e9)                          # (past the corner: not the zone)
             width = max(ZONE_BAND, ZONE_BAND_FRACTION * max(float(np.ptp(P[:, 0])), float(np.ptp(P[:, 1]))))
             band = valid & (gap <= width)
             self.info[it.key] = dict(S=S, m=min(m, S - 1), valid=valid, band=band if band.any() else valid,
@@ -707,19 +732,40 @@ def support_order(order: list[str], items: dict[str, SeqItem], smap: SupportMap,
                     out[k] = smap.cheapest(k, earlier, band)
         return out
 
+    snaps: list = []
+    if replayer is not None:
+        replayer.first_loose(order, snaps)
     for band in (True, False):
         for _ in range(tries):
             wishes = {k: w for k, w in unheld(order, band).items() if w}
             if not wishes:
                 break
-            snaps: list = []
-            if replayer is not None:
-                replayer.first_loose(order, snaps)
-            new = zone_order(order, wishes, items, len(order), settle, sheet if replayer is not None else None,
-                             replayer=replayer, snaps=snaps if replayer is not None else None)
-            if new == order:
+            progressed = False
+            if replayer is not None and len(wishes) > 1:        # all at once first (a few replays), then the rest
+                fresh = []
+                batch = zone_order(order, wishes, items, len(order), settle, sheet, tries=6,
+                                   replayer=replayer, snaps=snaps, out_snaps=fresh)
+                if batch != order:
+                    order, snaps, progressed = batch, fresh, True
+            for k in [k for k in order if k in wishes]:         # one cut at a time: a pull that leaves scrap loose is
+                pos = {x: i for i, x in enumerate(order)}      # given up without the harmless ones going with it
+                earlier = set(order[:pos[k]])
+                if smap.best(k, earlier, band)[0] >= FULL_SUPPORT:
+                    continue                                    # (an earlier pull has held it already)
+                w = smap.cheapest(k, earlier, band)
+                if not w:
+                    continue
+                fresh: list = []
+                new = zone_order(order, {k: w}, items, len(order), settle, sheet if replayer is not None else None,
+                                 replayer=replayer, snaps=snaps if replayer is not None else None, out_snaps=fresh)
+                if new == order:
+                    continue
+                if replayer is not None:
+                    snaps = fresh
+                order = new
+                progressed = True
+            if not progressed:
                 break
-            order = new
     return order, list(unheld(order, False))
 
 
@@ -819,7 +865,7 @@ def touching(kerfs: list[tuple[str, list]], loose: list, grow: float = 0.3) -> l
 
 def zone_order(order: list[str], blockers: dict[str, set[str]], items: dict[str, SeqItem], reach: int,
                settle, sheet: BBox | None = None, tries: int = 24, replayer: Replayer | None = None,
-               snaps: list | None = None) -> list[str]:
+               snaps: list | None = None, out_snaps: list | None = None) -> list[str]:
     """:func:`apply_zones` that never leaves a cut in loose scrap (with a ``sheet``, the order is replayed).
 
     When the pulls leave a cut in scrap that the cuts around it have set loose, the cut that was brought in
@@ -840,8 +886,11 @@ def zone_order(order: list[str], blockers: dict[str, set[str]], items: dict[str,
         if rp is None:
             return zoned
         d = _first_difference(order, zoned)
-        found = rp.first_loose(zoned, list(snaps[:d + 1]) if snaps else [], d)
+        fresh = list(snaps[:d + 1]) if snaps else []
+        found = rp.first_loose(zoned, fresh, d)
         if found is None:
+            if out_snaps is not None:
+                out_snaps[:] = fresh
             return zoned
         i, loose = found
         x = zoned[i]
