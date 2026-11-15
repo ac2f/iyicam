@@ -254,10 +254,13 @@ With smart start points on, an automatic order is made to suit the closing zones
 Where a wish cannot be fulfilled (a part packed between big letters that are cut first) the start goes to the
 nearest place along the part that is held, and the cut explanation says how far from the zone it closes.
 
-Measured on the 543 letters of a real sign (nested every way: free with every gravity, in rows
-and columns from every corner, turned in 90° and 15° steps, with 8 mm and 24 mm between the parts), each cut
-judged on its own: the cuts that do not close in the zone are the few that are packed between big letters;
-none of them closes next to an area cut before it, and no cut is made in loose scrap.
+Measured on the 543 letters of a real sign (nested four ways: free with gravity to the left, free and turned,
+in rows from the bottom left, in columns from the bottom right; with the rows, diagonal, shortest travel and
+smart route strategies; 16 runs, 8688 cuts), each cut judged on its own: no cut is made in loose scrap, no cut is
+cut before something inside it, and 0.6 % of the cuts (49) close away from their zone because the parts that
+are cut before them stand where the zone is (parts packed between big letters, in dense columns of small ones);
+those close on a place that is held, except 3 where a corner of the last stretch still touches an area cut before.
+The parts that do not fit on a sheet at all (the page of the drawing is bigger than one sheet) were left out.
 
 ## What a start point change recalculates
 
