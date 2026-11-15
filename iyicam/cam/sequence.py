@@ -766,6 +766,27 @@ def support_order(order: list[str], items: dict[str, SeqItem], smap: SupportMap,
                 progressed = True
             if not progressed:
                 break
+    if replayer is not None:
+        # what is left: bring the cut in front of what takes its sheet away, and the cuts that would then be cut in loose
+        # scrap in front of what closes it; kept when fewer cuts are held back than before and none gets worse
+        for band in (False, True):
+            for k in list(unheld(order, band)):
+                pos = {x: i for i, x in enumerate(order)}
+                earlier = set(order[:pos[k]])
+                if smap.best(k, earlier, band)[0] >= FULL_SUPPORT:
+                    continue
+                w = smap.cheapest(k, earlier, band)
+                if not w:
+                    continue
+                pulled = settle(_pull(order, {k: w}, items))[0]
+                if pulled == order:
+                    continue
+                mended, _, ok = mend_loose(pulled, items, replayer)
+                if ok:
+                    now = (len(unheld(order, False)), len(unheld(order, True)))
+                    new = (len(unheld(mended, False)), len(unheld(mended, True)))
+                    if new[0] <= now[0] and new[1] <= now[1] and new != now:
+                        order = mended
     return order, list(unheld(order, False))
 
 
