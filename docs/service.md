@@ -95,7 +95,10 @@ is one of the **last three jobs** of the engine:
   a job that was over within the call that started it counts as given to the device that started it;
 * they are written to `~/.iyicam/jobs` (`index.json` and one gzip file per result, mode 600; a result larger than 256 MB stays
   in memory only), so **restarting the engine does not lose a finished job**; one that was still running then is `error` with
-  `interrupted`. An unreadable index means no kept jobs, nothing more. With a hub the files are those of the agent's computer.
+  `interrupted`. An unreadable index means no kept jobs, nothing more. With a hub the files are those of the agent's computer;
+  while the agent is away the server's own engine answers (see [web.md](web.md#when-the-agent-is-away-the-server-answers)): the
+  answers are the same, the header `X-Engine` says `agent` or `server`, and what needs the PC (`list`, `open`, `save`,
+  `save_files`, `post_save`, `post_delete`) answers `needs_agent` (503).
 
 ## Tested against the program itself
 

@@ -41,7 +41,7 @@ from urllib.parse import parse_qs, urlsplit
 from .api import API_OPS, ERROR_STATUS, call, status_of  # noqa: F401  (API_OPS, ERROR_STATUS: part of this module's face)
 from .files import FILE_OPS, Files
 from .host import ServiceHost
-from .hub import Hub, HubAuth, HubError
+from .hub import JOB_OPS, Fallback, Hub, HubAuth, HubError
 from .keys import KEY_ALPHABET, KeyStore, Throttled, key_file, make_key, normalise_key  # noqa: F401  (re-exported)
 from .sessions import REMEMBER_TTL, SESSION_TTL, SessionStore  # noqa: F401  (part of this module's face)
 from .ops import API_VERSION
@@ -151,11 +151,12 @@ class ServiceServer(ThreadingHTTPServer):
 
     def __init__(self, address: tuple[str, int], service: ServiceHost | None, auth: Auth | HubAuth, *,
                  trust_proxy: bool = False, max_body: int = DEFAULT_MAX_BODY, verbose: bool = False,
-                 files: Files | None = None, hub: Hub | None = None):
+                 files: Files | None = None, hub: Hub | None = None, fallback: Fallback | None = None):
         if ":" in address[0]:
             self.address_family = socket.AF_INET6
         self.service, self.auth, self.files = service, auth, files      # (files None: no access to the disk at all)
         self.hub = hub                                  # (a hub has no service and no files: the agents have)
+        self.fallback = fallback                        # (a hub's own engine for the agents that are not connected)
         self.trust_proxy, self.max_body, self.verbose = trust_proxy, max_body, verbose
         # only these files are ever served: a name from the URL is looked up here, never turned into a path
         self.assets = {p.name: p for p in WEB_DIR.iterdir() if p.is_file() and p.suffix in STATIC_TYPES} \
@@ -169,6 +170,8 @@ class ServiceServer(ThreadingHTTPServer):
     def server_close(self) -> None:
         if self.hub is not None:                        # (the agents' polls that wait for a call are let go)
             self.hub.close()
+        if self.fallback is not None:
+            self.fallback.close()
         super().server_close()
 
     def handle_error(self, request, client_address) -> None:     # (a phone that went away is not news)
@@ -373,21 +376,68 @@ class Handler(BaseHTTPRequestHandler):
         payload = self._read_json()
         if payload is None:
             return
-        if self.server.hub is not None:                 # a hub: the agent of this session answers
+        if self.server.hub is not None:                 # a hub: the agent of this session answers (or, when it is away, the server)
             agent_id = self.server.auth.agent_of(self._token())
             if agent_id is None:                        # (the key was replaced while the body was read)
                 return self._fail(401, "not_logged_in", "enter the key first", close=True)
-            status, out = self.server.hub.submit(agent_id, name, payload)
-        else:
-            status, out = call(self.server.service, self.server.files, name, payload)
+            status, out, engine = self._hub_call(agent_id, name, payload)
+            return self._answer(status, out, engine)
+        status, out = call(self.server.service, self.server.files, name, payload)
         self._answer(status, out)
 
-    def _answer(self, status: int, out) -> None:
+    def _hub_call(self, agent_id: str, name: str, payload: dict, raw: bytes | None = None) -> tuple[int, object, str]:
+        """``(status, answer, engine)`` of a call of a browser that signed in with the client key of an agent.
+
+        **An agent that is connected always does the work.**  Only when it is not, and the call never reached it, the
+        server's own engine answers (:class:`~iyicam.service.hub.Fallback`; none with ``--no-fallback``).  A job that was
+        started on the server is followed on the server, whether the agent is back or not; for any other job of an agent
+        that is away the answer is that the agent is away (the job is on its computer)."""
+        hub, fb = self.server.hub, self.server.fallback
+
+        def to_agent() -> tuple[int, object]:
+            body = payload if raw is None else dict(payload, data_b64=base64.b64encode(raw).decode("ascii"))
+            return hub.submit(agent_id, name, body)
+
+        if fb is None:
+            return (*to_agent(), "agent")
+        if name in JOB_OPS and fb.owns(agent_id, payload.get("id")):       # (started here while the agent was away)
+            return (*fb.call(agent_id, name, payload), "server")
+        if hub.is_online(agent_id):
+            status, out = to_agent()
+            never_reached = (status == 503 and isinstance(out, dict) and out.get("error") == "agent_offline"
+                             and out.get("not_taken"))                    # (it went away before it took the call)
+            if not never_reached:
+                if name == "jobs" and status == 200:
+                    out = self._merged_jobs(agent_id, out, payload)
+                return status, out, "agent"
+        elif name in JOB_OPS:
+            return 503, {"error": "agent_offline",
+                         "message": "the job is on the computer of the agent, which is not connected"}, "agent"
+        status, out = fb.call(agent_id, name, payload, raw)               # the agent is away: nothing of it was used
+        if name == "jobs" and status == 200 and isinstance(out, dict):
+            out = dict(out, jobs=[dict(j, engine="server") for j in out.get("jobs", [])])
+        return status, out, "server"
+
+    def _merged_jobs(self, agent_id: str, out: object, payload: dict) -> object:
+        """The kept jobs of the agent and those that were made on the server while it was away, one list."""
+        mine = self.server.fallback.kept(agent_id, payload.get("device"))
+        if not mine:
+            return out
+        try:
+            data = json.loads(out) if isinstance(out, (bytes, bytearray)) else dict(out)
+            data["jobs"] = list(data.get("jobs", [])) + mine
+            return data
+        except (ValueError, TypeError, AttributeError):
+            return out
+
+    def _answer(self, status: int, out, engine: str | None = None) -> None:
         """An answer of the service; or of an agent, which comes as the JSON the agent wrote: a drawing is millions of
-        numbers and the hub would only read them and write them again."""
+        numbers and the hub would only read them and write them again.  ``engine`` (a hub): who did the work, ``agent`` or
+        ``server``, in the header ``X-Engine``."""
+        extra = {"X-Engine": engine} if engine else {}
         if isinstance(out, (bytes, bytearray)):
-            return self._send(status, bytes(out), "application/json", {"Cache-Control": "no-store"})
-        self._json(status, out)
+            return self._send(status, bytes(out), "application/json", dict({"Cache-Control": "no-store"}, **extra))
+        self._json(status, out, extra or None)
 
     def _import_file(self) -> None:
         """``POST /api/import_file?name=...&thickness=...``: the bytes of a drawing as the body, answered like ``import``.
@@ -415,11 +465,10 @@ class Handler(BaseHTTPRequestHandler):
             agent_id = self.server.auth.agent_of(self._token())
             if agent_id is None:
                 return self._fail(401, "not_logged_in", "enter the key first", close=True)
-            payload["data_b64"] = base64.b64encode(raw).decode("ascii")
-            status, out = self.server.hub.submit(agent_id, "import", payload)
-        else:
-            payload["data"] = raw
-            status, out = call(self.server.service, self.server.files, "import", payload)
+            status, out, engine = self._hub_call(agent_id, "import", payload, raw)
+            return self._answer(status, out, engine)
+        payload["data"] = raw
+        status, out = call(self.server.service, self.server.files, "import", payload)
         self._answer(status, out)
 
     # -- the agents of a hub ---------------------------------------------------------------------
@@ -489,14 +538,17 @@ class Handler(BaseHTTPRequestHandler):
 def make_server(host: str = "127.0.0.1", port: int = DEFAULT_PORT, *, key: str | None = None,
                 key_path: Path | None = None, trust_proxy: bool = False, max_body: int = DEFAULT_MAX_BODY,
                 service: ServiceHost | None = None, verbose: bool = False, roots: list[str] | None = None,
-                files: bool = True, hub: bool | Hub = False, hub_state: Path | None = None) -> ServiceServer:
+                files: bool = True, hub: bool | Hub = False, hub_state: Path | None = None,
+                fallback: bool = True) -> ServiceServer:
     """A server that is bound but not yet serving (``serve_forever()``); ``port=0`` takes a free port.  ``key``
     (instead of the key file) is for tests.  The page may open and save files inside ``roots`` (default: those of
     ``IYICAM_ROOTS``, else the home folder); ``files=False`` gives no access to the disk at all.
 
     ``hub=True`` makes a hub (:mod:`iyicam.service.hub`): no engine and no disk here, the agents have them; the key
     is then the server key that lets agents register.  A ready :class:`~iyicam.service.hub.Hub` can be given too
-    (tests); ``hub_state`` is where the registered agents are kept (default ``~/.iyicam/agents.json``)."""
+    (tests); ``hub_state`` is where the registered agents are kept (default ``~/.iyicam/agents.json``).  A hub works for
+    the browser of an agent that is not connected with an engine of its own (``fallback``, on by default; ``False``:
+    that browser is told the agent is away); an agent that is connected always does the work."""
     if isinstance(hub, Hub):
         keys = hub.keys
     else:
@@ -505,8 +557,9 @@ def make_server(host: str = "127.0.0.1", port: int = DEFAULT_PORT, *, key: str |
     if hub:
         the_hub = hub if isinstance(hub, Hub) else Hub(keys, hub_state)
         kept = the_hub.state.with_name("hub-sessions.json") if keys.fixed is None else None
+        engine = Fallback(the_hub.state.with_name("hub-jobs")) if fallback else None
         return ServiceServer((host, port), None, HubAuth(the_hub, sessions_path=kept), trust_proxy=trust_proxy,
-                             max_body=max_body, verbose=verbose, files=None, hub=the_hub)
+                             max_body=max_body, verbose=verbose, files=None, hub=the_hub, fallback=engine)
     service = service or ServiceHost()
     kept = keys.path.with_name("sessions.json") if keys.fixed is None else None       # (next to the key: a restart signs nobody out)
     return ServiceServer((host, port), service, Auth(keys, sessions_path=kept), trust_proxy=trust_proxy,
@@ -536,10 +589,10 @@ def lan_addresses() -> list[str]:
 
 def serve(host: str = "127.0.0.1", port: int = DEFAULT_PORT, *, trust_proxy: bool = False,
           max_body: int = DEFAULT_MAX_BODY, verbose: bool = True, roots: list[str] | None = None,
-          files: bool = True, hub: bool = False) -> int:
+          files: bool = True, hub: bool = False, fallback: bool = True) -> int:
     try:
         srv = make_server(host, port, trust_proxy=trust_proxy, max_body=max_body, verbose=verbose, roots=roots,
-                          files=files, hub=hub)
+                          files=files, hub=hub, fallback=fallback)
     except OSError as exc:
         print(f"error: cannot listen on {host}:{port}: {exc}", file=sys.stderr)
         return 1
@@ -558,6 +611,8 @@ def serve(host: str = "127.0.0.1", port: int = DEFAULT_PORT, *, trust_proxy: boo
     if hub:
         print("  hub:      agents (iyicam agent) register with the server key; a browser signs in with the client key")
         print("            of an agent and works with the files of that agent's computer")
+        print("            while that agent is not connected the engine of this server answers (--no-fallback: it does not)"
+              if fallback else "            an agent that is not connected is only reported (--no-fallback)")
     elif srv.files is None:
         print("  files:    off (--no-files): the page cannot open or save files of this computer")
     else:

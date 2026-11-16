@@ -228,7 +228,7 @@ class Hub:
         with self._cv:
             agent = self._agents.get(agent_id)
             if agent is None or not self._online(agent):
-                return 503, {"error": "agent_offline",
+                return 503, {"error": "agent_offline", "not_taken": True,
                              "message": "the agent (iyicam agent on the computer) is not connected"}
             if len(agent.pending) + len(agent.inflight) >= MAX_PENDING:
                 return 503, {"error": "too_busy", "message": "too many calls are waiting for the agent"}
@@ -247,23 +247,99 @@ class Hub:
                 if not self._online(agent):
                     gone = True
                     break
+        never_taken = False
         with self._cv:                                  # nobody answered: forget the call
             try:
                 agent.pending.remove(job)
+                never_taken = True                      # (the agent never took it: nothing was done)
             except ValueError:
                 pass
             agent.inflight.pop(job.id, None)
         if job.done.is_set():                           # (the answer came while we were taking the lock)
             return job.status, job.out
         if gone:
-            return 503, {"error": "agent_offline",
-                         "message": "the agent (iyicam agent on the computer) is not connected"}
+            out = {"error": "agent_offline", "message": "the agent (iyicam agent on the computer) is not connected"}
+            if never_taken:
+                out["not_taken"] = True
+            return 503, out
         return 504, {"error": "agent_timeout", "message": "the agent did not answer in time"}
 
     def close(self) -> None:
         with self._cv:
             self._closed = True
             self._cv.notify_all()
+
+
+# operations that write to the computer of the person: the server cannot do them in the agent's place
+NEEDS_AGENT = frozenset({"list", "search", "open", "save", "save_files", "post_save", "post_delete"})
+JOB_OPS = frozenset({"job.status", "job.result", "job.cancel", "job.dismiss"})
+FALLBACK_HOSTS = 64              # engines of this kind kept at once (one per agent that has used its own server)
+
+
+class Fallback:
+    """The engine of the hub server itself, for the browser of an agent that is not connected.
+
+    An agent that is online always does the work (it has the drawings, the posts and the folders); only when it is not,
+    the server answers with its own engine, so that a phone can still nest, calculate and make G-code.  Every agent
+    has an engine of its own here, with its own kept jobs (``<root>/<agent id>``), so that what one person did is never
+    seen by another.  Nothing of the computer of the person is available: the files and the posts that are saved there
+    say so (``needs_agent``).  A job started here is followed here, also after the agent is back (:meth:`owns`)."""
+
+    def __init__(self, root: Path | None, workers: int = 2, max_hosts: int = FALLBACK_HOSTS):
+        self.root, self.workers, self.max_hosts = (Path(root) if root else None), workers, max_hosts
+        self._hosts: dict[str, object] = {}
+        self._lock = threading.Lock()
+
+    def host(self, agent_id: str, create: bool = True):
+        from .host import ServiceHost
+        with self._lock:
+            h = self._hosts.get(agent_id)
+            if h is None and create:
+                if len(self._hosts) >= self.max_hosts:
+                    return None
+                store = (self.root / agent_id) if self.root is not None else None
+                h = self._hosts[agent_id] = ServiceHost(self.workers, store=store)
+            return h
+
+    def owns(self, agent_id: str, job_id: object) -> bool:
+        """Whether this engine has the job (one that was started here while the agent was away)."""
+        h = self.host(agent_id, create=self.root is not None)           # (a restart: the kept jobs on disk count)
+        if h is None or not isinstance(job_id, str):
+            return False
+        try:
+            h.jobs.status(job_id)
+            return True
+        except Exception:                                               # noqa: BLE001  (not found: the agent's, or nobody's)
+            return False
+
+    def kept(self, agent_id: str, device: object = None) -> list[dict]:
+        h = self.host(agent_id, create=self.root is not None)
+        try:
+            return [] if h is None else [dict(j, engine="server") for j in h.jobs.listing(device if isinstance(device, str) else None)]
+        except Exception:                                               # noqa: BLE001
+            return []
+
+    def call(self, agent_id: str, name: str, payload: dict, raw: bytes | None = None) -> tuple[int, dict]:
+        """The answer of the server's engine: ``(HTTP status, answer)``; the same answers as the service gives."""
+        from .api import call
+        if name in NEEDS_AGENT:
+            return 503, {"error": "needs_agent", "message": "this is done on the computer of the agent (its files and posts) "
+                                                           "and the agent is not connected"}
+        h = self.host(agent_id)
+        if h is None:
+            return 503, {"error": "too_busy", "message": "the server is busy with the engines of other agents"}
+        if raw is not None:
+            payload = dict(payload, data=raw)
+        return call(h, None, name, payload)
+
+    def close(self) -> None:
+        with self._lock:
+            hosts, self._hosts = list(self._hosts.values()), {}
+        for h in hosts:
+            try:
+                h.jobs.shutdown()
+            except Exception:                                           # noqa: BLE001
+                pass
 
 
 class HubAuth:

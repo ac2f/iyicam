@@ -42,6 +42,7 @@ class Client:
         conn.request(method, path, data, h)
         r = conn.getresponse()
         payload = r.read()
+        self.engine = r.getheader("X-Engine")                       # (a hub says who did the work: agent or server)
         sc = r.getheader("Set-Cookie")
         if sc and sc.startswith(srv.COOKIE + "="):
             value = sc.split(";", 1)[0].split("=", 1)[1]
@@ -74,9 +75,9 @@ def folder(tmp_path):
 
 
 class Setup:
-    def __init__(self, tmp_path, folder, hold=0.3, job_timeout=20.0):
+    def __init__(self, tmp_path, folder, hold=0.3, job_timeout=20.0, fallback=False):
         self.hub = Hub(KeyStore(fixed=SERVER_KEY), tmp_path / "agents.json", hold=hold, job_timeout=job_timeout)
-        self.server = srv.make_server("127.0.0.1", 0, hub=self.hub)
+        self.server = srv.make_server("127.0.0.1", 0, hub=self.hub, fallback=fallback)   # (a hub that only reports an agent that is away)
         self.port = self.server.server_address[1]
         self.thread = threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True)
         self.thread.start()
@@ -507,3 +508,182 @@ def test_the_command_line_knows_the_agent_and_the_hub():
     out = subprocess.run([sys.executable, "-m", "iyicam", "serve", "--help"], capture_output=True, text=True,
                          timeout=60).stdout
     assert "--hub" in out
+
+
+# ---------------------------------------------------------------------------------------------
+# an agent that is away: the server's own engine answers; an agent that is connected always does
+# ---------------------------------------------------------------------------------------------
+
+@pytest.fixture
+def hubfb(tmp_path, folder):
+    s = Setup(tmp_path, folder, fallback=True)
+    yield s
+    s.close()
+
+
+def _away(s, token=TOKEN):
+    """An agent that registered and is not connected (never polls)."""
+    raw = Client(s.port)
+    agent_id = uuid.uuid4().hex
+    assert raw.agent_call("register", {"agent_id": agent_id, "token": token, "name": "x"})[0] == 200
+    s.hub.online_sec = 0.0
+    return agent_id
+
+
+def _tiny_project():
+    from conftest import make_project
+    from iyicam.core import shapes
+    p, s, objs = make_project([shapes.rectangle(0, 0, 100, 60)], size=(400, 300))
+    return p, objs
+
+
+def test_a_browser_whose_agent_is_away_is_answered_by_the_server(hubfb):
+    _away(hubfb)
+    c = hubfb.browser()                                            # (the client key still signs in)
+    status, out = c.api("ping")
+    assert status == 200 and out["ok"] and c.engine == "server"
+    p, objs = _tiny_project()
+    status, out = c.api("nest", {"project": p.to_dict(), "quantities": {objs[0].id: 3}, "settings": {"iterations": 1}})
+    assert status == 200 and out["placed"] == 3 and c.engine == "server"
+    status, out = c.api("status")                                  # the files are the agent's: this server has none
+    assert status == 200 and out["files"] is False
+
+
+def test_what_needs_the_computer_of_the_agent_says_so_while_it_is_away(hubfb):
+    _away(hubfb)
+    c = hubfb.browser()
+    for op, body in (("list", {"path": ""}), ("open", {"path": "x.svg"}), ("save", {"path": "a.icam"}),
+                     ("save_files", {"files": []}), ("post_save", {"post": {"name": "x"}}), ("post_delete", {"id": "x"})):
+        status, out = c.api(op, body)
+        assert (status, out["error"]) == (503, "needs_agent"), op
+    assert c.engine == "server"
+
+
+def test_a_connected_agent_always_does_the_work(hubfb):
+    hubfb.agent()
+    c = hubfb.browser()
+    status, out = c.api("status")
+    assert status == 200 and out["files"] is True and c.engine == "agent"      # (the server has no files: only the agent answers this)
+    p, objs = _tiny_project()
+    status, out = c.api("nest", {"project": p.to_dict(), "settings": {"iterations": 1}})
+    assert status == 200 and c.engine == "agent"
+    status, out = c.api("job.status", {"id": "nope"})                          # its errors are its own: no second try on the server
+    assert (status, out["error"], c.engine) == (404, "job_not_found", "agent")
+
+
+def test_the_server_takes_over_when_the_agent_goes_away_and_gives_way_when_it_is_back(hubfb):
+    a = hubfb.agent()
+    c = hubfb.browser()
+    assert c.api("ping")[0] == 200 and c.engine == "agent"
+    a.stop()
+    hubfb.hub.online_sec = 0.2
+    time.sleep(0.4)
+    assert c.api("ping")[0] == 200 and c.engine == "server"
+    hubfb.hub.online_sec = 60
+    hubfb.agent(agent_id=a.agent_id)                                           # back: it is the agent again
+    assert c.api("ping")[0] == 200 and c.engine == "agent"
+
+
+def test_a_call_the_agent_never_took_is_done_by_the_server_not_lost(tmp_path, folder):
+    s = Setup(tmp_path, folder, job_timeout=120.0, fallback=True)
+    try:
+        s.hub.online_sec = 1.0
+        raw = Client(s.port)
+        assert raw.agent_call("register", {"agent_id": uuid.uuid4().hex, "token": TOKEN})[0] == 200   # (it never polls)
+        c = s.browser()
+        begun = time.time()
+        status, out = c.api("ping")        # sent to the agent, which is silent: after a second the call is taken back
+        assert status == 200 and out["ok"] and c.engine == "server" and time.time() - begun < 10
+    finally:
+        s.close()
+
+
+def test_a_call_a_connected_agent_took_and_never_answered_is_not_done_again_by_the_server(tmp_path, folder):
+    s = Setup(tmp_path, folder, job_timeout=0.6, fallback=True)
+    try:
+        raw = Client(s.port)
+        agent_id = uuid.uuid4().hex
+        assert raw.agent_call("register", {"agent_id": agent_id, "token": TOKEN})[0] == 200
+        c = s.browser()
+        got = {}
+        t = threading.Thread(target=lambda: got.update(r=c.api("ping")))
+        t.start()
+        job = None
+        for _ in range(20):
+            job = raw.agent_call("poll", {"agent_id": agent_id})[1].get("job")
+            if job:
+                break
+        t.join(10)
+        assert job and got["r"][0] == 504 and got["r"][1]["error"] == "agent_timeout"      # (it may have been done: not again)
+    finally:
+        s.close()
+
+
+def test_a_job_started_on_the_server_is_followed_there_also_when_the_agent_is_back(hubfb):
+    a = hubfb.agent()
+    a.stop()
+    hubfb.hub.online_sec = 0.2
+    time.sleep(0.4)
+    c = hubfb.browser()
+    p, objs = _tiny_project()
+    status, out = c.api("job.start", {"op": "nest", "payload": {"project": p.to_dict(), "quantities": {objs[0].id: 2},
+                                                              "settings": {"iterations": 1}}, "keep": {"title": "t"}})
+    assert status == 200 and c.engine == "server"
+    jid = out["id"]
+    for _ in range(100):
+        status, out = c.api("job.status", {"id": jid})
+        if out.get("state") in ("done", "error"):
+            break
+        time.sleep(0.05)
+    assert out["state"] == "done" and c.engine == "server"
+    hubfb.hub.online_sec = 60
+    hubfb.agent(agent_id=a.agent_id)                                           # the agent is back and does the new work ...
+    assert c.api("ping")[0] == 200 and c.engine == "agent"
+    status, out = c.api("job.result", {"id": jid})                             # ... the job of the server stays with the server
+    assert status == 200 and out["placed"] == 2 and c.engine == "server"
+    status, out = c.api("jobs", {})
+    assert status == 200 and c.engine == "agent" and [j["id"] for j in out["jobs"]] == [jid] and out["jobs"][0]["engine"] == "server"
+
+
+def test_a_job_that_is_on_the_agents_computer_is_reported_as_away_not_lost(hubfb):
+    _away(hubfb)
+    c = hubfb.browser()
+    status, out = c.api("job.status", {"id": "0123456789ab"})
+    assert (status, out["error"]) == (503, "agent_offline")
+
+
+def test_the_engines_of_two_agents_do_not_see_each_others_jobs(hubfb):
+    other = "ZZZZZZ-YYYYYY-XXXXXX-WWWWWW"
+    raw = Client(hubfb.port)
+    for token in (TOKEN, other):
+        assert raw.agent_call("register", {"agent_id": uuid.uuid4().hex, "token": token, "name": token[:3]})[0] == 200
+    hubfb.hub.online_sec = 0.0
+    a, b = hubfb.browser(TOKEN), hubfb.browser(other)
+    p, objs = _tiny_project()
+    status, out = a.api("job.start", {"op": "nest", "payload": {"project": p.to_dict(), "settings": {"iterations": 1}},
+                                       "keep": {"title": "mine"}})
+    jid = out["id"]
+    time.sleep(0.5)
+    assert a.api("job.status", {"id": jid})[0] == 200
+    status, out = b.api("job.status", {"id": jid})
+    assert (status, out["error"]) == (503, "agent_offline")
+    assert b.api("jobs", {})[1]["jobs"] == []
+
+
+def test_a_file_sent_as_it_is_is_read_by_the_server_when_the_agent_is_away(hubfb):
+    _away(hubfb)
+    c = hubfb.browser()
+    svg = b'<svg xmlns="http://www.w3.org/2000/svg" width="50mm" height="30mm"><rect x="0" y="0" width="50" height="30"/></svg>'
+    conn = http.client.HTTPConnection("127.0.0.1", hubfb.port, timeout=30)
+    conn.request("POST", "/api/import_file?name=a.svg", svg, {"Cookie": c.cookie, "Content-Type": "application/octet-stream"})
+    r = conn.getresponse()
+    out = json.loads(r.read())
+    assert r.status == 200 and r.getheader("X-Engine") == "server" and out["project"]["sheets"][0]["vectors"]
+    conn.close()
+
+
+def test_a_hub_without_fallback_still_only_reports_an_agent_that_is_away(hub):
+    _away(hub)
+    c = hub.browser()
+    status, out = c.api("ping")
+    assert (status, out["error"]) == (503, "agent_offline")

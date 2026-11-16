@@ -11,6 +11,8 @@ const TXT = {
     "login.bad": "Anahtar yanlış.", "login.wait": "Çok fazla yanlış deneme. {0} sn bekle.",
     "login.remember": "Bu cihazda açık kalsın (90 gün)",
     "job.offline": "Bağlantı koptu: iş sunucuda devam ediyor, yeniden deneniyor…",
+    "engine.server": "Sunucu", "engine.server.tip": "Bilgisayardaki ajan bağlı değil: işleri sunucunun kendi motoru yapıyor. Bilgisayarın dosyaları ve yazıcı/ayar dosyaları bu sırada kullanılamaz; ajan bağlanınca işler yine onda yapılır.",
+    "engine.toast.server": "Ajan bağlı değil: işleri sunucu yapıyor.", "engine.toast.agent": "Ajan yeniden bağlandı: işleri o yapıyor.",
     "logout": "Çıkış", "busy": "Çalışıyor…", "cancel": "Vazgeç", "cancelled": "İptal edildi.",
     "open.title": "Dosya aç", "open.hint": "iyiCAM projesi (.icam), DXF, SVG, HPGL, CorelDRAW…",
     "open.pick": "Bu cihazdan seç…", "open.thickness": "Malzeme kalınlığı (mm)", "open.add": "Açık projeye ekle",
@@ -54,6 +56,7 @@ const TXT = {
     "e.file_too_large": "Dosya çok büyük.", "e.invalid_name": "Dosya adı geçerli değil.", "e.invalid_path": "Yol geçerli değil.",
     "e.files_disabled": "Bu sunucu dosyalara erişim vermiyor.", "e.payload_too_large": "Çok fazla veri.",
     "e.agent_offline": "Bilgisayardaki iyiCAM ajanı bağlı değil. O bilgisayarda ajanı başlat (iyicam agent), sonra yeniden dene.",
+    "e.needs_agent": "Bu işlem bilgisayardaki ajanın dosyalarını ya da yazılarını kullanır ve ajan bağlı değil. O bilgisayarda ajanı başlat (iyicam agent), sonra yeniden dene.",
     "e.agent_timeout": "Bilgisayardaki ajan zamanında cevap vermedi.",
     "e.reply_too_large": "Cevap, sunucunun taşıyabileceğinden büyük.",
     "e.bad_agent_answer": "Ajanın cevabı okunamadı.",
@@ -65,6 +68,8 @@ const TXT = {
     "login.bad": "The key is not right.", "login.wait": "Too many wrong tries. Wait {0} s.",
     "login.remember": "Keep me signed in on this device (90 days)",
     "job.offline": "The connection was lost: the job goes on at the server, trying again…",
+    "engine.server": "Server", "engine.server.tip": "The agent on the computer is not connected: the server's own engine does the work. The files of the computer and its own posts are not available meanwhile; when the agent is back it does the work again.",
+    "engine.toast.server": "The agent is not connected: the server does the work.", "engine.toast.agent": "The agent is connected again: it does the work.",
     "logout": "Sign out", "busy": "Working…", "cancel": "Cancel", "cancelled": "Cancelled.",
     "open.title": "Open a file", "open.hint": "iyiCAM project (.icam), DXF, SVG, HPGL, CorelDRAW…",
     "open.pick": "From this device…", "open.thickness": "Material thickness (mm)", "open.add": "Add to the open project",
@@ -109,6 +114,7 @@ const TXT = {
     "e.file_too_large": "The file is too large.", "e.invalid_name": "The file name is not valid.", "e.invalid_path": "The path is not valid.",
     "e.files_disabled": "This server gives no access to files.", "e.payload_too_large": "Too much data.",
     "e.agent_offline": "The iyiCAM agent on the computer is not connected. Start it there (iyicam agent), then try again.",
+    "e.needs_agent": "This uses the files or the posts of the computer of the agent, and the agent is not connected. Start it there (iyicam agent), then try again.",
     "e.agent_timeout": "The agent on the computer did not answer in time.",
     "e.reply_too_large": "The answer is larger than the server can carry.",
     "e.bad_agent_answer": "The agent's answer could not be read.",
@@ -189,6 +195,7 @@ async function api(op, payload) {
     const { body: sent, headers } = await packBody(JSON.stringify(payload || {}));
     r = await fetch("/api/" + op, { method: "POST", credentials: "same-origin", headers, body: sent });
   } catch { throw new ApiError({ error: "network" }, 0); }
+  noteEngine(r);
   let body;
   try { body = await r.json(); } catch { body = { error: "bad_answer", message: "HTTP " + r.status }; }
   if (r.status === 401 && body.error === "not_logged_in") { signedOut(); }
@@ -196,11 +203,26 @@ async function api(op, payload) {
   return body;
 }
 
+/** A hub says who did the work (``X-Engine``: ``agent`` or ``server``): while its agent is not connected the server's own engine
+ *  answers, and the header shows it (the files of the computer and its posts are not there then). */
+let engine = null;
+function noteEngine(r) {
+  const e = r.headers.get("X-Engine");
+  if (!e || e === engine) return;
+  const was = engine;
+  engine = e;
+  const badge = document.getElementById("engine");
+  if (badge) badge.hidden = e !== "server";
+  if (e === "server") toast(t("engine.toast.server"), "warn");
+  else if (was === "server") toast(t("engine.toast.agent"), "ok");
+}
+
 /** a file as the body of a request (``application/octet-stream``), answered like any call */
 async function apiRaw(path, file) {
   let r;
   try { r = await fetch(path, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/octet-stream" }, body: file }); }
   catch { throw new ApiError({ error: "network" }, 0); }
+  noteEngine(r);
   let body;
   try { body = await r.json(); } catch { body = { error: "bad_answer", message: "HTTP " + r.status }; }
   if (r.status === 401 && body.error === "not_logged_in") signedOut();
@@ -1194,6 +1216,7 @@ function mountApp() {
   const app = $("#app");
   app.replaceChildren(
     h("header", { class: "top" }, h("h1", {}, "iyiCAM", h("span", { class: "sub" }, S.schema ? "v" + S.schema.iyicam : "")),
+      h("span", { id: "engine", class: "engine", title: t("engine.server.tip"), hidden: engine !== "server" }, "☁ " + t("engine.server")),
       window.IyiPage.jobs ? window.IyiPage.jobs.button() : null,                // (jobs.js: the last three jobs of the engine)
       h("button", { class: "small", onclick: () => { lang = lang === "tr" ? "en" : "tr"; store.set("iyicam.lang", lang); mountApp(); } }, lang === "tr" ? "EN" : "TR"),
       h("button", { class: "small", onclick: async () => { await fetch("/api/logout", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: "{}" }).catch(() => {}); showLogin(); } }, t("logout"))),

@@ -38,7 +38,8 @@ allow it for *private* networks.
 | `--max-upload-mb N` | largest request, default 64 (a drawing travels as base64) |
 | `--root FOLDER` | a folder in which the page may open and save files; repeat it for more (default: `IYICAM_ROOTS`, else the home folder) |
 | `--no-files` | the page cannot open or save files of this computer at all (it can still upload and download) |
-| `--hub` | a hub: no engine and no files here, agents on other computers have them ([below](#a-hub-and-an-agent-the-server-somewhere-else-the-files-here)) |
+| `--hub` | a hub: no files here, agents on other computers have them and do the work; while an agent is away the server's own engine answers ([below](#a-hub-and-an-agent-the-server-somewhere-else-the-files-here)) |
+| `--no-fallback` | with `--hub`: a browser whose agent is away is told so instead of being answered by the server's engine |
 | `--quiet` | no line per request |
 
 User posts, tools and plugins are read from `~/.iyicam` (`IYICAM_HOME`), as in the program; `--no-plugins` or
@@ -314,8 +315,9 @@ phone ──HTTPS──▶  hub (iyicam serve --hub)  ◀──HTTPS, outward─
                   the page, the keys, the queue                    the engine and the files of that PC
 ```
 
-* the **hub** runs on the server. It has no engine and no disk of its own: it serves the page, checks the keys and
-  passes each call of the page on to the agent;
+* the **hub** runs on the server. It has no disk of its own: it serves the page, checks the keys and passes each call of
+  the page on to the agent. **An agent that is connected always does the work.** While the agent of a browser is *not*
+  connected, the engine of the server itself answers instead ([below](#when-the-agent-is-away-the-server-answers));
 * the **agent** runs on the PC, in the background. It connects *outward* to the hub (so nothing has to reach into the
   workshop: no open port, no tunnel), waits for calls, does them with the engine and the files of the PC and sends the
   answers back. The answers are the same as `iyicam serve` gives (the folders it may touch are the same rules as
@@ -365,11 +367,35 @@ the console (put it in a service of your own to keep it in the background).
 | `--no-files` | the page cannot open or save files of this PC (kept) |
 | `--name NAME` | the name of this PC as the hub lists it (default the computer name) |
 
+### When the agent is away, the server answers
+
+A browser that signed in with a valid client key keeps working when its agent is not connected (the PC is off, the
+network is down): the **engine of the hub server** answers its calls, so a phone can still import a drawing, nest, calculate
+toolpaths, simulate and make G-code. The rules:
+
+* **a connected agent is always used.** The server only steps in when the agent has not been heard of for 60 s (or went
+  away before it took the call, so that nothing of the call was done); a call that a connected agent took is never done a
+  second time on the server, if the agent then fails or is silent that is the answer (`agent_timeout`, the agent's own error);
+* **nothing of the computer is used**: the files (`list`, `open`, `save`, `save_files`) and the posts the page saves or
+  deletes are on the PC and answer `needs_agent` (503) meanwhile; `status` says there are no files. The posts and tools the
+  server knows (its built-in ones) are what the engine works with, so a G-code made for a post of your own needs the agent;
+* **every agent has an engine of its own on the server** (its kept jobs are in `hub-jobs/<agent id>` next to `agents.json`),
+  so what one person does is never seen by another;
+* **a job started on the server stays there**: the page follows it (`job.status`, `job.result`) on the server even when
+  the agent is back, and the list of the last three jobs shows both (`engine: "server"` marks those of the server). A job
+  of the agent asked about while it is away answers `agent_offline` (it is on the PC);
+* the page says which engine answers: every answer of a hub has the header `X-Engine` (`agent` or `server`); while it is
+  `server` the header of the page shows a "Server" badge and a message tells when the agent is back;
+* `iyicam serve --hub --no-fallback` turns it off: a browser whose agent is away is then told `agent_offline`, as before.
+  The server's engine takes the processor of the server for the work of every agent that is away: on a small server turn it
+  off, or keep the number of agents small.
+
 What to know:
 
 * the agent has no window; it writes what it does to `agent.log` and its state to `agent.state.json` in `~/.iyicam`
-  (`IYICAM_HOME`), never a key. A phone that signs in while the agent is not running is told so ("the agent is not
-  connected") and can try again when it is; the hub counts an agent as gone when it has not been heard of for 60 s;
+  (`IYICAM_HOME`), never a key. A phone that signs in while the agent is not running can still sign in with the client key
+  (the hub remembers it) and works with the server's engine until the agent is back (with `--no-fallback` it is told "the
+  agent is not connected" and can try again); the hub counts an agent as gone when it has not been heard of for 60 s;
 * the settings file `agent.json` holds the server key and the client key (readable by the user only); the hub keeps
   only a digest of each client key (`agents.json`), so a copy of the hub's state does not open any PC;
 * a restart of the hub ends the sessions (a phone signs in again, with the same client key: the hub remembers its
@@ -384,8 +410,9 @@ For programs: the agent's calls are `POST /agent/register` (`agent_id`, `token` 
 /agent/poll` (`agent_id`; held open for up to 25 s; answers `{"job": {"id", "op", "payload"}}` or `{}`) and `POST
 /agent/reply` (`agent_id`, `job_id`, `status`, `out`), all JSON with the header `X-Server-Key`. Errors: `bad_server_key`
 (403), `invalid_agent` / `invalid_client_key` (400), `key_taken` (409), `unknown_agent` (409: register again). A browser's
-call that the hub cannot pass on answers `agent_offline` (503), `agent_timeout` (504) or `too_busy` (503). Tests:
-`tests/test_hub.py`.
+call that the hub cannot pass on answers `agent_offline` (503), `agent_timeout` (504) or `too_busy` (503); with the
+server's engine on (the default) `agent_offline` only comes for a job of the agent asked about while it is away, and
+`needs_agent` (503) for what needs the PC. Tests: `tests/test_hub.py`.
 
 ## The key and what protects it
 

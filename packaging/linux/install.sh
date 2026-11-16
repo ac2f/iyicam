@@ -21,9 +21,11 @@
 #                            the folders (separated by ":") in which the page may open and save files; the
 #                            default is made here. A folder of your own must be writable by the user "iyicam".
 #    IYICAM_FILES=off        the page cannot open or save files of this computer at all
-#    IYICAM_HUB=on           a hub: this server has no engine and no files; the agents (iyicam agent) on the
-#                            computers of the people connect to it, and a browser signs in with the client key
-#                            of an agent (docs/web.md)
+#    IYICAM_HUB=on           a hub: this server has no files; the agents (iyicam agent) on the computers of
+#                            the people connect to it, and a browser signs in with the client key of an agent
+#                            (docs/web.md). An agent that is connected always does the work; while it is away
+#                            the engine of this server answers
+#    IYICAM_HUB_FALLBACK=off with IYICAM_HUB=on: a browser whose agent is away is only told so (--no-fallback)
 #    PYTHON=python3.12       the Python to use (3.11 or newer)
 #  The project directory must NOT be under /root or /home (the service user
 #  cannot read it); recommended: /opt/iyicam
@@ -61,6 +63,11 @@ HUB_FLAG=""
 case "${IYICAM_HUB:-off}" in
   on|ON|yes|1) HUB_FLAG="--hub" ;;
 esac
+if [[ -n "$HUB_FLAG" ]]; then
+  case "${IYICAM_HUB_FALLBACK:-on}" in
+    off|OFF|no|0) HUB_FLAG="--hub --no-fallback" ;;
+  esac
+fi
 case "$APP" in
   /root|/root/*|/home|/home/*)
     die "The project directory ($APP) is not accessible to the service user. Example:

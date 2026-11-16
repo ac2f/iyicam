@@ -185,7 +185,8 @@ browse, open and save files of the computer it runs on, inside the folders you n
 (`iyicam-web`), and ready-made Caddy, nginx and HAProxy examples put HTTPS in front of it
 ([how](docs/web.md#a-server-linux-systemd-and-https)). When the server is not the computer with the drawings, run
 `iyicam serve --hub` on the server and `iyicam agent` on that computer (it connects outward; the phone signs in with the
-key the agent shows and works with the files of that computer;
+key the agent shows and works with the files of that computer, and while the agent is away the server's own engine answers,
+a connected agent always doing the work;
 [how](docs/web.md#a-hub-and-an-agent-the-server-somewhere-else-the-files-here)).
 
 ## Installation

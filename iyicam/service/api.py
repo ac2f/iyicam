@@ -16,7 +16,7 @@ API_OPS = frozenset({"ping", "schema", "validate", "import", "export", "command"
 
 # an error code that is not "the request was wrong" (400) answers with another HTTP status
 ERROR_STATUS = {"unknown_operation": 404, "job_not_found": 404, "job_not_finished": 409, "too_busy": 503,
-                "internal_error": 500,
+                "internal_error": 500, "needs_agent": 503,
                 # files of the computer (iyicam.service.files)
                 "path_not_allowed": 403, "files_disabled": 403, "folder_not_found": 404, "file_not_found": 404,
                 "file_exists": 409, "file_changed": 409, "file_too_large": 413, "payload_too_large": 413,

@@ -251,3 +251,5 @@ button.chip { min-height: 34px; padding: 0 10px; font: 12.5px ui-monospace, Cons
 .pvlegend i { display: block; width: 120px; height: 8px; border-radius: 99px; background: linear-gradient(90deg, hsl(140 80% 42%), hsl(70 80% 42%), hsl(15 80% 42%)); }
 .hint { font-size: 13px; color: var(--muted); margin: 6px 0 4px; }
 .plates .plate { margin: 8px 0; padding: 10px 12px; }
+.engine { font-size: 12px; padding: 3px 8px; border-radius: 12px; background: #b45309; color: #fff; white-space: nowrap; }
+.engine[hidden] { display: none; }

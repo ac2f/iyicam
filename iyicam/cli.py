@@ -61,7 +61,8 @@ def cmd_serve(a) -> int:
     if a.no_plugins:
         os.environ["IYICAM_SERVICE_PLUGINS"] = "0"
     return server.serve(a.host, a.port, trust_proxy=a.trust_proxy, max_body=a.max_upload_mb * 1024 * 1024,
-                        verbose=not a.quiet, roots=a.root or None, files=not a.no_files, hub=a.hub)
+                        verbose=not a.quiet, roots=a.root or None, files=not a.no_files, hub=a.hub,
+                        fallback=not a.no_fallback)
 
 
 def cmd_agent(a) -> int:
@@ -348,6 +349,9 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--hub", action="store_true",
                    help="a hub: no engine and no files here, agents (iyicam agent) connect to it and a browser signs in "
                         "with the client key of an agent; the key of this server only lets agents register")
+    s.add_argument("--no-fallback", action="store_true",
+                   help="with --hub: a browser whose agent is not connected is told so; without it the engine of this "
+                        "server answers then (an agent that is connected always does the work)")
     s.add_argument("--quiet", action="store_true", help="do not log every request")
     s = sub.add_parser("agent", help="the agent of this computer: its engine and files for a hub (iyicam serve --hub)")
     s.add_argument("--server-url", metavar="URL", help="address of the hub (https://...); kept for the next runs")
