@@ -491,7 +491,10 @@ def sequence(items: list[SeqItem], cfg: dict, pos: Pt = (0.0, 0.0),
     follow it in strategy order. Either way inner items come first and, when cut
     areas touch, the geometric support check has the last word.
 
-    With ``zones`` (the start points are placed by the program) an automatic order is also made to
+    An automatic order keeps every cut **supported**, whatever the settings: a part is cut before the neighbours that
+    stand on the side where the sheet holds it (:func:`hold_blockers`) and never in scrap that the cuts before it have
+    set loose (:func:`mend_loose`); only the strategies with a purpose of their own (smallest first, from the centre, ...)
+    are left as they are. With ``zones`` (the start points are placed by the program) the order is also made to
     respect the closing zones: a cut is made before the neighbours that lie next to the place where it
     closes, so that it closes held by sheet that is still there (:func:`apply_zones`).
     """
@@ -513,9 +516,10 @@ def sequence(items: list[SeqItem], cfg: dict, pos: Pt = (0.0, 0.0),
         return order, changed, moved
 
     if s["auto_order"] or not s["order"]:
-        zoning = zones and s["strategy"] not in POLICY_STRATEGIES
+        supporting = s["strategy"] not in POLICY_STRATEGIES   # (support is kept by every order that has no purpose of its own)
+        zoning = zones and supporting                          # (where a cut closes is only asked for with smart start points)
         blockers = zone_blockers(items, s, sheet) if zoning else {}
-        holds, hold_w = hold_blockers(items, s, sheet) if zoning else ({}, {})
+        holds, hold_w = hold_blockers(items, s, sheet) if supporting else ({}, {})
         route = s["strategy"] in ("nearest", "smart")
         wait: dict[str, set[str]] = defaultdict(set)      # a route strategy keeps the neighbours that would take the
         if route and blockers:                             # sheet away from the closing zone of a cut for after it
@@ -539,7 +543,7 @@ def sequence(items: list[SeqItem], cfg: dict, pos: Pt = (0.0, 0.0),
         order, ok, snaps = made(wait if route and wait else None)
         if route and wait and rp is not None and not ok:
             order, ok, snaps = made(None)                                 # (the plain route)
-        if zoning and (blockers or holds) and (rp is None or ok):
+        if supporting and (blockers or holds) and (rp is None or ok):
             # the wishes: a cut before the neighbours next to where it closes (a few places), and before the neighbours
             # that stand on the side where the sheet holds it (wherever they are in the order)
             reach = pull_reach(n) if rp is not None else 2
@@ -604,7 +608,7 @@ def _signature(items: list[SeqItem], s: dict, pos: Pt, sheet: BBox | None, zones
 # closing zones
 # ---------------------------------------------------------------------------
 
-REPLAY_LIMIT = 400      # a zone order is replayed (:func:`is_supported`) up to this many cuts; more: only neighbours swap places
+REPLAY_LIMIT = 5000     # a zone order is replayed (:func:`is_supported`) up to this many cuts (a step costs what lies near the cut); more: only neighbours swap places
 POLICY_STRATEGIES = ('small_first', 'centre_out', 'edges_in')   # an order with a purpose of its own: left as it is
 ZONE_RINGS = (1.5, 5.0)     # how far beyond the cut the material has to be there (the two rings next to it)
 
@@ -1360,12 +1364,38 @@ def _lean(paths: list, tol: int) -> list:
     return out
 
 
+def _box(paths: list) -> tuple[int, int, int, int]:
+    xs = [q[0] for path in paths for q in path]
+    ys = [q[1] for path in paths for q in path]
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def _meet(a: tuple, b: tuple) -> bool:
+    """Whether two boxes ``(x0, y0, x1, y1)`` touch or overlap."""
+    return a[0] <= b[2] and b[0] <= a[2] and a[1] <= b[3] and b[1] <= a[3]
+
+
+class _Piece:
+    """A connected piece of the cut areas made so far: its outer boundary and the holes in it (the material it
+    encloses), integer paths, with their boxes."""
+    __slots__ = ("paths", "box", "holes")
+
+    def __init__(self, outer: list, holes: list[list]):
+        self.paths = [outer] + holes
+        self.box = _box([outer])
+        self.holes = [(h, _box([h])) for h in holes]
+
+
 class Replayer:
     """Replays cut orders of one set of items cut by cut and says whether a cut would run in material the earlier
-    cuts have set loose (:func:`verify_support` worked out faster: the cut areas stay integer paths between the
-    cuts, simplified by 0.05 mm). It remembers the cut areas before every cut, so an order that only changes late
-    in the sequence is replayed from there. Sheets of any other shape than a rectangle are judged by
-    :func:`verify_support`, which gives no paths of the loose material."""
+    cuts have set loose (:func:`verify_support` worked out faster).
+
+    The cut areas made so far are kept as connected *pieces* (integer paths, simplified by 0.3 mm); a piece of material
+    that the cut areas enclose is a hole of such a piece, and is loose (nothing holds it). A new cut area joins only the pieces
+    it touches, so a step costs what is near the cut, not the whole sheet. The state before every cut is remembered (it
+    shares the pieces that did not change), so an order that only changes late in the sequence is replayed from there.
+    Sheets of any other shape than a rectangle are judged by :func:`verify_support`, which gives no paths of the loose
+    material."""
 
     def __init__(self, items: dict[str, SeqItem], sheet: BBox | None = None):
         self.items, self.sheet = items, sheet
@@ -1382,53 +1412,66 @@ class Replayer:
         if not all(math.isfinite(v) for v in (f.xmin, f.ymin, f.xmax, f.ymax)):
             self.nothing = True                    # (no sheet and no cut areas to go by)
             return
-        self.base = clip._clean(frame.base)
-        border = round(1.0 * clip.SCALE)
-        self.lo = (round(f.xmin * clip.SCALE) + border, round(f.ymin * clip.SCALE) + border)
-        self.hi = (round(f.xmax * clip.SCALE) - border, round(f.ymax * clip.SCALE) - border)
         tol = round(0.3 * clip.SCALE)             # (the cut areas are simplified by 0.3 mm: a third of the points, the same answer)
-        self.kerf = {it.key: _lean(clip._clean(it.kerf), tol) for it in all_ if it.kerf}
-        self.solids = {it.key: _lean(clip._clean(it.solid), tol) for it in all_ if it.solid}
+        kerf = {it.key: _lean(clip._clean(it.kerf), tol) for it in all_ if it.kerf}
+        solids = {it.key: _lean(clip._clean(it.solid), tol) for it in all_ if it.solid}
+        self.kerf = {k: v for k, v in kerf.items() if v}           # (an area that is nothing at this size is no area)
+        self.solids = {k: v for k, v in solids.items() if v}
+        self.kbox = {k: _box(v) for k, v in self.kerf.items()}
+        self.sbox = {k: _box(v) for k, v in self.solids.items()}
+        self._skeys = list(self.sbox)
 
-    def loose_for(self, it: SeqItem, union: list):
-        """The loose material (integer paths) that the cut of ``it`` would run in when the cut areas ``union`` have
-        been cut before it, or ``None``."""
-        if it.key not in self.kerf or not union:
-            return None
-        pc_ = clip.pyclipper
-        lo_x, lo_y = self.lo
-        hi_x, hi_y = self.hi
-        pc = clip.Clipper()
-        pc.AddPaths(self.base, pc_.PT_SUBJECT, True)
-        pc.AddPaths(union, pc_.PT_CLIP, True)
-        tree = pc.Execute2(pc_.CT_DIFFERENCE, pc_.PFT_NONZERO, pc_.PFT_NONZERO)
-        loose: list = []
+    @staticmethod
+    def _pieces(tree) -> list[_Piece]:
+        """The pieces of a union (a polygon tree): every outer boundary with its holes; what lies inside a hole is a
+        piece of its own."""
+        out: list[_Piece] = []
 
-        def walk(node):
+        def walk(node) -> None:
             for ch in node.Childs:
                 if not ch.IsHole:
-                    xs = [q[0] for q in ch.Contour]
-                    ys = [q[1] for q in ch.Contour]
-                    if not (min(xs) <= lo_x or max(xs) >= hi_x or min(ys) <= lo_y or max(ys) >= hi_y):
-                        loose.append(ch.Contour)
-                        loose.extend(h.Contour for h in ch.Childs)
+                    out.append(_Piece(ch.Contour, [h.Contour for h in ch.Childs]))
                 for h in ch.Childs:
                     walk(h)
-
         walk(tree)
+        return out
+
+    def add(self, state: list, key: str) -> list:
+        """The cut areas ``state`` with the cut area of ``key`` joined to them."""
+        pc_ = clip.pyclipper
+        kb = self.kbox[key]
+        near = [c for c in state if _meet(c.box, kb)]
+        pc = clip.Clipper()
+        pc.AddPaths([p for c in near for p in c.paths] + self.kerf[key], pc_.PT_SUBJECT, True)
+        tree = pc.Execute2(pc_.CT_UNION, pc_.PFT_NONZERO, pc_.PFT_NONZERO)
+        return [c for c in state if not _meet(c.box, kb)] + self._pieces(tree)
+
+    def loose_for(self, it: SeqItem, state: list):
+        """The loose material (integer paths) that the cut of ``it`` would run in when the cut areas ``state`` have
+        been cut before it, or ``None``."""
+        if it.key not in self.kerf or not state:
+            return None
+        pc_ = clip.pyclipper
+        kb = self.kbox[it.key]
+        loose = [h[::-1] for c in state if _meet(c.box, kb) for h, hb in c.holes if _meet(hb, kb)]
         if not loose:
             return None
-        mine = ancestors(it, self.items)
-        others = [q for k, paths in self.solids.items() if k != it.key and k not in mine for q in paths]
         pc = clip.Clipper()
         pc.AddPaths(self.kerf[it.key], pc_.PT_SUBJECT, True)
         pc.AddPaths(loose, pc_.PT_CLIP, True)
         hit = pc.Execute(pc_.CT_INTERSECTION, pc_.PFT_NONZERO, pc_.PFT_NONZERO)
-        if others and hit:
-            pc = clip.Clipper()
-            pc.AddPaths(hit, pc_.PT_SUBJECT, True)
-            pc.AddPaths(others, pc_.PT_CLIP, True)
-            hit = pc.Execute(pc_.CT_DIFFERENCE, pc_.PFT_NONZERO, pc_.PFT_NONZERO)
+        if not hit:
+            return None
+        cut = [p for c in state if _meet(c.box, kb) for p in c.paths]      # (what lies in the loose material but was cut already)
+        mine = ancestors(it, self.items)
+        others = [q for k in self._skeys if k != it.key and k not in mine and _meet(self.sbox[k], kb)
+                  for q in self.solids[k]]
+        for sub in (cut, others):
+            if sub and hit:
+                pc = clip.Clipper()
+                pc.AddPaths(hit, pc_.PT_SUBJECT, True)
+                pc.AddPaths(sub, pc_.PT_CLIP, True)
+                hit = pc.Execute(pc_.CT_DIFFERENCE, pc_.PFT_NONZERO, pc_.PFT_NONZERO)
         if abs(sum(pc_.Area(q) for q in hit)) / (clip.SCALE * clip.SCALE) > 0.05:
             return loose
         return None
@@ -1443,25 +1486,22 @@ class Replayer:
         if self.slow:
             bad = verify_support(order, self.items, self.sheet)
             return (bad[0], []) if bad else None
-        pc_ = clip.pyclipper
         snaps = snaps if snaps is not None else []
         if not snaps:
             snaps.append([])
             valid = 0
         valid = min(valid, len(snaps) - 1)
         del snaps[valid + 1:]
-        union = snaps[valid]
+        state = snaps[valid]
         for i in range(valid, len(order)):
             if i > valid:
-                snaps.append(union)
+                snaps.append(state)
             it = self.items[order[i]]
-            loose = self.loose_for(it, union)
+            loose = self.loose_for(it, state)
             if loose is not None:
                 return i, [clip.from_int(q) for q in loose]
             if it.frees and it.key in self.kerf:
-                pc = clip.Clipper()
-                pc.AddPaths(union + self.kerf[it.key], pc_.PT_SUBJECT, True)
-                union = pc.Execute(pc_.CT_UNION, pc_.PFT_NONZERO, pc_.PFT_NONZERO)
+                state = self.add(state, it.key)
         return None
 
 

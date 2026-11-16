@@ -46,6 +46,9 @@ plugins are read from `~/.iyicam` (`IYICAM_HOME`); `IYICAM_SERVICE_PLUGINS=0` le
 | `simulate` | `project`, `sheet?`, `cells?`, `resolution?` | `{png_b64, width_px, height_px, resolution, extent, sheet, time_s}` |
 | `nest` | `project`, `objects?`, `quantities?`, `sheet?`, `settings` (the options of `iyicam nest`, and the plates below) | `{project, placed, unplaced, plates, sheets, squeezed, suggestion}`; every sheet has `reserve` (made of the reserve size because the plates were full) |
 | `leftover` | `project`, `sheet?`, `clearance?`, `min_width?`, `min_area?` | `{sheet, plates}` — the material left on a cut sheet as plates (`outline` polygons) that go into the `plates` of a nesting |
+| `plugins` | | `{plugins: [{key, name, version, author, description, enabled, loaded, error, kind, removable, provides}], install, plugins_on, folder, limits}` — the plugins of the engine and what each one registered (`provides`: commands, operations, importers, exporters, posts, gcode_filters, hooks, gui) |
+| `plugin_install` | `name` (`x.py` / `x.zip`), `data_b64` | the answer of `plugins` with `installed` and `plugin`; `invalid_plugin` (a file that is refused, with why), `plugin_install_off`, `plugins_off`; the plugin is loaded at once and the next `schema` lists what it added |
+| `plugin_set` | `key`, `action` (`enable` `disable` `reload` `remove`) | the answer of `plugins`; `plugin_not_found`, `plugin_not_removable` (a Python package installed with pip) |
 
 The plates of a `nest` are in `settings`: `plates` is a list of the plate sizes of this job in the order they are used, each
 `{width, height, quantity?}` (a rectangle; quantity 1 by default, 0 = as many as needed), or with a `shape` (`rect`,

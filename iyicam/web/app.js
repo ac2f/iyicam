@@ -213,6 +213,7 @@ function noteEngine(r) {
   engine = e;
   const badge = document.getElementById("engine");
   if (badge) badge.hidden = e !== "server";
+  window.dispatchEvent(new Event("iyicam:engine"));          // (the plugin list is the engine's: it asks again)
   if (e === "server") toast(t("engine.toast.server"), "warn");
   else if (was === "server") toast(t("engine.toast.agent"), "ok");
 }
@@ -1000,7 +1001,8 @@ function viewProject() {
       r.errors.length ? h("div", { class: "msg bad" }, h("b", {}, t("report.errors") + ": "), r.errors.slice(0, 8).join(" · ")) : null,
       r.notes.length ? h("div", { class: "msg" }, h("b", {}, t("report.notes") + ": "), r.notes.slice(0, 8).join(" · ")) : null));
   }
-  if (!p) { out.push(h("div", { class: "empty" }, h("div", { class: "big" }, "📐"), h("div", {}, t("proj.none")), h("div", { class: "muted" }, t("proj.none2")))); return h("div", {}, out); }
+  const plugins = window.IyiPage.plugins ? window.IyiPage.plugins.card() : null;      // (plugins.js: install, switch, remove)
+  if (!p) { out.push(h("div", { class: "empty" }, h("div", { class: "big" }, "📐"), h("div", {}, t("proj.none")), h("div", { class: "muted" }, t("proj.none2")))); if (plugins) out.push(plugins); return h("div", {}, out); }
 
   const nameIn = h("input", { type: "text", value: p.name });
   nameIn.addEventListener("input", () => { p.name = nameIn.value; persist(); });
@@ -1053,6 +1055,7 @@ function viewProject() {
   out.push(h("div", { class: "row" },
     h("button", { class: "grow", onclick: () => download((p.name || "project").replace(/[^\w .-]+/g, "_") + ".icam", new Blob([JSON.stringify(p)], { type: "application/json" })) }, "💾 " + t("proj.save")),
     h("button", { class: "danger", onclick: () => { if (confirm(t("proj.closeask"))) { S.project = null; S.report = null; S.views = {}; setFile(null); if (window.IyiPage.editor) window.IyiPage.editor.clear(); changed(); } } }, t("proj.close"))));
+  if (plugins) out.push(plugins);
   return h("div", {}, out);
 }
 

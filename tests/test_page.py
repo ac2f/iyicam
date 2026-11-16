@@ -36,7 +36,7 @@ def get(server, path):
     return r.status, r.getheader("Content-Type", ""), body
 
 
-@pytest.mark.parametrize("name", ["geom.js", "app.js", "edit.js", "post.js", "preview.js", "jobs.js", "app.css"])
+@pytest.mark.parametrize("name", ["geom.js", "app.js", "edit.js", "post.js", "plugins.js", "preview.js", "jobs.js", "app.css"])
 def test_every_file_of_the_page_is_served(web, name):
     status, ctype, body = get(web, f"/static/{name}")
     assert status == 200 and body
@@ -46,7 +46,7 @@ def test_every_file_of_the_page_is_served(web, name):
 def test_the_scripts_load_in_the_order_they_need():
     html = (WEB / "index.html").read_text(encoding="utf-8")
     order = [m.group(1) for m in re.finditer(r'<script src="/static/([a-z.]+)"', html)]
-    assert order == ["geom.js", "app.js", "edit.js", "post.js", "preview.js", "jobs.js"]   # (app.js needs geom.js; edit.js and post.js need both)
+    assert order == ["geom.js", "app.js", "edit.js", "post.js", "plugins.js", "preview.js", "jobs.js"]   # (app.js needs geom.js; edit.js and post.js need both)
 
 
 def _keys(block: str) -> set[str]:
@@ -56,7 +56,7 @@ def _keys(block: str) -> set[str]:
 def _texts():
     """The page's own texts (app.js) and those the other scripts add (``Object.assign(TXT.tr, {...})``)."""
     app = (WEB / "app.js").read_text(encoding="utf-8")
-    extra = [(WEB / n).read_text(encoding="utf-8") for n in ("edit.js", "post.js", "preview.js", "jobs.js")]
+    extra = [(WEB / n).read_text(encoding="utf-8") for n in ("edit.js", "post.js", "plugins.js", "preview.js", "jobs.js")]
     tr_app, en_app = re.split(r"\n  en: \{", app.split("\n  tr: {", 1)[1], maxsplit=1)
     en_app = en_app.split("\n};", 1)[0]
     tr, en = _keys(tr_app), _keys(en_app)

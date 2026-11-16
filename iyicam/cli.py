@@ -60,6 +60,8 @@ def cmd_serve(a) -> int:
         return 0
     if a.no_plugins:
         os.environ["IYICAM_SERVICE_PLUGINS"] = "0"
+    if a.no_plugin_install:
+        os.environ["IYICAM_PLUGIN_INSTALL"] = "off"
     return server.serve(a.host, a.port, trust_proxy=a.trust_proxy, max_body=a.max_upload_mb * 1024 * 1024,
                         verbose=not a.quiet, roots=a.root or None, files=not a.no_files, hub=a.hub,
                         fallback=not a.no_fallback)
@@ -70,6 +72,8 @@ def cmd_agent(a) -> int:
     from .service import agent
     if a.no_plugins:
         os.environ["IYICAM_SERVICE_PLUGINS"] = "0"
+    if a.no_plugin_install:
+        os.environ["IYICAM_PLUGIN_INSTALL"] = "off"
     return agent.run(a.server_url, a.server_key, name=a.name, roots=a.root or None, no_files=a.no_files,
                      show_key=a.show_key, new_key=a.new_key, setup=a.setup)
 
@@ -349,6 +353,9 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--hub", action="store_true",
                    help="a hub: no engine and no files here, agents (iyicam agent) connect to it and a browser signs in "
                         "with the client key of an agent; the key of this server only lets agents register")
+    s.add_argument("--no-plugin-install", action="store_true",
+                   help="the page cannot install or remove plugins (a plugin is a program that runs with your rights); "
+                        "also IYICAM_PLUGIN_INSTALL=off")
     s.add_argument("--no-fallback", action="store_true",
                    help="with --hub: a browser whose agent is not connected is told so; without it the engine of this "
                         "server answers then (an agent that is connected always does the work)")
@@ -358,6 +365,8 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--server-key", metavar="KEY",
                    help="the server key of the hub ('iyicam serve --show-key' there; or IYICAM_SERVER_KEY); kept")
     s.add_argument("--name", help="name of this computer as the hub shows it (default: the computer name)")
+    s.add_argument("--no-plugin-install", action="store_true",
+                   help="the page cannot install or remove plugins on this computer (IYICAM_PLUGIN_INSTALL=off)")
     s.add_argument("--root", action="append", metavar="FOLDER",
                    help="a folder of this computer the page may open and save files in (repeat it for more; kept; "
                         "default: IYICAM_ROOTS, else the home folder)")

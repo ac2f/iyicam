@@ -157,3 +157,34 @@ def register(api):
         return f"(made for {job.project.name})\n" + text
     api.add_gcode_filter(stamp)
 ```
+
+## Plugins on the web page and the phone
+
+The page (also on a phone) has a **Plugins** card on the **Project** tab: the plugins of the engine with what each one added
+(commands, toolpath types, importers and exporters, posts, G-code filters), a switch to turn one **on or off**, **Reload**,
+**Remove**, and **Install a plugin (.py / .zip)**. A plugin is not run in the browser: it runs on the engine, the server of
+`iyicam serve` or the PC of the agent ([web.md](web.md)), and what it registers is offered by the page at once:
+
+| What the plugin adds | Where the page shows it |
+|---|---|
+| a vector command (`api.add_command`) | the ⋯ button of the Drawing tab, with its parameters in a form |
+| a toolpath strategy (`api.add_operation`) | the Toolpaths tab, in the list of toolpath types |
+| an importer / exporter | opening a file on the Project tab / the Output tab |
+| a post (`api.add_postprocessor`) | the post list on the Output tab |
+| a G-code filter, a hook | runs on the engine when G-code is made |
+| `api.add_gui_extension` | nothing: windows and menus exist only in the desktop program |
+
+**Installing.** Choose a `.py` file or a `.zip` (a package folder with an `__init__.py`, the package itself, or one `.py`). The
+page asks you to tick that you trust it, because **a plugin is a program that runs with the rights of the user the engine runs
+as**. Before anything is written the engine looks at it: the file name (letters, digits, `_`), the size (2 MB a file, 8 MB a zip,
+24 MB unpacked, 300 entries), the paths of a zip (no `..`, no absolute path, no link, only Python files, text, data and pictures)
+and that the Python compiles; nothing is run until it is loaded, and a plugin that raises while loading is rolled back and its
+error shown on its row. Installing a name again replaces the plugin. What is switched off stays off (`~/.iyicam/plugins.json`).
+
+**Turning it off.** The owner of an engine can forbid installing and removing from the page: `iyicam serve --no-plugin-install`,
+`iyicam agent --no-plugin-install` or `IYICAM_PLUGIN_INSTALL=off` (switching on and off still works); `--no-plugins` /
+`IYICAM_SERVICE_PLUGINS=0` leaves plugins out altogether. A hub's own engine, which answers when an agent is away, never installs
+one (`needs_agent`): plugins belong to the computer of the agent.
+
+**For programs** (the same operations the page calls, [service.md](service.md)): `plugins` (the list), `plugin_install`
+(`name`, `data_b64`), `plugin_set` (`key`, `action`: `enable`, `disable`, `reload`, `remove`). Tests: `tests/test_plugins_web.py`.

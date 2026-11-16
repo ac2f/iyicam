@@ -271,7 +271,8 @@ class Hub:
 
 
 # operations that write to the computer of the person: the server cannot do them in the agent's place
-NEEDS_AGENT = frozenset({"list", "search", "open", "save", "save_files", "post_save", "post_delete"})
+NEEDS_AGENT = frozenset({"list", "search", "open", "save", "save_files", "post_save", "post_delete",
+                         "plugins", "plugin_install", "plugin_set"})
 JOB_OPS = frozenset({"job.status", "job.result", "job.cancel", "job.dismiss"})
 FALLBACK_HOSTS = 64              # engines of this kind kept at once (one per agent that has used its own server)
 

@@ -109,7 +109,7 @@ Whatever strategy or manual order is chosen:
    vector: holes before their outline, a part nested in a hole before the hole,
    engravings before the part around them. A manual order that breaks this rule
    is corrected and the toolpath shows a warning.
-2. **No cut in loose scrap.** The order is replayed cut by cut (up to 400 cuts on a sheet): a cut that
+2. **No cut in loose scrap.** The order is replayed cut by cut (any size of sheet: up to 5000 cuts): a cut that
    would run in material the cuts before it have already set loose is brought in front of the cut
    that closes the scrap round it. Also, when parts are so close that their cuts overlap,
    several cuts can together close a ring of scrap. All cut areas are removed
@@ -266,13 +266,18 @@ With smart start points on, an automatic order is made to suit the closing zones
   nearer to their zones in all (a cut that cannot be held counts for a lot, so a big letter's close is worth
   more than a small piece's).
 * Cuts that want to come before each other keep the order of the strategy.
-* **Every order is replayed** (up to 400 cuts on a sheet): a pull that would leave a cut in loose scrap is
+* **Every order is replayed** (up to 5000 cuts on a sheet): a pull that would leave a cut in loose scrap is
   given up (the one that closes the scrap first, then the next one, until nothing is loose), and
-  a cut that the strategy's own order leaves in loose scrap goes in front of the cut that closes it.
-  Bigger jobs only let neighbours swap places.
+  a cut that the strategy's own order leaves in loose scrap goes in front of the cut that closes it. The replay keeps the cut
+  areas as connected *pieces* and a new cut joins only the pieces it touches, so a step costs what lies near the cut: a sheet
+  of 493 cuts (a Japanese-letter sign) is replayed in 0.1 s instead of 9 s. (Above 400 cuts the replay used to be given up and
+  only neighbours traded places: that sheet had 145 cuts with a neighbour cut first on their hold side or in scrap; now none.)
+* **The support is kept whatever the settings are.** The hold side and the loose scrap are looked after by every automatic
+  order, with smart start points on or off (off: the start points are the vectors' own, so only *where a cut closes* is not
+  asked for). The page makes a new toolpath with smart start points on.
 * Strategies with a purpose of their own (**smallest first**, **from the centre outwards**,
-  **from the edges inwards**), orders fixed by hand and the one-time **Optimise now** are left as they are;
-  their start points still go to the best held place there is.
+  **from the edges inwards**) and orders fixed by hand are left as they are; the one-time **Optimise now** moves start points
+  only; their start points still go to the best held place there is.
 
 Where a wish cannot be fulfilled (a part packed between big letters that are cut first) the start goes to the
 nearest place along the part that is held, and the cut explanation says how far from the zone it closes.

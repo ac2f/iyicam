@@ -39,11 +39,14 @@ allow it for *private* networks.
 | `--root FOLDER` | a folder in which the page may open and save files; repeat it for more (default: `IYICAM_ROOTS`, else the home folder) |
 | `--no-files` | the page cannot open or save files of this computer at all (it can still upload and download) |
 | `--hub` | a hub: no files here, agents on other computers have them and do the work; while an agent is away the server's own engine answers ([below](#a-hub-and-an-agent-the-server-somewhere-else-the-files-here)) |
+| `--no-plugin-install` | the page cannot install or remove plugins (it can still switch them on and off) |
 | `--no-fallback` | with `--hub`: a browser whose agent is away is told so instead of being answered by the server's engine |
 | `--quiet` | no line per request |
 
 User posts, tools and plugins are read from `~/.iyicam` (`IYICAM_HOME`), as in the program; `--no-plugins` or
-`IYICAM_SERVICE_PLUGINS=0` leaves plugins out.
+`IYICAM_SERVICE_PLUGINS=0` leaves plugins out. The page can **install, switch on and off, reload and remove plugins** (Project
+tab, *Plugins*; a plugin is a program that runs with your rights, so it asks first): see
+[plugins.md](plugins.md#plugins-on-the-web-page-and-the-phone); `--no-plugin-install` forbids installing and removing.
 
 ## What the page does
 

@@ -27,6 +27,9 @@ QUICK: dict[str, Callable[[dict], dict]] = {
     "post_preview": ops.op_post_preview,
     "gcode_explain": ops.op_gcode_explain,
     "leftover": ops.op_leftover,
+    "plugins": ops.op_plugins,
+    "plugin_install": ops.op_plugin_install,
+    "plugin_set": ops.op_plugin_set,
 }
 
 LONG: dict[str, Callable[..., dict]] = {

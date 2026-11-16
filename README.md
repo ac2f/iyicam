@@ -264,7 +264,7 @@ python -m iyicam gcode nested.icam --post ncstudio --sheet all -o out/job.nc
 | Toolpath templates | `*.icamtpl` |
 | Tool library | `~/.iyicam/tools.json` |
 | User post-processors | `~/.iyicam/posts/*.toml` |
-| Plugins | `~/.iyicam/plugins/` (`*.py` or packages) |
+| Plugins | `~/.iyicam/plugins/` (`*.py` or packages; the web page and the phone install, switch and remove them too: [docs/plugins.md](docs/plugins.md)) |
 | Settings | `~/.iyicam/settings.json` |
 
 Set the `IYICAM_HOME` environment variable to use another folder.

@@ -8,6 +8,7 @@ G-code would differ from the one the desktop program writes.
 """
 from __future__ import annotations
 
+import base64
 import inspect
 import json
 import math
@@ -59,7 +60,8 @@ def ensure_ready() -> None:
         except Exception as exc:  # noqa: BLE001  (a damaged user post must not stop the service)
             PLUGIN_ERRORS.append({"plugin": "user-posts", "error": f"{type(exc).__name__}: {exc}"})
         if os.environ.get("IYICAM_SERVICE_PLUGINS", "1") != "0":
-            for info in PluginManager(REGISTRY, [paths.plugins_dir()]).load_all():
+            from .pluginhost import PLUGINS
+            for info in PLUGINS.load_all():              # (what the page switched off stays off)
                 if info.error:
                     PLUGIN_ERRORS.append({"plugin": info.key, "error": str(info.error)})
         _ready = True
@@ -117,6 +119,41 @@ def _num(payload: dict, key: str, default: float, lo: float | None = None, hi: f
 # schema, ping
 # ---------------------------------------------------------------------------------------------
 
+def op_plugins(_payload=None) -> dict:
+    """The plugins of this engine: ``{plugins: [{key, name, version, author, description, enabled, loaded, error, kind,
+    removable, provides}], install, plugins_on, folder, limits}``; ``provides`` lists what each gave (commands, operations,
+    importers, exporters, posts, gcode_filters, hooks)."""
+    ensure_ready()
+    from .pluginhost import PLUGINS
+    return PLUGINS.listing()
+
+
+def op_plugin_install(payload: dict) -> dict:
+    """Install a plugin: ``name`` (``my_plugin.py`` or ``my_plugin.zip``) and ``data_b64``; it is loaded at once (``enable``
+    false: only written). The answer is that of ``plugins`` with ``installed`` and the ``plugin``."""
+    ensure_ready()
+    from .pluginhost import PLUGINS
+    raw = payload.get("data_b64")
+    if not isinstance(raw, str):
+        raise ServiceError("bad_request", "'data_b64' (the file) is needed", field="data_b64")
+    try:
+        data = base64.b64decode(raw, validate=False)
+    except (ValueError, TypeError) as exc:
+        raise ServiceError("bad_request", "'data_b64' is not base64", field="data_b64") from exc
+    out = PLUGINS.install(payload.get("name"), data)
+    PLUGIN_ERRORS[:] = [e for e in PLUGIN_ERRORS if e.get("plugin") != out["installed"]]
+    if out["plugin"]["error"]:
+        PLUGIN_ERRORS.append({"plugin": out["installed"], "error": out["plugin"]["error"]})
+    return out
+
+
+def op_plugin_set(payload: dict) -> dict:
+    """``key`` and ``action`` (``enable``, ``disable``, ``reload``, ``remove``); answers like ``plugins``."""
+    ensure_ready()
+    from .pluginhost import PLUGINS
+    return PLUGINS.set(payload.get("key"), payload.get("action"))
+
+
 def op_ping(_payload=None) -> dict:
     ensure_ready()
     return {"ok": True, "api": API_VERSION, "iyicam": __version__, "plugin_errors": list(PLUGIN_ERRORS)}
@@ -161,7 +198,10 @@ def op_schema(_payload=None) -> dict:
             "tool_types": [[k, v] for k, v in TOOL_TYPES.items()],
             "sequence": {"strategies": [list(x) for x in seq.STRATEGIES], "groupings": [list(x) for x in seq.GROUPINGS],
                          "directions": [list(x) for x in seq.DIRECTIONS],
-                         "defaults": jsonable({k: v for k, v in seq.DEFAULTS.items() if k not in ("order", "directions")})},
+                         # (a toolpath made on the page starts with smart start points: the start points go where the cut is held
+                         # until it closes; the engine's own default stays off for projects and calls that never said)
+                         "defaults": jsonable({**{k: v for k, v in seq.DEFAULTS.items() if k not in ("order", "directions")},
+                                               "smart_starts": True})},
             "plugin_errors": list(PLUGIN_ERRORS)}
 
 

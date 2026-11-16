@@ -292,14 +292,24 @@ def test_a_cut_is_made_before_the_neighbour_that_would_leave_its_closing_zone_wi
     assert replay(tp, s) == []
 
 
-def test_without_smart_start_points_the_order_is_the_strategys_own():
+def test_without_smart_start_points_the_support_is_still_kept_and_nothing_else_is_moved():
+    """The start points are the vectors' own then, but a part is still cut before the neighbour on the side where the sheet
+    holds it: the tall part before the lower one beside its lower right side (the row alone would take the lowest first).
+    Where nothing stands on a hold side the order is the strategy's own."""
     tall = shapes.rectangle(20, 60, 60, 150)
     low = shapes.rectangle(88, 0, 50, 70)
     p, s, objs = make_project([[tall], [low]], size=(220, 300))
     t = add_tp(p, "profile", end_mill(6), {"through": True}, objs)
     t.sequence = {"strategy": "rows_bl", "smart_starts": False}
     order = [c["key"].split(":")[0] for c in compute_toolpath(p, t, s).toolpaths[0].cuts]
-    assert order == [objs[1].id, objs[0].id]                            # row by row, the lowest first: nothing re-ordered
+    assert order == [objs[0].id, objs[1].id]                            # the tall part first: the lower one is on its hold side
+    # two parts one behind the other in a row (nothing on the hold side of the first that is not behind it): the strategy's order
+    a, b = shapes.rectangle(20, 20, 40, 60), shapes.rectangle(100, 20, 40, 60)
+    p, s, objs = make_project([[b], [a]], size=(220, 300))
+    t = add_tp(p, "profile", end_mill(6), {"through": True}, objs)
+    t.sequence = {"strategy": "rows_bl", "smart_starts": False}
+    order = [c["key"].split(":")[0] for c in compute_toolpath(p, t, s).toolpaths[0].cuts]
+    assert order == [objs[1].id, objs[0].id]                            # left to right: a (the second object) then b
 
 
 def test_parts_on_one_line_are_one_row_however_tall_they_are():
@@ -579,8 +589,9 @@ def test_the_part_underneath_is_cut_before_the_part_above_it_even_when_the_row_w
     ids = {o.id: n for n, o in enumerate(objs)}
     order = [ids[c["key"].split(":")[0]] for c in tp.cuts]
     assert order.index(1) < order.index(0)                              # the lower part first
-    t.sequence = {"strategy": "rows_bl", "smart_starts": False}
-    plain = [ids[c["key"].split(":")[0]] for c in compute_toolpath(p, t, s).toolpaths[0].cuts]
+    items = [seq.SeqItem(str(n), v) for n, v in enumerate((upper, lower, shapes.rectangle(150, 200, 50, 80)))]
+    seq.containment(items)
+    plain = [int(k) for k in seq.order_items(items, "rows_bl")]
     assert plain.index(0) < plain.index(1)                              # (the row alone would have put the higher one first)
     assert replay(tp, s) == []
 
@@ -611,3 +622,29 @@ def test_the_wishes_do_not_depend_on_where_the_outline_starts():
     after = seq.hold_contacts(items, cfg, box)
     assert {k: {j: round(v, 1) for j, v in d.items()} for k, d in before.items()} == \
            {k: {j: round(v, 1) for j, v in d.items()} for k, d in after.items()}
+
+
+def test_a_big_sheet_is_replayed_too_so_its_support_is_kept_like_a_small_one():
+    """The replay costs what lies near a cut (the cut areas are kept as pieces, a new one joins only what it touches), so a
+    sheet of hundreds of cuts is replayed like any other: it used to be given up above 400 cuts, and then only neighbours
+    traded places and the support was not kept."""
+    assert seq.REPLAY_LIMIT >= 2000
+    from conftest import make_project
+    from iyicam.cam.job import compute_toolpath
+    from conftest import add_tp
+    upper, lower = shapes.rectangle(100, 40, 50, 80), shapes.rectangle(112, 10, 50, 22)       # one over the other, 8 mm apart
+    vecs = [[shapes.rectangle(10 + c * 14, 200 + r * 14, 8, 8)] for r in range(6) for c in range(10)] + [[upper], [lower]]
+    p, s, objs = make_project(vecs, size=(200, 300))
+    t = add_tp(p, "profile", end_mill(2), {"through": True}, objs)
+    t.sequence = {"strategy": "rows_bl", "smart_starts": True}
+    old = seq.REPLAY_LIMIT
+    seq.REPLAY_LIMIT = 20                       # (as if the sheet were bigger than the limit: no replay, only neighbours move)
+    try:
+        small_limit = compute_toolpath(p, t, s).toolpaths[0]
+    finally:
+        seq.REPLAY_LIMIT = old
+    full = compute_toolpath(p, t, s).toolpaths[0]
+    ids = {o.id: n for n, o in enumerate(objs)}
+    order = [ids[c["key"].split(":")[0]] for c in full.cuts]
+    assert order.index(len(objs) - 1) < order.index(len(objs) - 2)                          # the lower one first, even among 60 parts
+    assert replay(full, s) == [] and len(small_limit.cuts) == len(full.cuts)

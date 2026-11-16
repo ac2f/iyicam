@@ -60,7 +60,7 @@ def test_ping_and_schema(host):
     assert s["tools"] and s["tools"][0]["diameter"] > 0
     assert ["end_mill", "End Mill"] in s["tool_types"]
     assert s["sequence"]["strategies"][0][0] == "smart" and "climb" in [d[0] for d in s["sequence"]["directions"]]
-    assert s["sequence"]["defaults"]["smart_starts"] is False and "order" not in s["sequence"]["defaults"]
+    assert s["sequence"]["defaults"]["smart_starts"] is True and "order" not in s["sequence"]["defaults"]
     prof = next(o for o in s["operations"] if o["id"] == "profile")
     side = next(p for p in prof["params"] if p["name"] == "side")
     assert side["kind"] == "choice" and side["choices"] and all(len(c) == 2 for c in side["choices"])
