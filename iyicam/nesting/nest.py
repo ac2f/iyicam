@@ -19,6 +19,7 @@ new sheets are only started when the leftovers are full.
 """
 from __future__ import annotations
 
+import itertools
 import math
 import random
 import time
@@ -55,7 +56,7 @@ class Container:
     ``region`` are the outlines of its material (outer boundaries and holes; even-odd,
     in the plate's own coordinates); ``obstacles`` are parts already on the plate, which
     new parts keep the spacing to.  ``quantity`` is how many such plates there are
-    (0 = as many as needed); ``leftover`` plates are used before new ones."""
+    (0 = as many as needed); ``leftover`` plates are used before new ones and the ``reserve`` plate last of all."""
 
     region: list[list[Pt]]
     obstacles: list[list[Pt]] = field(default_factory=list)
@@ -63,6 +64,7 @@ class Container:
     leftover: bool = False
     name: str = ""
     payload: Any = None
+    reserve: bool = False          # the reserve plate: only started when every other plate is used up or cannot take more
 
     @classmethod
     def rect(cls, width: float, height: float, **kw) -> "Container":
@@ -87,7 +89,10 @@ class NestSettings:
     tolerance: float = 0.5         # outline simplification (parts get this much extra spacing at most)
     max_points: int = 40           # a part outlined with more points is simplified more: faster, a little looser
     containers: list[Container] | None = None  # the stock; None = unlimited sheets of the size above
-    stock_order: str = "leftovers"  # leftovers (leftovers first, small to large) | listed
+    stock_order: str = "leftovers"  # leftovers (leftovers first, then the plates small to large) | listed (as listed) |
+    #                               largest (the plates large to small) | best (the order of the plates that uses the least
+    #                               material is looked for); the reserve plate is always last
+    reserve_quantity: int = 0      # how many plates of the reserve size may be started (0 = as many as needed)
     # squeezing in: a part that does not fit may be tilted off its angles by up to ``squeeze_angle`` degrees
     # (in steps of ``squeeze_step``) and / or come up to ``squeeze_margin`` mm closer to the edge of the plate
     # than the border gap; 0 = not used. The result is a suggestion (NestResult.suggestion) if it is better.
@@ -97,6 +102,7 @@ class NestSettings:
 
 
 GRAVITIES = ("left", "bottom", "compact", "reach_x", "reach_y", "diag")
+STOCK_ORDERS = ("leftovers", "listed", "largest", "best")
 ARRANGEMENTS = ("free", "rows", "columns")
 CORNERS = ("bl", "br", "tl", "tr")
 
@@ -538,6 +544,7 @@ class Nester:
                     keep.append(a)
             self.angles.append(keep)
             self.skey.append((c, tuple(keep), sh.tilt))
+        self._rank: dict[int, int] = {}                 # the place of every plate in the order ``best`` found
         self._nfp_cache: dict[tuple, list[IntPath]] = {}
         self._nfp_np_cache: dict[tuple, list[tuple]] = {}   # the same as arrays with their bounding boxes
         self._nfp0_cache: dict[tuple, list[IntPath]] = {}
@@ -865,11 +872,43 @@ class Nester:
 
     # -- main loop -----------------------------------------------------------------------
     def _plates(self) -> list[_Box]:
-        """The containers in the order they are filled."""
+        """The containers in the order they are filled: leftovers (small ones first), then the plates (in the order
+        ``stock_order`` says), the reserve plate last of all. ``listed`` keeps the order of the list as it is."""
         boxes = [b for b in self.boxes if b.usable]
-        if self.st.stock_order == "listed":
+        order = self.st.stock_order
+        if order == "listed":
             return boxes
-        return sorted(boxes, key=lambda b: (0 if b.c.leftover else 1, b.free, b.index))
+
+        def key(b: _Box):
+            group = 0 if b.c.leftover else (2 if b.c.reserve else 1)
+            if group == 1 and order == "best":
+                return group, self._rank.get(b.index, b.index), b.index       # (the order found by choose_plate_order)
+            return group, (-b.free if group == 1 and order == "largest" else b.free), b.index
+        return sorted(boxes, key=key)
+
+    def choose_plate_order(self, order: list[tuple[int, int]], gravity: str | None = None, limit: int = 6) -> int:
+        """``stock_order`` best: the plates (the sizes, each with its quantity) are tried in several orders with the first
+        layout and the order that uses the least material is kept: the order listed, small to large, large to small, then
+        the other ones (all of them for up to three sizes). Returns how many orders were tried."""
+        sizes = [b for b in self.boxes if b.usable and not b.c.leftover and not b.c.reserve]
+        if len(sizes) < 2:
+            return 0
+        cands: list[tuple[_Box, ...]] = []
+        for perm in [tuple(sizes), tuple(sorted(sizes, key=lambda b: (b.free, b.index))),
+                     tuple(sorted(sizes, key=lambda b: (-b.free, b.index)))] + list(itertools.permutations(sizes)):
+            if perm not in cands:
+                cands.append(perm)
+            if len(cands) >= limit:
+                break
+        best = bq = None
+        for perm in cands:
+            self._rank = {b.index: k for k, b in enumerate(perm)}
+            r = self.run_order(list(order), None, self.cancel, gravity=gravity)
+            q = self.quality(r)
+            if best is None or q < bq:
+                best, bq, ranking = r, q, dict(self._rank)
+        self._rank = ranking
+        return len(cands)
 
     def run_order(self, order: list[tuple[int, int]], progress: Callable | None = None,
                   cancel: Callable[[], bool] | None = None, squeeze: bool = False,
@@ -882,19 +921,21 @@ class Nester:
         remaining = [it for it in order if self.angles[it[0]]]
         res.unplaced = [it for it in order if not self.angles[it[0]]]
         total = len(order)
-        for box in self._plates():
-            unit = 0
-            while remaining and res.sheets < self.st.max_sheets \
-                    and (box.c.quantity <= 0 or unit < box.c.quantity):
-                n = self._fill(box, remaining, res, progress, total, squeeze)
-                if n == 0:
-                    break  # nothing fits on a plate like this: the next ones would not do better
-                res.stock.append(box.index)
-                res.units.append(unit)
-                res.sheets += 1
-                unit += 1
-            if not remaining:
+        pool = self._plates()                  # the plates that may still take something, in the order they are filled
+        made: dict[int, int] = {}              # plates started of every container
+        while remaining and pool and res.sheets < self.st.max_sheets:
+            pool = [b for b in pool if b.c.quantity <= 0 or made.get(b.index, 0) < b.c.quantity]   # (used up: done with)
+            if not pool:
                 break
+            box = pool[0]
+            n = self._fill(box, remaining, res, progress, total, squeeze)
+            if n == 0:
+                pool.pop(0)    # nothing fits on a plate like this: the next ones would not do better
+                continue
+            res.stock.append(box.index)
+            res.units.append(made.get(box.index, 0))
+            made[box.index] = made.get(box.index, 0) + 1
+            res.sheets += 1
         res.unplaced += remaining
         for i in range(res.sheets):
             a = sum(self.areas[p.shape] for p in res.placements if p.sheet == i)
@@ -1244,6 +1285,8 @@ def nest(shapes: Sequence[NestShape], settings: NestSettings, progress: Callable
         """Progress of attempt ``i`` as part of all of them."""
         return None if progress is None else (lambda k, t: progress(i * count + k, attempts * count))
 
+    if settings.stock_order == "best" and plan:
+        n.choose_plate_order(*plan[0])
     rng = random.Random(settings.seed)
     best = order = grav = None
     t0 = time.perf_counter()

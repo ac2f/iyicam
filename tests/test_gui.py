@@ -852,3 +852,60 @@ def test_import_cdr_with_the_built_in_reader_needs_no_program(win, tmp_path, mon
     assert len(warned) == 1 and "Text was left out" in warned[0]            # the text is said to be left out
     win.ctrl.undo()
     assert not win.ctrl.sheet.vectors
+
+
+def test_plate_dialog_makes_plates_of_any_shape(win):
+    from iyicam.gui.dialogs import PlateDialog
+    dlg = PlateDialog(win.ctrl, win)
+    w = dlg.form.widgets
+    w["shape"].setCurrentIndex(w["shape"].findData("circle"))
+    w["diameter"].setValue(win.ctrl.units.to_display(600.0))
+    w["quantity"].setValue(2)
+    it = dlg.item()
+    assert (round(it.width), round(it.height), it.quantity) == (600, 600, 2) and it.outline and not it.is_rect
+    assert it.name.startswith("Circle")
+    w["shape"].setCurrentIndex(w["shape"].findData("rect"))
+    w["width"].setValue(win.ctrl.units.to_display(1000.0))
+    w["height"].setValue(win.ctrl.units.to_display(2000.0))
+    it = dlg.item()
+    assert it.is_rect and (it.width, it.height) == (1000.0, 2000.0)
+
+
+def test_plates_with_quantities_then_the_reserve_in_the_nesting_dialog(win):
+    """3 plates of one size, 2 of another, and parts left over go on the reserve (new sheet) size, which is used last
+    although it is smaller than one of the plates above."""
+    from iyicam.core.stock import StockItem
+    from iyicam.gui.dialogs import NestingDialog
+    ctrl = win.ctrl
+    ctrl.project.sheets[0].vectors = []
+    ctrl.add_vectors([VectorObject([shapes.rectangle(0, 0, 480, 480)], ctrl.layer_id)])
+    ctrl.set_stock([StockItem("A", 1000, 2000, None, 1, False), StockItem("B", 1500, 2000, None, 1, False)])
+    nd = NestingDialog(ctrl, win)
+    w = nd.form.widgets
+    w["target"].setCurrentIndex(w["target"].findData("new"))
+    w["width"].setValue(ctrl.units.to_display(1200.0))          # the reserve: bigger than A, smaller than B
+    w["height"].setValue(ctrl.units.to_display(2400.0))
+    w["plate_order"].setCurrentIndex(w["plate_order"].findData("listed"))
+    w["iterations"].setValue(1)
+    nd.qty[0].setValue(40)
+    # the list is the order: B can be moved above A
+    nd.stock_table.selectRow(1)
+    nd._move_plate(-1)
+    assert [it.name for it in ctrl.project.stock] == ["B", "A"]
+    out = nd.run()
+    assert out.unplaced == 0
+    names = [sh.name for sh in out.sheets]
+    assert names[:2] == ["B", "A"] and all(n.startswith("Reserve") for n in names[2:]) and len(names) > 2
+    assert all((round(sh.width), round(sh.height)) == (1200, 2400) for sh in out.sheets[2:])
+    ctrl.undo()
+    # a limit on the reserve: what does not fit is reported
+    nd = NestingDialog(ctrl, win)
+    w = nd.form.widgets
+    w["target"].setCurrentIndex(w["target"].findData("new"))
+    w["width"].setValue(ctrl.units.to_display(1200.0))
+    w["height"].setValue(ctrl.units.to_display(2400.0))
+    w["reserve_quantity"].setValue(1)
+    w["iterations"].setValue(1)
+    nd.qty[0].setValue(120)
+    out = nd.run()
+    assert out.unplaced > 0 and len(out.sheets) == 3

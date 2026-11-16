@@ -767,6 +767,10 @@ class StockTable(QTableWidget):
     def used(self, r: int) -> bool:
         return self.use[r].isChecked()
 
+    def set_used(self, flags: list[bool]) -> None:
+        for box, on in zip(self.use, flags):
+            box.setChecked(on)
+
     def item(self, r: int) -> StockItem:  # type: ignore[override]
         """The plate of row ``r`` with the edits (a copy that keeps the id)."""
         it = self.items[r].copy()
@@ -783,25 +787,39 @@ class StockTable(QTableWidget):
 
 
 class PlateDialog(QDialog):
-    """A plate for the stock: a rectangle of a size."""
+    """A plate for the stock: a rectangle of a size, or a plate of any of the shapes (circle, ellipse, polygon, L...)."""
+
+    SHAPES = [("rect", "Rectangle"), ("rounded", "Rounded rectangle"), ("circle", "Circle (with an optional hole)"),
+              ("ellipse", "Ellipse"), ("polygon", "Regular polygon"), ("l", "L shape")]
 
     def __init__(self, ctrl, parent=None):
         super().__init__(parent)
         self.ctrl = ctrl
         self.setWindowTitle("Add Plate")
         s = ctrl.sheet
-        params = [Param("name", "Name", "str", "Leftover"),
-                  Param("width", "Width (X)", "length", s.width, min=1.0),
-                  Param("height", "Height (Y)", "length", s.height, min=1.0),
+        params = [Param("shape", "Shape", "choice", "rect", choices=self.SHAPES),
+                  Param("name", "Name (empty: from the size)", "str", ""),
+                  Param("width", "Width (X)", "length", s.width, min=1.0,
+                        visible={"shape": ["rect", "rounded", "ellipse", "l"]}),
+                  Param("height", "Height (Y)", "length", s.height, min=1.0,
+                        visible={"shape": ["rect", "rounded", "ellipse", "l"]}),
+                  Param("radius", "Corner radius", "length", 50.0, min=0.0, visible={"shape": "rounded"}),
+                  Param("diameter", "Diameter", "length", min(s.width, s.height), min=1.0,
+                        visible={"shape": ["circle", "polygon"]}, help="Across the corners for a polygon"),
+                  Param("hole", "Hole in the middle (diameter, 0 = none)", "length", 0.0, min=0.0,
+                        visible={"shape": "circle"}),
+                  Param("sides", "Sides", "int", 6, min=3, max=64, visible={"shape": "polygon"}),
+                  Param("notch_width", "Notch width (top right)", "length", s.width / 3, min=1.0, visible={"shape": "l"}),
+                  Param("notch_height", "Notch height (top right)", "length", s.height / 3, min=1.0, visible={"shape": "l"}),
                   Param("quantity", "Quantity (0 = unlimited)", "int", 1, min=0, max=9999),
-                  Param("leftover", "Leftover (use before new sheets)", "bool", True)]
+                  Param("leftover", "Leftover (use before new sheets)", "bool", False)]
         lay = QVBoxLayout(self)
         presets = QComboBox()
         presets.addItem("Preset sheet sizes...")
         for name, w, h in SHEET_PRESETS:
             presets.addItem(name, (w, h))
         lay.addWidget(presets)
-        self.params = [p for p in params if p.name in ("quantity", "leftover")]   # the size follows the sheet
+        self.params = [p for p in params if p.name in ("quantity", "leftover", "shape")]   # the size follows the sheet
         self.form = ParamForm(params, ctrl.settings.recall("plate", self.params), ctrl.units)
         presets.activated.connect(lambda i: self._preset(presets.itemData(i)))
         lay.addWidget(self.form)
@@ -814,9 +832,12 @@ class PlateDialog(QDialog):
             self.form.widgets["height"].setValue(u.to_display(wh[1]))
 
     def item(self) -> StockItem:
+        from ..core.stock import shaped_plate
         v = self.form.values()
         self.ctrl.settings.remember("plate", v, self.params)
-        return StockItem(v["name"], v["width"], v["height"], None, v["quantity"], v["leftover"])
+        sizes = {k: v[k] for k in ("width", "height", "radius", "diameter", "hole", "sides", "notch_width", "notch_height")
+                 if k in v and v[k]}
+        return shaped_plate(v["shape"], v["name"], v["quantity"], v["leftover"], None, **sizes)
 
 
 class LeftoverDialog(QDialog):
@@ -1005,8 +1026,17 @@ class NestingDialog(RemembersSize, QDialog):
         tool_d = max((t.tool.diameter for t in ctrl.project.toolpaths if t.op == "profile"), default=6.0)
         saved = ctrl.project.metadata.get("nesting", {})
         params = [
-            Param("width", "New sheet width", "length", s.width, min=1.0, group="Sheets"),
-            Param("height", "New sheet height", "length", s.height, min=1.0, group="Sheets"),
+            Param("width", "Reserve / new sheet width", "length", s.width, min=1.0, group="Sheets",
+                  help="The size of the sheets started when the plates of the Plates tab are full (or when there are none)"),
+            Param("height", "Reserve / new sheet height", "length", s.height, min=1.0, group="Sheets"),
+            Param("reserve_quantity", "Reserve sheets at most (0 = as many as needed)", "int", 0, min=0, max=10000,
+                  group="Sheets", help="What does not fit when they are used up is reported"),
+            Param("plate_order", "Order of the plates", "choice", "leftovers",
+                  choices=[("leftovers", "Leftovers first, then the plates small to large"),
+                           ("listed", "As listed in the Plates tab"),
+                           ("largest", "The plates large to small"),
+                           ("best", "Best order: the orders of the sizes are tried, the one using the least material is kept")],
+                  group="Sheets", help="The reserve sheets are always used last"),
             Param("margin", "Border gap", "length", 10.0, min=0.0, group="Sheets"),
             Param("spacing", "Gap between parts", "length", tool_d + 2.0, min=0.0, group="Sheets",
                   help="Usually the cutter diameter plus a little clearance"),
@@ -1015,7 +1045,7 @@ class NestingDialog(RemembersSize, QDialog):
                            ("all", "All sheets first (around what stays on them), then the stock"),
                            ("new", "The stock and new sheets only")],
                   group="Sheets"),
-            Param("new_sheets", "Start new sheets when needed", "bool", True, group="Sheets"),
+            Param("new_sheets", "Use reserve (new) sheets when the plates are full", "bool", True, group="Sheets"),
             Param("use_up", "Take the plates used out of the stock", "bool", True, group="Sheets",
                   help="Leftovers with a quantity are counted down, used up ones are removed"),
             Param("rotation", "Rotation", "choice", "90",
@@ -1102,10 +1132,18 @@ class NestingDialog(RemembersSize, QDialog):
         l2.addLayout(self.stock_holder)
         self.stock_table: StockTable | None = None
         self._build_stock()
-        manage = QPushButton("Manage stock...")
-        manage.setToolTip("Add leftovers of any shape, sheet sizes and quantities")
-        manage.clicked.connect(self._manage_stock)
-        l2.addWidget(manage)
+        row = QHBoxLayout()
+        for text, tip, slot in (("Add plate...", "A sheet size with its quantity, or a circle, ellipse, polygon, L shape",
+                                 self._add_plate),
+                                ("Up", "Use the selected plate earlier", lambda: self._move_plate(-1)),
+                                ("Down", "Use the selected plate later", lambda: self._move_plate(1)),
+                                ("Manage stock...", "Leftovers drawn as vectors, the leftover of a cut sheet, "
+                                 "stock files", self._manage_stock)):
+            b = QPushButton(text)
+            b.setToolTip(tip)
+            b.clicked.connect(slot)
+            row.addWidget(b)
+        l2.addLayout(row)
         l2.addStretch(1)
         self._build_parts_page(saved)
         for page, title in ((page1, "Settings"), (page2, "Plates"), (page3, "Parts and rotation")):
@@ -1208,14 +1246,16 @@ class NestingDialog(RemembersSize, QDialog):
         self._build_parts_page(self.ctrl.project.metadata.get("nesting", {}), prev)
 
     # -- stock ---------------------------------------------------------------------------
-    def _build_stock(self) -> None:
+    def _build_stock(self, items: list[StockItem] | None = None, used: list[bool] | None = None) -> None:
         if self.stock_table is not None:
             self.stock_holder.removeWidget(self.stock_table)
             self.stock_table.deleteLater()
-        stock = self.ctrl.project.stock
-        self.stock_table = StockTable(self.ctrl, list(stock), checkable=True)
-        label = "Plates of the stock (leftovers are used first):" if stock else \
-            "The stock is empty: add leftovers of any shape below to nest onto them."
+        stock = list(self.ctrl.project.stock) if items is None else items
+        self.stock_table = StockTable(self.ctrl, stock, checkable=True)
+        if used:
+            self.stock_table.set_used(used)
+        label = "Plates (used in this order with 'As listed'; leftovers first by default; the reserve sheets last):" if stock else \
+            "No plates yet: add sheet sizes with their quantities, circles or leftovers of any shape below."
         if getattr(self, "stock_label", None) is None:
             self.stock_label = QLabel()
             self.stock_holder.addWidget(self.stock_label)
@@ -1225,6 +1265,33 @@ class NestingDialog(RemembersSize, QDialog):
     def _manage_stock(self) -> None:
         if StockDialog(self.ctrl, self).exec():
             self._build_stock()
+
+    def _add_plate(self) -> None:
+        """A plate size (any shape) with its quantity: it goes into the stock of the project, at the end of the list."""
+        dlg = PlateDialog(self.ctrl, self)
+        if dlg.exec():
+            table = self.stock_table
+            items = table.edited_items() + [dlg.item()]
+            used = [table.used(r) for r in range(len(table.items))] + [True]
+            self.ctrl.set_stock(items)
+            self._build_stock(items, used)
+
+    def _move_plate(self, delta: int) -> None:
+        """Move the selected plate up or down the list: the order they are used in."""
+        table = self.stock_table
+        rows = sorted({i.row() for i in table.selectedIndexes()})
+        if len(rows) != 1:
+            return
+        r, to = rows[0], rows[0] + delta
+        if not 0 <= to < len(table.items):
+            return
+        items = table.edited_items()
+        used = [table.used(k) for k in range(len(items))]
+        items[r], items[to] = items[to], items[r]
+        used[r], used[to] = used[to], used[r]
+        self.ctrl.set_stock(items)
+        self._build_stock(items, used)
+        self.stock_table.selectRow(to)
 
     def _preset(self, wh) -> None:
         if wh:
@@ -1283,7 +1350,7 @@ class NestingDialog(RemembersSize, QDialog):
         st = NestSettings(v["width"], v["height"], v["margin"], v["spacing"], self.rotations(v), v["gravity"],
                           iterations=v["iterations"], time_limit=float(v["time_limit"]), tolerance=v["tolerance"],
                           max_points=v["max_points"], gravity_only=bool(v["gravity_only"]), arrange=v["arrange"],
-                          corner=v["corner"],
+                          corner=v["corner"], stock_order=v["plate_order"], reserve_quantity=int(v["reserve_quantity"]),
                           squeeze_angle=v["squeeze_angle"] if squeezing else 0.0,
                           squeeze_margin=v["squeeze_margin"] if squeezing else 0.0,
                           squeeze_step=v["squeeze_step"])

@@ -272,18 +272,46 @@ def cmd_nest(a) -> int:
         size, _, qty = spec.partition(":")
         w, _, h = size.lower().partition("x")
         stock.append(StockItem(f"Leftover {w}x{h}", float(w), float(h), None, int(qty or 1), True))
-    plates = bool(stock) or a.no_new_sheets
-    out = nest_objects(p, objs, st, {o.id: a.quantity for o in objs}, [p.sheets[0]],
-                       stock=stock if plates else None, use_sheets=[] if plates else None,
-                       new_sheets=not a.no_new_sheets, layer_rules=layer_rules, tilt_step=a.tilt_step,
+    from .core.stock import shaped_plate
+    listed = 0
+    for flag, kind in ((a.plate, "rect"), (a.plate_circle, "circle")):  # the sizes of this job, in the order they are given
+        for spec in flag or []:
+            size, _, qty = spec.partition(":")
+            try:
+                if kind == "rect":
+                    w, _, h = size.lower().partition("x")
+                    stock.append(shaped_plate("rect", f"{float(w):g} x {float(h):g}", int(qty or 1), width=float(w),
+                                              height=float(h)))
+                else:
+                    stock.append(shaped_plate("circle", "", int(qty or 1), diameter=float(size)))
+            except ValueError as e:
+                print(f"--plate / --plate-circle: {spec!r}: {e}", file=sys.stderr)
+                return 2
+            listed += 1
+    no_new = a.no_new_sheets or a.no_reserve
+    if a.reserve:                                     # what does not fit the plates goes on sheets of this size
+        size, _, qty = a.reserve.partition(":")
+        w, _, h = size.lower().partition("x")
+        try:
+            st.sheet_width, st.sheet_height, st.reserve_quantity = float(w), float(h), int(qty or 0)
+        except ValueError:
+            print(f"--reserve: WxH or WxH:N expected, not {a.reserve!r}", file=sys.stderr)
+            return 2
+    st.stock_order = a.plate_order or ("listed" if listed else "leftovers")
+    on_sheets = [p.sheets[0]] if a.place_on == "current" else list(p.sheets) if a.place_on == "all" else []
+    plates = bool(stock) or no_new or bool(on_sheets)
+    out = nest_objects(p, objs, st, {o.id: a.quantity for o in objs}, [] if on_sheets else [p.sheets[0]],
+                       stock=stock if plates else None, use_sheets=on_sheets if plates else None,
+                       new_sheets=not no_new, layer_rules=layer_rules, tilt_step=a.tilt_step,
                        choose=(lambda strict, better: True) if a.apply_squeeze else None,
                        group_inner=a.group_inner, fill_holes=a.fill_holes)
     if plates and not a.keep_stock:
         p.stock = use_up(p.stock, out.plates)
     p.save(a.output)
     print(f"placed {out.placed}, unplaced {out.unplaced}, plates {out.result.sheets}")
-    for sh, u in zip(out.sheets, out.result.utilization):
-        print(f"  {sh.name}: {sh.width:g} x {sh.height:g}{' (shape)' if sh.outline else ''}, {u * 100:.1f}% used")
+    for sh, u, made in zip(out.sheets, out.result.utilization, out.plates):
+        print(f"  {sh.name}: {sh.width:g} x {sh.height:g}{' (shape)' if sh.outline else ''}"
+              f"{' (reserve)' if made is None else ''}, {u * 100:.1f}% used")
     if out.squeezed:
         print("squeezed in:")
         print("\n".join(squeeze_lines(out.parts, out.squeezed)))
@@ -385,6 +413,21 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--quantity", type=int, default=1)
     s.add_argument("--leftover", action="append", metavar="WxH[:N]",
                    help="a rectangular leftover plate to use first (N of them); can be repeated")
+    s.add_argument("--plate", action="append", metavar="WxH[:N]",
+                   help="a sheet size of this job with its quantity (N sheets, 1 by default); can be repeated, the sizes "
+                        "are used in the order given, e.g. --plate 1000x2000:3 --plate 1500x2000:2")
+    s.add_argument("--plate-circle", action="append", metavar="D[:N]",
+                   help="a round plate of diameter D (N of them); can be repeated")
+    s.add_argument("--reserve", metavar="WxH[:N]",
+                   help="the reserve plate: what does not fit the plates above goes on sheets of this size (N of them at most, "
+                        "no limit by default); it is always used last. Without it the --width x --height sheets are")
+    s.add_argument("--no-reserve", action="store_true", help="no reserve plate: what does not fit the plates is reported")
+    s.add_argument("--plate-order", choices=["leftovers", "listed", "largest", "best"],
+                   help="the order the plates are used in: leftovers first and then small to large; as listed (the "
+                        "default when --plate is given); large to small; best (the orders of the sizes are tried and "
+                        "the one that uses the least material is kept)")
+    s.add_argument("--place-on", choices=["new", "current", "all"], default="new",
+                   help="current / all: the free area of the first / of every sheet is used first, around what stays on it")
     s.add_argument("--stock", metavar="FILE", help="stock file (JSON) with leftovers of any shape")
     s.add_argument("--no-project-stock", action="store_true", help="ignore the stock saved in the project")
     s.add_argument("--no-new-sheets", action="store_true", help="only use the leftovers and stock plates")

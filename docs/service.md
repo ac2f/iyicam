@@ -44,7 +44,18 @@ plugins are read from `~/.iyicam` (`IYICAM_HOME`); `IYICAM_SERVICE_PLUGINS=0` le
 | `post_preview` | `post` (a draft) | `{files: [{name, text}], warnings}` — the G-code of a small sample job (arcs, a drilling, two tools) written with the draft; `invalid_post` or `post_failed` (an unknown `{variable}`) with the reason |
 | `gcode_explain` | `lines` (the lines of a file up to the one asked, at most 5000), `index?`, `lang?` (`en` `tr`), `post?` | `{summary, words: [{word, text}], arc, at, index}` — what the line says; for an arc the centre and the radius as a place on the sheet |
 | `simulate` | `project`, `sheet?`, `cells?`, `resolution?` | `{png_b64, width_px, height_px, resolution, extent, sheet, time_s}` |
-| `nest` | `project`, `objects?`, `quantities?`, `settings` (the options of `iyicam nest`) | `{project, placed, unplaced, plates, sheets, squeezed, suggestion}` |
+| `nest` | `project`, `objects?`, `quantities?`, `sheet?`, `settings` (the options of `iyicam nest`, and the plates below) | `{project, placed, unplaced, plates, sheets, squeezed, suggestion}`; every sheet has `reserve` (made of the reserve size because the plates were full) |
+| `leftover` | `project`, `sheet?`, `clearance?`, `min_width?`, `min_area?` | `{sheet, plates}` — the material left on a cut sheet as plates (`outline` polygons) that go into the `plates` of a nesting |
+
+The plates of a `nest` are in `settings`: `plates` is a list of the plate sizes of this job in the order they are used, each
+`{width, height, quantity?}` (a rectangle; quantity 1 by default, 0 = as many as needed), or with a `shape` (`rect`,
+`rounded` with `radius`, `circle` with `diameter` and an optional `hole`, `ellipse`, `polygon` with `sides` and `diameter`,
+`l` with `notch_width` and `notch_height`) or an `outline` (polygons of any shape, the first is the boundary, the others
+holes); `name`, `thickness` and `leftover` are optional. `reserve` is `{width, height, quantity?}`, the sheets that are started
+when the plates are full (`quantity` 0 = as many as needed), or `false` for none (what does not fit is reported); without
+`reserve` the `width` and `height` of the settings are the reserve. `plate_order` is `listed` (the default when `plates` are
+given), `leftovers`, `largest` or `best` (the orders of the sizes are tried and the one that uses the least material is kept). `place_on` is `new`, `current` (the free area of the sheet `sheet`, around what stays on it, first) or `all`. The reserve
+sheets are always the last to be started.
 
 `compute` returns, for every toolpath and sheet, its `warnings`, `error`, `stats` (time, lengths, depth, extent) and
 (unless `preview: false`) a `preview`: polylines of the cutting moves with their deepest Z (`cuts`), the moves in the

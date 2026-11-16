@@ -249,3 +249,5 @@ button.chip { min-height: 34px; padding: 0 10px; font: 12.5px ui-monospace, Cons
 .pvdraft { margin: 6px 0; padding: 8px 10px; border-radius: 10px; border: 1px solid #ec4899; background: color-mix(in srgb, #ec4899 10%, var(--card)); }
 .pvlegend { display: flex; align-items: center; gap: 8px; }
 .pvlegend i { display: block; width: 120px; height: 8px; border-radius: 99px; background: linear-gradient(90deg, hsl(140 80% 42%), hsl(70 80% 42%), hsl(15 80% 42%)); }
+.hint { font-size: 13px; color: var(--muted); margin: 6px 0 4px; }
+.plates .plate { margin: 8px 0; padding: 10px 12px; }

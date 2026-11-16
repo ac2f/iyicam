@@ -19,6 +19,47 @@ parts that still fit before the next plate is started, so a small leftover is
 filled with what suits it and new sheets are only opened when the leftovers are
 full. Parts that fit on no plate are reported and stay where they are.
 
+## Several plate sizes and a reserve plate
+
+List the sheets you have, **each size with its own quantity**: *3 sheets of 1000 x 2000 and 2 of 1500 x 2000*. They are
+used in the order of the list (or by **Order of the plates**: *leftovers first, then small to large* (the default of the
+desktop program), *as listed*, *large to small*, or **best order**: the orders the sizes can be used in are tried with the first layout (the
+order listed, small to large, large to small and the others, all of them for up to three sizes) and the one that uses the least
+material is kept; it never uses more than the order listed). Parts that do not fit
+a sheet go on the next size; a size that nothing fits on is skipped.
+
+When all the plates are full and parts are left, the **reserve plate** takes them: a sheet size of its own (the *Reserve / new
+sheet* width and height), as many sheets as needed, or at most *Reserve sheets at most* of them. **The reserve is always the last
+to be started**, whatever its size is compared with the plates before it, and its sheets are called *Reserve 1*, *Reserve 2*...
+With no reserve (*Use reserve sheets* off, `--no-reserve`, `"reserve": false`) what does not fit is reported and stays where it is.
+Without any plates listed the reserve size is simply the size of the new sheets, as it always was.
+
+* **Desktop**: *Nesting ▸ Plates* tab: *Add plate...* (a size and a quantity, or any shape below), *Up* / *Down* (the order),
+  the *Use* boxes and quantities for this run; the reserve and the order are on the *Settings* tab.
+* **Page**: *Nesting*: *Plate sizes* (a row per size with shape and quantity; *Add plate size*, *Leftover of this sheet*), the order,
+  *Reserve plate*.
+* **Command line**: `--plate WxH[:N]` (repeat it, in the order the sizes are used), `--plate-circle D[:N]`, `--reserve WxH[:N]`,
+  `--no-reserve`, `--plate-order listed|leftovers|largest|best`, `--place-on new|current|all`.
+* **Service**: `plates`, `reserve`, `plate_order`, `place_on` in the settings of `nest` ([service.md](service.md)).
+
+```
+python -m iyicam nest job.icam -o nested.icam --quantity 40 --plate 1000x2000:3 --plate 1500x2000:2 --reserve 1200x2400
+```
+
+## Plates of any shape
+
+A plate is any outline, not only a rectangle: a **circle** (with an optional hole in the middle), an **ellipse**, a **regular
+polygon**, a **rounded rectangle**, an **L** or **any polygon with holes** (a leftover scanned or measured, drawn as vectors, or
+the material left on a cut sheet). The parts keep the border gap to the edge of the plate and to its holes. Curves are made
+of corners that lie on the curve, so a part inside the polygon is inside the shape (the error is below 0.05 mm).
+
+* **Desktop**: *Add plate...* ▸ *Shape*; *Manage stock...* ▸ *From selected vectors* (draw the outline, holes inside it) and
+  *Leftover of sheet...*.
+* **Page**: a plate row's *Shape*; *Leftover of this sheet* adds the pieces the current sheet leaves (`leftover` in the service) as
+  plates of their own shape.
+* **Service / command line**: `{"shape": "circle", "diameter": 1200}`, `--plate-circle 1200`, `"outline": [[[x, y], ...], ...]`,
+  stock files (below).
+
 ## The stock
 
 **Nesting ▸ Stock of Plates...** keeps the plates of the project (saved with it):
@@ -110,6 +151,12 @@ nothing. What keeps it fast:
 Copies lying on top of each other are looked at once: identical outlines (a doubled drawing) count as one,
 and a pile of more than about a hundred different shapes on one spot is refused with a message ("shapes lie on
 top of each other"), because putting such a pile together takes minutes and cannot be interrupted.
+
+The search itself is fast too: the no-fit polygons of the parts already placed are taken out of the feasible area once and
+only the new ones at every further step (the area is never made again from scratch), a no-fit polygon is kept as an array with
+its bounding box, and the convex pieces of a part are prepared once for all the sums they take part in. The layouts are the same
+as before, place by place (checked), and the 543 letters of a real sign on three 156 x 305 cm sheets took 7.7 s for one
+pass instead of 26.5 s, eight attempts 17 s instead of 51 s.
 
 If nesting is still slow: fewer angles (90° steps instead of 15°), fewer *Optimisation
 attempts*, fewer outline points. On the command line: `--max-points N`.

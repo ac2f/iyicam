@@ -92,8 +92,9 @@ polygon, star, slot, arc, spiral, bounding box, door / panel), edit (offset, wel
 reverse, group, ungroup, explode, smooth, simplify, convert to polyline, centre line, vector doctor, delete duplicates),
 corners (fillet, chamfer, dog-bone), transform (move, position, rotate, scale, size, mirror, slant, turns, flips),
 arrange (align, centre on the sheet, distribute, rectangular and circular arrays, copy along a vector) and select (open
-vectors, similar), and **nesting** (plate size, border gap, spacing, rotation step, copies of each part, search
-effort, squeeze suggestion; the selected parts or all of them).
+vectors, similar), and **nesting** (**plate sizes with their own quantities** (rectangles, circles, ellipses, polygons, L shapes, the leftover of
+the current sheet), their order, **a reserve plate** for what does not fit, border gap, spacing, rotation step, copies of each
+part, search effort, squeeze suggestion; the selected parts or all of them; see [nesting.md](nesting.md)).
 
 #### Move to a coordinate you type
 

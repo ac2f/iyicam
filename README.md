@@ -143,7 +143,7 @@ engravings travel with their part (a part drawn inside another part's hole is re
 a separate part), **a search for the layout that uses the least material** (other directions
 and orders of the parts, then a polish of the best layout; one attempt stays a quick pass),
 **inner pieces (göbek) kept with their part or nested on their own, and other parts placed in the
-holes of parts**. **Leftovers and plates of any shape**: a stock of
+holes of parts**. **Several plate sizes with their own quantities and a reserve plate** (3 sheets of one size, 2 of another, what does not fit on sheets of the reserve size, always started last; order as listed / large to small / best fit), **plates of any shape (circle, ellipse, polygon, L, a measured leftover)**; **leftovers and plates of any shape**: a stock of
 plates (L shapes, plates with holes and bites, offcuts, sheet sizes, with quantities and own
 thickness) is nested onto leftovers first, around what is already on a sheet, and the plates
 used are counted down; the material left on a cut sheet becomes the next job's plates; sheets

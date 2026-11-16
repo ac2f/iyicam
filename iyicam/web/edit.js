@@ -53,7 +53,7 @@
     "sheet.add": "Sayfa ekle", "sheet.del": "Sayfayı sil", "sheet.last": "Son sayfa silinemez.", "sheet.delask": "Bu sayfa ve vektörleri silinsin mi?",
     "proj.new": "＋ Boş proje", "proj.newname": "Yeni proje", "proj.sheetthk": "Kalınlık (bu sayfa)",
     "proj.home": "Ev konumu (makine sonunda gider)", "proj.rapid": "Hızlı hareket (mm/dk)", "proj.rotary": "Döner eksen (A)", "proj.rotdia": "Döner eksen çapı (mm)",
-    "nest.title": "Yerleştirme (nesting)", "nest.plate": "Plaka", "nest.w": "Genişlik (mm)", "nest.h": "Yükseklik (mm)", "nest.margin": "Kenar boşluğu (mm)",
+    "nest.title": "Yerleştirme (nesting)", "nest.plate": "Tabaka / rezerve plaka ebadı", "nest.w": "Genişlik (mm)", "nest.h": "Yükseklik (mm)", "nest.margin": "Kenar boşluğu (mm)",
     "nest.spacing": "Parça aralığı (mm)", "nest.rot": "Dönüş adımı (°, 0 = dönme)", "nest.iter": "Arama (deneme sayısı)", "nest.sel": "Yalnız seçilileri yerleştir",
     "nest.copies": "Her parçadan kaç tane", "nest.run": "Yerleştir", "nest.result": "{0} parça yerleşti, {1} sığmadı, {2} plaka.",
     "nest.nothing": "Yerleştirilecek vektör yok.", "nest.squeeze": "Sıkıştırma önerisi (°, 0 = yok)",
@@ -63,6 +63,17 @@
     "nest.gravity": "Serbest dizmede yön", "nest.g.auto": "Otomatik (en iyisini dene)", "nest.g.left": "Sola yasla (Y boyunca dolar)",
     "nest.g.bottom": "Aşağı yasla (X boyunca dolar)", "nest.g.compact": "En küçük alan", "nest.g.reach_x": "X'te en kısa", "nest.g.reach_y": "Y'de en kısa",
     "nest.g.diag": "Sol alt köşeye (çapraz)",
+    "nest.plates": "Plaka ebatları", "nest.plates.hint": "Elinizdeki tabakaları adetleriyle yazın; bu sırayla kullanılır. Sığmayanlar aşağıdaki rezerve plakaya dizilir.",
+    "nest.addplate": "+ Plaka ekle", "nest.leftover": "Bu tabakanın artığı", "nest.qty": "Adet", "nest.shape": "Şekil", "nest.remove": "Kaldır",
+    "nest.s.rect": "Dikdörtgen", "nest.s.rounded": "Yuvarlak köşeli dikdörtgen", "nest.s.circle": "Daire", "nest.s.ellipse": "Elips",
+    "nest.s.polygon": "Düzgün çokgen", "nest.s.l": "L şekli", "nest.s.outline": "Artık (şekilli)",
+    "nest.f.diameter": "Çap (mm)", "nest.f.hole": "Ortadaki delik çapı (0 = yok)", "nest.f.radius": "Köşe yarıçapı (mm)", "nest.f.sides": "Kenar sayısı",
+    "nest.f.nw": "Kesik genişliği (mm)", "nest.f.nh": "Kesik yüksekliği (mm)",
+    "nest.reserve": "Rezerve plaka (sığmayanlar için)", "nest.reserve.hint": "Yukarıdaki plakalar dolunca kullanılır. Yukarıda plaka yoksa parçalar bu ebattaki tabakalara dizilir.",
+    "nest.reserveqty": "En çok kaç rezerve tabaka (0 = gerektiği kadar)", "nest.noreserve": "Rezerve plaka yok: sığmayanları yalnız bildir",
+    "nest.order": "Plakaların kullanım sırası", "nest.o.listed": "Yazıldığı sırayla", "nest.o.best": "En uygun sıra (ebatların sırasını dener, en az malzemeyi seçer)", "nest.o.largest": "Büyükten küçüğe",
+    "nest.onsheet": "Önce bu tabakanın boş alanını kullan (üzerinde kalanların çevresine)",
+    "nest.leftover.none": "Bu tabakada saklamaya değer artık yok.", "nest.leftover.added": "{0} artık plaka eklendi.",
     "e.command_failed": "Komut uygulanamadı.", "e.nothing_to_nest": "Yerleştirilecek vektör yok.",
     "paths.bylayers": "Katmanlar", "paths.byvectors": "Seçili vektörler ({0})", "paths.novec": "Önce çizimde vektör seç.",
     "paths.order": "Kesim sırası ve başlangıç noktaları", "paths.up": "Yukarı", "paths.down": "Aşağı", "paths.dup": "Çoğalt",
@@ -126,7 +137,7 @@
     "sheet.add": "Add a sheet", "sheet.del": "Delete the sheet", "sheet.last": "The last sheet cannot be deleted.", "sheet.delask": "Delete this sheet and its vectors?",
     "proj.new": "＋ Empty project", "proj.newname": "New project", "proj.sheetthk": "Thickness (this sheet)",
     "proj.home": "Home position (where the machine ends)", "proj.rapid": "Rapid rate (mm/min)", "proj.rotary": "Rotary axis (A)", "proj.rotdia": "Rotary diameter (mm)",
-    "nest.title": "Nesting", "nest.plate": "Plate", "nest.w": "Width (mm)", "nest.h": "Height (mm)", "nest.margin": "Border gap (mm)",
+    "nest.title": "Nesting", "nest.plate": "Sheet / reserve plate size", "nest.w": "Width (mm)", "nest.h": "Height (mm)", "nest.margin": "Border gap (mm)",
     "nest.spacing": "Part spacing (mm)", "nest.rot": "Rotation step (°, 0 = no turning)", "nest.iter": "Search (attempts)", "nest.sel": "Nest only the selected",
     "nest.copies": "Copies of each part", "nest.run": "Nest", "nest.result": "{0} part(s) placed, {1} did not fit, {2} plate(s).",
     "nest.nothing": "There is nothing to nest.", "nest.squeeze": "Squeeze suggestion (°, 0 = none)",
@@ -136,6 +147,17 @@
     "nest.gravity": "Direction of free nesting", "nest.g.auto": "Automatic (try the best)", "nest.g.left": "Pack to the left (fills along Y)",
     "nest.g.bottom": "Pack to the bottom (fills along X)", "nest.g.compact": "Smallest area", "nest.g.reach_x": "Shortest along X", "nest.g.reach_y": "Shortest along Y",
     "nest.g.diag": "To the lower left corner (diagonal)",
+    "nest.plates": "Plate sizes", "nest.plates.hint": "List the sheets you have, each with its quantity; they are used in this order. Whatever does not fit goes on the reserve plate below.",
+    "nest.addplate": "+ Add plate size", "nest.leftover": "Leftover of this sheet", "nest.qty": "Quantity", "nest.shape": "Shape", "nest.remove": "Remove",
+    "nest.s.rect": "Rectangle", "nest.s.rounded": "Rounded rectangle", "nest.s.circle": "Circle", "nest.s.ellipse": "Ellipse",
+    "nest.s.polygon": "Regular polygon", "nest.s.l": "L shape", "nest.s.outline": "Leftover (shape)",
+    "nest.f.diameter": "Diameter (mm)", "nest.f.hole": "Hole diameter (0 = none)", "nest.f.radius": "Corner radius (mm)", "nest.f.sides": "Sides",
+    "nest.f.nw": "Notch width (mm)", "nest.f.nh": "Notch height (mm)",
+    "nest.reserve": "Reserve plate (for what does not fit)", "nest.reserve.hint": "Used only when the plates above are full. With no plates above, parts go on sheets of this size.",
+    "nest.reserveqty": "Reserve sheets at most (0 = as many as needed)", "nest.noreserve": "No reserve plate: only report what does not fit",
+    "nest.order": "Order of the plates", "nest.o.listed": "As listed", "nest.o.best": "Best order (tries the orders of the sizes, keeps the one using the least material)", "nest.o.largest": "Largest first",
+    "nest.onsheet": "Use the free area of this sheet first (around what stays on it)",
+    "nest.leftover.none": "Nothing worth keeping is left on this sheet.", "nest.leftover.added": "{0} leftover plate(s) added.",
     "e.command_failed": "The command could not be applied.", "e.nothing_to_nest": "There is nothing to nest.",
     "paths.bylayers": "Layers", "paths.byvectors": "Selected vectors ({0})", "paths.novec": "Select vectors on the drawing first.",
     "paths.order": "Cut order and start points", "paths.up": "Up", "paths.down": "Down", "paths.dup": "Duplicate",
@@ -1032,14 +1054,34 @@
     toast(t("nest.result", n(r.placed), n(r.unplaced), S.project.sheets.length), "ok");
   }
   B.jobApply.nest = r => applyNest(r);                  // (jobs.js applies the result of a nesting asked for again)
-  const nestState = Object.assign({ arrange: "free", corner: "bl", gravity: "auto" }, JSON.parse(B.store.get("iyicam.nest") || "null") || { margin: 10, spacing: 8, rotation: 90, iterations: 8, copies: 1, squeeze: 0 });
+  const nestState = Object.assign({ arrange: "free", corner: "bl", gravity: "auto", plates: [], order: "listed", reserveQty: 0, noReserve: false, onSheet: false }, JSON.parse(B.store.get("iyicam.nest") || "null") || { margin: 10, spacing: 8, rotation: 90, iterations: 8, copies: 1, squeeze: 0 });
   /** what the engine is asked: the plate, the gaps, the turning, and how the parts are put down (``arrange``: free, or in rows
    *  along X / columns along Y from a corner; free nesting may be kept to one direction) */
+  /** the fields every shape of a plate asks for (the service builds the outline: ``iyicam.core.stock.shaped_outline``) */
+  const PLATE_FIELDS = { rect: ["width", "height"], rounded: ["width", "height", "radius"], circle: ["diameter", "hole"], ellipse: ["width", "height"],
+                         polygon: ["sides", "diameter"], l: ["width", "height", "notch_width", "notch_height"] };
+  const PLATE_LABEL = { width: "nest.w", height: "nest.h", radius: "nest.f.radius", diameter: "nest.f.diameter", hole: "nest.f.hole", sides: "nest.f.sides",
+                        notch_width: "nest.f.nw", notch_height: "nest.f.nh" };
+  const PLATE_DEFAULT = { width: 1000, height: 2000, radius: 50, diameter: 1000, hole: 0, sides: 6, notch_width: 400, notch_height: 600 };
+  /** a plate of the list as the service takes it */
+  function plateOf(p) {
+    if (p.outline) return { name: p.name, outline: p.outline, quantity: p.quantity, thickness: p.thickness || undefined };
+    const o = { shape: p.shape, quantity: p.quantity };
+    for (const k of PLATE_FIELDS[p.shape] || []) if (p[k]) o[k] = p[k];
+    return o;
+  }
   function nestSettings(s) {
     const o = { width: s.width, height: s.height, margin: s.margin, spacing: s.spacing, rotation: s.rotation, iterations: s.iterations, squeeze_angle: s.squeeze || 0,
                 arrange: s.arrange || "free" };
     if (o.arrange !== "free") o.corner = s.corner || "bl";
     else if (s.gravity && s.gravity !== "auto") { o.gravity = s.gravity; o.gravity_only = true; }
+    const plates = (s.plates || []).filter(p => p.quantity > 0 || p.quantity === 0);
+    if (plates.length) {                 // the sizes of this job in their order; the sheet size above is the reserve
+      o.plates = plates.map(plateOf);
+      o.plate_order = s.order || "listed";
+      o.reserve = s.noReserve ? false : { width: s.width, height: s.height, quantity: s.reserveQty || 0 };
+    }
+    if (s.onSheet) o.place_on = "current";
     return o;
   }
   function nestDialog() {
@@ -1060,6 +1102,36 @@
                                                         ["reach_x", t("nest.g.reach_x")], ["reach_y", t("nest.g.reach_y")], ["diag", t("nest.g.diag")]]));
     const arrangeBox = h("div", {}, pick(t("nest.arrange"), "arrange", [["free", t("nest.a.free")], ["rows", t("nest.a.rows")], ["columns", t("nest.a.columns")]], showArrange), cornerBox, gravBox);
     showArrange();
+    // the plate sizes of this job: shape, sizes and quantity each, used in this order
+    const platesBox = h("div", { class: "plates" });
+    const buildPlates = () => {
+      platesBox.replaceChildren(...s.plates.map((p, i) => {
+        const shapeSel = h("select", {}, [...Object.keys(PLATE_FIELDS), ...(p.outline ? ["outline"] : [])].map(k => h("option", { value: k }, t("nest.s." + k))));
+        shapeSel.value = p.outline ? "outline" : p.shape;
+        shapeSel.disabled = !!p.outline;
+        shapeSel.onchange = () => { p.shape = shapeSel.value; for (const k of PLATE_FIELDS[p.shape]) if (p[k] == null) p[k] = PLATE_DEFAULT[k]; buildPlates(); };
+        const field = k => h("label", { class: "f" }, h("span", {}, t(PLATE_LABEL[k])), numberInput(p[k], v => { p[k] = v; }, { min: 0 }));
+        const info = p.outline ? [h("div", { class: "hint" }, `${p.name || ""} ${Math.round(p.width)} × ${Math.round(p.height)}`)] : (PLATE_FIELDS[p.shape] || []).map(field);
+        return h("div", { class: "card plate" },
+          h("div", { class: "grid2" }, h("label", { class: "f" }, h("span", {}, t("nest.shape")), shapeSel),
+            h("label", { class: "f" }, h("span", {}, t("nest.qty")), numberInput(p.quantity, v => { p.quantity = Math.round(v); }, { kind: "int", min: 0 }))),
+          h("div", { class: "grid2" }, info),
+          h("div", { class: "row", style: "margin-top:6px" }, h("button", { onclick: () => { s.plates.splice(i, 1); buildPlates(); } }, t("nest.remove"))));
+      }));
+    };
+    buildPlates();
+    const addPlate = () => { s.plates.push({ shape: "rect", width: s.width || 1000, height: s.height || 2000, quantity: 1 }); buildPlates(); };
+    const addLeftover = () => B.guarded(async () => {
+      const r = await api("leftover", { project: S.project, sheet: S.sheetId });
+      const list = r.plates || [];
+      if (!list.length) return toast(t("nest.leftover.none"), "warn");
+      for (const pl of list) s.plates.push({ name: pl.name, outline: pl.outline, width: pl.width, height: pl.height, quantity: 1, thickness: pl.thickness });
+      buildPlates();
+      toast(t("nest.leftover.added", list.length), "ok");
+    });
+    const orderBox = pick(t("nest.order"), "order", [["listed", t("nest.o.listed")], ["best", t("nest.o.best")], ["largest", t("nest.o.largest")]]);
+    const noRes = h("input", { type: "checkbox", checked: !!s.noReserve }); noRes.onchange = () => { s.noReserve = noRes.checked; };
+    const onSheet = h("input", { type: "checkbox", checked: !!s.onSheet }); onSheet.onchange = () => { s.onSheet = onSheet.checked; };
     let close;
     const run = () => B.guarded(async () => {
       B.store.set("iyicam.nest", JSON.stringify(s));
@@ -1073,7 +1145,7 @@
         // a kept job: it goes on at the server whatever happens to this page (the connection, the browser closed or asleep) and
         // is one of the last three jobs, to be asked for again (jobs.js); a result that comes after the connection was lost is
         // offered, not taken: the person is asked first
-        r = await runJob("nest", { project: S.project, objects: ids, quantities,
+        r = await runJob("nest", { project: S.project, objects: ids, quantities, sheet: S.sheetId,
           settings: nestSettings(s) },
           { keep: { title: `${t("nest.title")} · ${S.project.name || ""}`.trim() }, deferrable: true });
       } catch (e) {
@@ -1083,11 +1155,17 @@
       applyNest(r, before);
     });
     close = openSheet(t("nest.title"), h("div", {},
-      h("div", { class: "group-h" }, t("nest.plate")), h("div", { class: "grid2" }, num(t("nest.w"), "width"), num(t("nest.h"), "height")),
+      h("div", { class: "group-h" }, t("nest.plates")), h("div", { class: "hint" }, t("nest.plates.hint")), platesBox,
+      h("div", { class: "row" }, h("button", { onclick: addPlate }, t("nest.addplate")), h("button", { onclick: addLeftover }, t("nest.leftover"))), orderBox,
+      h("div", { class: "group-h" }, t("nest.reserve")), h("div", { class: "hint" }, t("nest.reserve.hint")),
+      h("div", { class: "grid2" }, num(t("nest.w"), "width"), num(t("nest.h"), "height")),
+      h("div", { class: "grid2" }, num(t("nest.reserveqty"), "reserveQty", { kind: "int", min: 0 })),
+      h("label", { class: "chk" }, noRes, t("nest.noreserve")), h("label", { class: "chk" }, onSheet, t("nest.onsheet")),
+      h("div", { class: "group-h" }, t("nest.how")),
       h("div", { class: "grid2" }, num(t("nest.margin"), "margin"), num(t("nest.spacing"), "spacing")),
       h("div", { class: "grid2" }, num(t("nest.rot"), "rotation"), num(t("nest.copies"), "copies", { kind: "int", min: 1 })),
       h("div", { class: "grid2" }, num(t("nest.iter"), "iterations", { kind: "int", min: 1 }), num(t("nest.squeeze"), "squeeze")),
-      h("div", { class: "group-h" }, t("nest.how")), arrangeBox,
+      arrangeBox,
       h("label", { class: "chk" }, only, t("nest.sel")),
       h("div", { class: "row", style: "margin-top:16px" }, h("button", { class: "primary grow", onclick: () => { close(); run(); } }, t("nest.run")), h("button", { onclick: () => close() }, t("ed.cancel")))));
   }

@@ -592,6 +592,51 @@ def op_simulate(payload: dict, ctl: JobControl | None = None) -> dict:
 # nesting
 # ---------------------------------------------------------------------------------------------
 
+def op_leftover(payload: dict) -> dict:
+    """The material left on a sheet once its parts are cut out, as plates for the next job: ``{"plates": [...]}`` with
+    ``outline`` polygons that go into the ``plates`` of a nesting as they are. ``project``, ``sheet`` (an id; the first
+    sheet by default), ``clearance`` (how far the cuts reach round the parts, 3), ``min_width`` (30), ``min_area`` (2500)."""
+    ensure_ready()
+    from ..nesting.stock import leftover_of_sheet
+    p = load_project(payload.get("project"))
+    sid = str(payload.get("sheet") or "")
+    sheet = next((x for x in p.sheets if x.id == sid), p.sheets[0] if p.sheets else None)
+    if sheet is None:
+        raise ServiceError("bad_request", "the project has no sheet")
+    items = leftover_of_sheet(sheet, _num(payload, "clearance", 3.0, 0.0), _num(payload, "min_width", 30.0, 0.0),
+                              _num(payload, "min_area", 2500.0, 0.0))
+    return {"sheet": sheet.id, "plates": [{**it.to_dict(), "id": None} for it in items]}
+
+
+PLATE_KEYS = ("width", "height", "radius", "diameter", "hole", "sides", "notch_width", "notch_height", "points", "holes")
+
+
+def plate_from_dict(d, k: int = 0) -> StockItem:
+    """A plate of a nesting from its description: ``{"width": 1000, "height": 2000, "quantity": 3}`` is a rectangle;
+    ``"shape"`` (rect, rounded, circle, ellipse, polygon, l, points) and its sizes (see
+    :func:`iyicam.core.stock.shaped_outline`) make any other; ``name``, ``thickness``, ``leftover`` and ``outline``
+    (the polygons of any shape) are optional."""
+    from ..core.stock import shaped_plate
+    where = f"plates[{k}]"
+    if not isinstance(d, dict):
+        raise ServiceError("bad_request", f"{where} must be an object", field="plates")
+    try:
+        thickness = None if d.get("thickness") in (None, "", 0) else float(d["thickness"])
+        qty = int(d.get("quantity", 1))
+        if qty < 0:
+            raise ValueError("the quantity cannot be negative")
+        if d.get("outline"):              # any shape: its polygons (the first is the outline, the rest holes)
+            from ..core.stock import normalized
+            w, h, outline = normalized([[(float(x), float(y)) for x, y in poly] for poly in d["outline"]])
+            return StockItem(str(d.get("name") or f"Plate {k + 1}"), w, h, outline, qty, bool(d.get("leftover", False)),
+                             thickness)
+        sizes = {key: d[key] for key in PLATE_KEYS if d.get(key) is not None}
+        return shaped_plate(str(d.get("shape") or "rect"), str(d.get("name") or ""), qty, bool(d.get("leftover", False)),
+                            thickness, **sizes)
+    except (ValueError, TypeError, KeyError) as exc:
+        raise ServiceError("bad_request", f"{where}: {exc}", field="plates") from exc
+
+
 def op_nest(payload: dict, ctl: JobControl | None = None) -> dict:
     """Nest the vectors of a project (the options are those of ``iyicam nest``; defaults are the same)."""
     ensure_ready()
@@ -643,16 +688,44 @@ def op_nest(payload: dict, ctl: JobControl | None = None) -> dict:
             stock.append(StockItem(f"Leftover {w}x{h}", float(w), float(h), None, int(qty or 1), True))
         except ValueError as exc:
             raise ServiceError("bad_request", f"leftover {spec!r}: WxH or WxH:N expected", field="leftovers") from exc
+    listed = s.get("plates") or []                # the sizes of this job, with their quantities, in the order they are used
+    if not isinstance(listed, list):
+        raise ServiceError("bad_request", "'plates' must be a list", field="plates")
+    for k, d in enumerate(listed):
+        stock.append(plate_from_dict(d, k))
     no_new = bool(s.get("no_new_sheets"))
-    plates = bool(stock) or no_new
+    reserve = s.get("reserve")                    # what does not fit the plates above goes on sheets of this size
+    if reserve is False:
+        no_new = True
+    elif reserve is not None:
+        if not isinstance(reserve, dict):
+            raise ServiceError("bad_request", "'reserve' must be an object (width, height, quantity) or false", field="reserve")
+        st.sheet_width = _num(reserve, "width", st.sheet_width, 1.0)
+        st.sheet_height = _num(reserve, "height", st.sheet_height, 1.0)
+        st.reserve_quantity = int(_num(reserve, "quantity", 0, 0, 100000))
+    else:
+        st.reserve_quantity = int(_num(s, "reserve_quantity", 0, 0, 100000))
+    order = str(s.get("plate_order") or ("listed" if listed else "leftovers"))
+    from ..nesting.nest import STOCK_ORDERS
+    if order not in STOCK_ORDERS:
+        raise ServiceError("bad_request", f"'plate_order' must be one of: {', '.join(STOCK_ORDERS)}", field="plate_order",
+                           allowed=list(STOCK_ORDERS))
+    st.stock_order = order
+    place_on = str(s.get("place_on") or "new")    # new: the plates and sheets above; current / all: the free area of sheets first
+    if place_on not in ("new", "current", "all"):
+        raise ServiceError("bad_request", "'place_on' must be one of: new, current, all", field="place_on")
+    sheet_id = str(payload.get("sheet") or "")
+    on_sheets = ([next((x for x in p.sheets if x.id == sheet_id), p.sheets[0])] if place_on == "current"
+                 else list(p.sheets) if place_on == "all" else [])
+    plates = bool(stock) or no_new or bool(on_sheets)
     qty = int(_num(s, "quantity", 1, 1, 10000))
     quantities = {o.id: qty for o in objs}
     quantities.update({str(k): int(v) for k, v in (payload.get("quantities") or {}).items() if str(k) in quantities})
     cancel = ctl.cancelled if ctl else None
     progress = (lambda k, n: ctl.progress(k, n, "Nesting")) if ctl else None
     try:
-        out = nest_objects(p, objs, st, quantities, [p.sheets[0]], progress=progress, cancel=cancel,
-                           stock=stock if plates else None, use_sheets=[] if plates else None,
+        out = nest_objects(p, objs, st, quantities, [] if on_sheets else [p.sheets[0]], progress=progress, cancel=cancel,
+                           stock=stock if plates else None, use_sheets=on_sheets if plates else None,
                            new_sheets=not no_new, layer_rules=rules, tilt_step=_num(s, "tilt_step", 5.0, 0.1),
                            choose=(lambda strict, better: True) if s.get("apply_squeeze") else None,
                            group_inner=bool(s.get("group_inner")), fill_holes=bool(s.get("fill_holes")))
@@ -662,8 +735,9 @@ def op_nest(payload: dict, ctl: JobControl | None = None) -> dict:
         p.stock = use_up(p.stock, out.plates)
     return {"project": p.to_dict(), "placed": out.placed, "unplaced": out.unplaced, "plates": out.result.sheets,
             "sheets": [{"id": sh.id, "name": sh.name, "width": sh.width, "height": sh.height,
-                        "shape": bool(sh.outline), "utilization": round(u, 4)}
-                       for sh, u in zip(out.sheets, out.result.utilization)],
+                        "shape": bool(sh.outline), "utilization": round(u, 4),
+                        "reserve": made is None}                     # (a sheet of the reserve size: the plates were full)
+                       for sh, u, made in zip(out.sheets, out.result.utilization, out.plates)],
             "squeezed": squeeze_lines(out.parts, out.squeezed) if out.squeezed else [],
             "suggestion": ({"unplaced": len(out.suggestion.unplaced), "plates": out.suggestion.sheets,
                             "lines": squeeze_lines(out.parts, out.suggestion.squeezed)}

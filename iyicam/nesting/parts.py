@@ -226,8 +226,9 @@ def prepare_nesting(project: Project, objects: list[VectorObject], settings: Nes
         moving_ids = {o.id for p in parts for o in p.objects}
         containers = [sheet_container(s, moving_ids) for s in use_sheets or []]
         containers += [to_container(it) for it in stock or []]
-        if new_sheets:
-            containers.append(Container.rect(settings.sheet_width, settings.sheet_height))
+        if new_sheets:          # the reserve plate: used last, when the plates before it are full
+            containers.append(Container.rect(settings.sheet_width, settings.sheet_height, quantity=settings.reserve_quantity,
+                                             name="Reserve", reserve=True))
         settings = replace(settings, containers=containers)
     return NestJob(project, parts, shapes, settings, use_plates, list(target_sheets or []))
 
@@ -266,6 +267,8 @@ def apply_nesting(job: NestJob, res: NestResult, choose: Callable[[NestResult, N
         else:
             s.width, s.height = settings.sheet_width, settings.sheet_height
             s.outline = None
+            if c is not None and c.reserve and any(not x.reserve for x in settings.containers):
+                s.name = f"Reserve {res.units[k] + 1}"       # (the plates were full: the sheets started after them)
         sheets.append(s)
     # parts that were placed leave their old position; unplaced parts stay untouched
     placed_parts = {pl.shape for pl in res.placements}
