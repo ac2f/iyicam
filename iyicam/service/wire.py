@@ -5,7 +5,7 @@ import base64
 import math
 from typing import Any
 
-from ..core.params import Param
+from ..core.params import Param, is_advanced
 from ..core.tooling import Tool
 from .errors import ServiceError
 
@@ -40,7 +40,7 @@ def param_to_dict(p: Param) -> dict:
     return {"name": p.name, "label": p.label, "kind": p.kind, "default": jsonable(p.default),
             "min": p.min, "max": p.max, "step": p.step,
             "choices": [[str(v), str(l)] for v, l in p.choices] if p.choices else None,
-            "group": p.group, "help": p.help, "visible": jsonable(p.visible), "decimals": p.decimals}
+            "group": p.group, "help": p.help, "visible": jsonable(p.visible), "decimals": p.decimals, "advanced": is_advanced(p)}
 
 
 def tool_values(params: list[Param], values: dict | None) -> dict:

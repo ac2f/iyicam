@@ -34,6 +34,7 @@ const TXT = {
     "tool.sizeLocked": "Takımın çapı burada değiştirilemez: başka bir takım seç.", "tool.diameter": "Çap (mm)", "tool.feed_rate": "İlerleme (mm/dk)", "tool.plunge_rate": "Dalış (mm/dk)",
     "tool.spindle_speed": "Devir (dev/dk)", "tool.stepdown": "Paso derinliği (mm)", "tool.stepover": "Yanal adım (mm)",
     "tool.number": "Takım no",
+    "more.show": "▸ Daha fazla seçenek ({0})", "more.fewer": "▾ Daha az seçenek",
     "grp.label": "Grup", "grp.none": "(grupsuz)", "grp.new": "Yeni grup adı", "grp.hint": "Aynı gruptaki takım yolları birlikte açılır/kapanır ve tek dosyada kaydedilebilir.",
     "grp.which": "Dosyaya girecek takım yolları", "grp.all": "Hepsi", "grp.noneSel": "Hiçbiri", "grp.onlyGroup": "Yalnız grup: {0}", "grp.pickOne": "En az bir takım yolu seç.",
     "grp.save": "Seçilenleri tek dosyada üret", "grp.count": "{0} / {1} seçili",
@@ -94,6 +95,7 @@ const TXT = {
     "tool.sizeLocked": "The size of a tool cannot be changed here: choose another tool.", "tool.diameter": "Diameter (mm)", "tool.feed_rate": "Feed (mm/min)", "tool.plunge_rate": "Plunge (mm/min)",
     "tool.spindle_speed": "Spindle (rpm)", "tool.stepdown": "Step down (mm)", "tool.stepover": "Step over (mm)",
     "tool.number": "Tool number",
+    "more.show": "▸ More options ({0})", "more.fewer": "▾ Fewer options",
     "grp.label": "Group", "grp.none": "(no group)", "grp.new": "New group name", "grp.hint": "Toolpaths of one group are switched on and off together and can be saved in one file.",
     "grp.which": "Toolpaths in the file", "grp.all": "All", "grp.noneSel": "None", "grp.onlyGroup": "Only group: {0}", "grp.pickOne": "Choose at least one toolpath.",
     "grp.save": "Write the chosen ones as one file", "grp.count": "{0} of {1} chosen",
@@ -195,7 +197,26 @@ async function packBody(text) {
   }
   return { body: text, headers };
 }
+/** Something is being done: a thin bar runs along the top while any request is out, and the button that was pressed shows it
+ *  ("working", then a tick or a cross), so a press is never left without an answer. */
+let pending = 0, pressed = null;
+function pendingChange(d) {
+  pending += d;
+  document.body.classList.toggle("working", pending > 0 || !!(S && S.busy));
+  if (pending <= 0 && pressed) { const b = pressed; pressed = null; b.classList.remove("wait"); b.classList.add(pending < 0 ? "x" : "done"); setTimeout(() => b.classList.remove("done", "x"), 700); }
+}
+document.addEventListener("click", e => {
+  const b = e.target.closest && e.target.closest("button");
+  if (!b || b.disabled) return;
+  b.classList.add("press"); setTimeout(() => b.classList.remove("press"), 250);
+  setTimeout(() => { if (pending > 0 && !pressed && b.isConnected) { pressed = b; b.classList.add("wait"); } }, 0);     // (the press started something)
+}, true);
+
 async function api(op, payload) {
+  pendingChange(1);
+  try { return await apiCall(op, payload); } finally { pendingChange(-1); }
+}
+async function apiCall(op, payload) {
   let r;
   try {
     const { body: sent, headers } = await packBody(JSON.stringify(payload || {}));
@@ -381,6 +402,7 @@ const fail = e => { if (!(e instanceof ApiError) || e.code !== "not_logged_in") 
 
 function setBusy(b) {
   S.busy = b;
+  document.body.classList.toggle("working", !!b || pending > 0);
   const box = $("#busy");
   if (!box) return;
   box.hidden = !b;
@@ -624,9 +646,11 @@ function numberInput(value, onSet, p = {}) {
   return el;
 }
 
-function paramsForm(params, vals, tools) {
+function paramsForm(params, vals, tools, opts = {}) {
+  // ``opts.collapse``: the settings that are rarely changed (``advanced`` in the schema) are behind "More options"
   const root = h("div"), rows = [];
-  const refresh = () => rows.forEach(([p, el]) => { el.hidden = !visibleParam(p, vals); });
+  let more = false;
+  const refresh = () => rows.forEach(([p, el]) => { el.hidden = !visibleParam(p, vals) || (!!opts.collapse && !!p.advanced && !more); });
   let group = null;
   for (const p of params) {
     if (!(p.name in vals) && p.default != null) vals[p.name] = p.default;
@@ -667,23 +691,37 @@ function paramsForm(params, vals, tools) {
     rows.push([p, el]);
     root.append(el);
   }
+  const hidden = opts.collapse ? rows.filter(([p]) => p.advanced).length : 0;
+  if (hidden) {
+    const btn = h("button", { class: "small", style: "margin-top:10px" });
+    const label = () => { btn.textContent = more ? t("more.fewer") : t("more.show", hidden); };
+    btn.onclick = () => { more = !more; label(); refresh(); };
+    label();
+    root.append(btn);
+  }
   refresh();
   return root;
 }
 
 // ------------------------------------------------------------------------------------------ toolpath editor
 /** the settings of the cut order (the engine's ``schema.sequence``) as a form */
+/** the order strategies people use come first (the rest follow): columns, rows, shortest route */
+const COMMON_STRATEGIES = ["cols_bl", "rows_bl", "smart", "nearest"];
+function strategyChoices(list) {
+  const first = COMMON_STRATEGIES.map(id => list.find(c => c[0] === id)).filter(Boolean);
+  return first.concat(list.filter(c => !COMMON_STRATEGIES.includes(c[0])));
+}
 function sequenceParams() {
   const q = S.schema.sequence, d = q.defaults || {};
   return [
-    { name: "auto_order", label: t("seq.auto"), kind: "bool", default: d.auto_order !== false },
-    { name: "strategy", label: t("seq.strategy"), kind: "choice", choices: q.strategies, default: d.strategy },
-    { name: "grouping", label: t("seq.grouping"), kind: "choice", choices: q.groupings, default: d.grouping },
-    { name: "direction", label: t("seq.direction"), kind: "choice", choices: q.directions, default: d.direction },
-    { name: "band", label: t("seq.band"), kind: "length", default: d.band ?? 0, min: 0 },
+    { name: "strategy", label: t("seq.strategy"), kind: "choice", choices: strategyChoices(q.strategies), default: d.strategy },
     { name: "smart_starts", label: t("seq.smart"), kind: "bool", default: !!d.smart_starts },
-    { name: "start_margin", label: t("seq.margin"), kind: "length", default: d.start_margin ?? 1, min: 0 },
-    { name: "corner_distance", label: t("seq.corner"), kind: "length", default: d.corner_distance ?? 0, min: 0 },
+    { name: "auto_order", label: t("seq.auto"), kind: "bool", default: d.auto_order !== false, advanced: true },
+    { name: "grouping", label: t("seq.grouping"), kind: "choice", choices: q.groupings, default: d.grouping, advanced: true },
+    { name: "direction", label: t("seq.direction"), kind: "choice", choices: q.directions, default: d.direction, advanced: true },
+    { name: "band", label: t("seq.band"), kind: "length", default: d.band ?? 0, min: 0, advanced: true },
+    { name: "start_margin", label: t("seq.margin"), kind: "length", default: d.start_margin ?? 1, min: 0, advanced: true },
+    { name: "corner_distance", label: t("seq.corner"), kind: "length", default: d.corner_distance ?? 0, min: 0, advanced: true },
   ];
 }
 const TOOL_FIELDS = ["diameter", "feed_rate", "plunge_rate", "spindle_speed", "stepdown", "stepover", "number"];
@@ -738,7 +776,7 @@ function editToolpath(existing) {
     const prms = o.params.filter(q => !o.extra_tool_params.includes(q.name) || q.kind === "tool");
     opBox.replaceChildren(
       o.description ? h("div", { class: "muted small" }, o.description) : null,
-      h("div", { class: "group-h" }, t("paths.params")), paramsForm(prms, tp.params, sc.tools));
+      h("div", { class: "group-h" }, t("paths.params")), paramsForm(prms, tp.params, sc.tools, { collapse: true }));
   }
   opSel.onchange = () => { tp.params = {}; buildOp(); };
 
@@ -753,7 +791,7 @@ function editToolpath(existing) {
   // toolpath that is only looked at is not changed)
   const seqBox = h("div"), seqDet = h("details", {}, h("summary", { class: "group-h" }, t("paths.order")), seqBox);
   seqDet.addEventListener("toggle", () => {
-    if (seqDet.open && !seqBox.firstChild) { tp.sequence = tp.sequence || {}; seqBox.append(paramsForm(sequenceParams(), tp.sequence, sc.tools)); }
+    if (seqDet.open && !seqBox.firstChild) { tp.sequence = tp.sequence || {}; seqBox.append(paramsForm(sequenceParams(), tp.sequence, sc.tools, { collapse: true })); }
   });
   const body = h("div", {},
     h("label", { class: "f" }, h("span", {}, t("paths.op")), opSel),

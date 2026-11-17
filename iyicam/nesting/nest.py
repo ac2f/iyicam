@@ -1263,6 +1263,11 @@ class Nester:
         return kept
 
 
+def alt_order(best, order):
+    """(the order of the free-form layout stays the one the squeeze below starts from)"""
+    return order
+
+
 def nest(shapes: Sequence[NestShape], settings: NestSettings, progress: Callable | None = None,
          cancel: Callable[[], bool] | None = None) -> NestResult:
     """Nest the shapes; ``cancel()`` is asked all the time and ``NestCancelled`` raised when it says yes.
@@ -1312,6 +1317,14 @@ def nest(shapes: Sequence[NestShape], settings: NestSettings, progress: Callable
             best, order, grav = r, cand, g
     if tries > 1 and settings.arrange == "free" and not out_of_time():     # (strips are tidy: nothing to polish)
         n.polish(best, 12 * tries, rng, None if settings.time_limit <= 0 else t0 + settings.time_limit)
+    if settings.arrange == "free" and not squeezing and (best.unplaced or best.sheets > 1 or len(shapes) > 1):
+        # rectangles on rectangular plates: a rectangle packer, taken when it does better than the free-form layout
+        from . import rects
+        if rects.eligible(n):
+            alt = rects.pack_rects(n, plan[0][0] if plan else n.default_order(), tries, settings.time_limit,
+                                   settings.seed, cancel)
+            if alt is not None and n.quality(alt) < n.quality(best):
+                best, order = alt, alt_order(best, order)
     if squeezing and (best.unplaced or best.sheets > 1):
         # squeezing parts in may place what did not fit or save a plate: offered as a suggestion
         r = n.run_order(order, share(attempts - 1), cancel, squeeze=True, gravity=grav)

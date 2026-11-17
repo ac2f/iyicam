@@ -587,7 +587,7 @@ class ToolpathDialog(RemembersSize, QDialog):
         # a new toolpath starts with the settings of the last one of its kind, but its depth is the material's
         self.params = [p for p in params if not (p.name == "cut_depth" and self.op.id == "profile")]
         values = dict(self.tdef.params) if self.tdef else ctrl.settings.recall(self.memory_key + ":params", self.params)
-        self.form = ParamForm(params, values, ctrl.units, ctrl.tools)
+        self.form = ParamForm(params, values, ctrl.units, ctrl.tools, collapse=True)
         settings_tab = QWidget()
         sl = QVBoxLayout(settings_tab)
         sl.setContentsMargins(0, 0, 0, 0)

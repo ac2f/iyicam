@@ -5,11 +5,11 @@ from typing import Any
 
 from PySide6.QtCore import Signal
 from PySide6.QtGui import QDoubleValidator, QFont
-from PySide6.QtWidgets import (QCheckBox, QFormLayout, QGroupBox, QHBoxLayout, QLineEdit, QPlainTextEdit,
+from PySide6.QtWidgets import (QCheckBox, QPushButton, QFormLayout, QGroupBox, QHBoxLayout, QLineEdit, QPlainTextEdit,
                                 QVBoxLayout, QWidget)
 from .wheelguard import QComboBox, QDoubleSpinBox, QFontComboBox, QSpinBox
 
-from ..core.params import Param, is_visible
+from ..core.params import Param, is_advanced, is_visible
 from ..core.tooling import Tool, ToolLibrary
 from .settings import Units
 
@@ -45,8 +45,10 @@ class ParamForm(QWidget):
     changed = Signal()
 
     def __init__(self, params: list[Param], values: dict | None = None, units: Units | None = None,
-                 tools: ToolLibrary | None = None, parent=None):
+                 tools: ToolLibrary | None = None, parent=None, collapse: bool = False):
+        """``collapse``: the settings that are rarely changed (:func:`is_advanced`) are behind a "More options" button."""
         super().__init__(parent)
+        self.show_advanced = not collapse
         self.params = list(params)
         self.units = units or Units()
         self.tools = tools
@@ -70,6 +72,14 @@ class ParamForm(QWidget):
             self.widgets[p.name] = w
             self._rows[p.name] = (groups[g], w)
         self._groups = groups
+        self._advanced = {p.name for p in self.params if is_advanced(p)} if collapse else set()
+        self.more = QPushButton()
+        self.more.setCheckable(True)
+        self.more.setFlat(True)
+        self.more.toggled.connect(self._toggle_more)
+        if self._advanced:
+            outer.addWidget(self.more)
+        self._toggle_more(False)
         outer.addStretch(1)
         self._update_visibility()
 
@@ -201,11 +211,20 @@ class ParamForm(QWidget):
         self._update_visibility()
         self.changed.emit()
 
+    def _toggle_more(self, on: bool) -> None:
+        self.show_advanced = on or not self._advanced
+        self.more.setText("▾ Fewer options" if on else f"▸ More options ({len(self._advanced)})")
+        if getattr(self, "_rows", None) and getattr(self, "_groups", None):
+            self._update_visibility()
+
+    def _shown(self, p: Param, vals: dict) -> bool:
+        return is_visible(p, vals) and (self.show_advanced or p.name not in self._advanced)
+
     def _update_visibility(self) -> None:
         vals = self.values()
         for p in self.params:
             lay, w = self._rows[p.name]
-            lay.setRowVisible(w, is_visible(p, vals))
+            lay.setRowVisible(w, self._shown(p, vals))
         for name, lay in self._groups.items():
             box = lay.parentWidget()
-            box.setVisible(any(is_visible(p, vals) for p in self.params if (p.group or "Settings") == name))
+            box.setVisible(any(self._shown(p, vals) for p in self.params if (p.group or "Settings") == name))

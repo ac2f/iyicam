@@ -26,6 +26,7 @@ class Param:
     help: str = ""
     visible: dict[str, Any] | None = None  # {"other_param": value | [values]}
     decimals: int = 3
+    advanced: bool | None = None  # None: decided by :func:`is_advanced` (what is rarely changed is kept out of sight)
 
     def __post_init__(self) -> None:
         if self.kind not in KINDS:
@@ -61,6 +62,23 @@ class Param:
             if self.max is not None and v > self.max:
                 v = type(v)(self.max)
         return v
+
+
+#: settings that most people never change: forms show them behind "More options"
+ADVANCED_GROUPS = {"Ramp & Leads", "Advanced", "Flat areas", "Ramps", "Entry"}
+ADVANCED_NAMES = {
+    "start_depth", "overcut", "stepdown", "direction", "allowance", "sharp_corners", "finish_pass", "start_mode",
+    "tab_mode", "tab_3d", "tab_min_length", "tab_spacing", "rest_from", "order", "raster_angle", "profile_pass",
+    "finish_wall", "match_tolerance", "tip_compensation", "line_width", "resolution", "smoothing", "retract", "dwell",
+    "flat_depth", "glue_gap", "margin", "mirror", "ramp_units", "ramp_start", "ramp_end", "profile", "depth_mode",
+}
+
+
+def is_advanced(p: "Param") -> bool:
+    """A setting that is rarely changed (so a form keeps it behind its "More options" button)."""
+    if p.advanced is not None:
+        return p.advanced
+    return p.group in ADVANCED_GROUPS or p.name in ADVANCED_NAMES
 
 
 @dataclass

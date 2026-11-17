@@ -305,3 +305,12 @@ moving a start point never changes the order. Each cut is cached by everything i
 depends on: after a start point change only that cut is calculated again, and with
 smart start points also the cuts after it (their best start can depend on where
 the tool now arrives from). Everything before it stays exactly as it was.
+
+## The short way
+
+Columns (**bottom → top, then the next column to the right**) are the default order of a new toolpath, and smart
+start points are on: the support is kept whatever the order is (see *Rules that always hold*). The strategy list
+shows the four orders that are used (columns, rows, smart, nearest) first. On the panel, row size, inner pieces,
+direction, clear-of-cuts, what is drawn and the start point of one cut are behind **More options**; in the toolpath
+dialogs the rarely changed settings (start depth, overcut, entry and lead, finish pass ...) are behind **More options**
+too, on the desktop and on the page. Nothing is removed: the button shows them.

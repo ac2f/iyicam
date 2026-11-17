@@ -518,3 +518,11 @@ ticked). The service operation `gcode` takes `toolpaths` (a list of ids) or `gro
 The size of a tool cannot be changed in a toolpath (the diameter shows with a lock): choose another tool, or change
 the tool in the tool database. The mouse wheel only scrolls the page: a number box changes only when it has the
 focus.
+
+## Answers to a press, and what is in sight
+
+A button that is pressed answers at once: it shrinks, a thin bar runs along the top of the page while anything is
+being worked on, the button that started it pulses and shows a tick when it is done. The rarely changed settings of
+toolpaths and of the post editor are behind **More options** (the start and the end of the file, and the tool change,
+are the blocks that are in sight). The engine lists them as `advanced` (parameters) and `common` (post options and
+blocks) in `schema` and `posts`.

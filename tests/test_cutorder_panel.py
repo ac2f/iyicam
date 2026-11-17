@@ -62,7 +62,7 @@ def test_the_panel_opens_on_the_toolpath_and_shows_the_cut_order_on_the_drawing(
     assert [panel.view[k].isChecked() for k in VIEW] == [True, False, True, True]
     assert [win.view_actions[k].isChecked() for k in VIEW] == [True, False, True, True]
     assert rows(panel) == keys_of(objs) and "3 cut(s)" in panel.info.text() and "between the cuts" in panel.info.text()
-    assert panel.strategy.currentData() == "nearest" and panel.auto.isChecked() and not panel.smart.isChecked()
+    assert panel.strategy.currentData() == "cols_bl" and panel.auto.isChecked() and not panel.smart.isChecked()
     assert robot.problems() == []
 
 

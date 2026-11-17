@@ -18,7 +18,7 @@
     "post.edit": "Düzenle", "post.copy": "Kopyasını yap", "post.make": "Bunu temel alıp kendi postumu yap", "post.mine": "benim",
     "post.titleEdit": "Postu düzenle", "post.titleNew": "Yeni post", "post.name": "Ad", "post.desc": "Açıklama",
     "post.ext": "Dosya uzantısı", "post.based": "Temel aldığı post: {0}", "post.mine2": "Bu post programla gelir ve değişmez; kaydedersen kendi postun olur.",
-    "post.options": "Ayarlar", "post.blocks": "G-code blokları", "post.blocksHint": "Her blok G-code satırlarıdır. {ad} yazılan yerlere program değeri koyar (örneğin {safe_z}); düğmelerle ekleyebilirsin.",
+    "post.moreOpts": "▸ Daha fazla ayar ({0})", "post.moreBlocks": "▸ Diğer bloklar ({0})", "post.options": "Ayarlar", "post.blocks": "G-code blokları", "post.blocksHint": "Her blok G-code satırlarıdır. {ad} yazılan yerlere program değeri koyar (örneğin {safe_z}); düğmelerle ekleyebilirsin.",
     "post.words": "Kelimeler", "post.vars": "Değişkenler", "post.changed": "Değişti", "post.reset": "İlk haline getir",
     "post.save": "Kaydet", "post.preview": "Önizle", "post.cancel": "Vazgeç", "post.delete": "Sil", "post.delask": "«{0}» silinsin mi?",
     "post.saved": "«{0}» kaydedildi.", "post.deleted": "«{0}» silindi.", "post.noname": "Posta bir ad ver.",
@@ -35,7 +35,7 @@
     "post.edit": "Edit", "post.copy": "Make a copy", "post.make": "Make my own post from this one", "post.mine": "mine",
     "post.titleEdit": "Edit post", "post.titleNew": "New post", "post.name": "Name", "post.desc": "Description",
     "post.ext": "File extension", "post.based": "Based on: {0}", "post.mine2": "This post comes with the program and does not change; saving makes it your own post.",
-    "post.options": "Settings", "post.blocks": "G-code blocks", "post.blocksHint": "Each block is lines of G-code. Where {name} is written the program puts its value (for example {safe_z}); the buttons add them.",
+    "post.moreOpts": "▸ More settings ({0})", "post.moreBlocks": "▸ Other blocks ({0})", "post.options": "Settings", "post.blocks": "G-code blocks", "post.blocksHint": "Each block is lines of G-code. Where {name} is written the program puts its value (for example {safe_z}); the buttons add them.",
     "post.words": "Words", "post.vars": "Variables", "post.changed": "Changed", "post.reset": "Back to the first",
     "post.save": "Save", "post.preview": "Preview", "post.cancel": "Cancel", "post.delete": "Delete", "post.delask": "Delete “{0}”?",
     "post.saved": "“{0}” saved.", "post.deleted": "“{0}” deleted.", "post.noname": "Give the post a name.",
@@ -223,8 +223,12 @@
       if (need) watch(() => { box.hidden = !need(d.options); });
       return box;
     };
-    const optBox = h("div", {}, sp.groups.map(g => h("details", { class: "grp", open: g.id === "units" },
-      h("summary", {}, lab(g.label)), sp.options.filter(o => o.group === g.id).map(field))));
+    // what is changed often is in sight; the rest is one tap away (an option that was changed stays in sight)
+    const rare = sp.options.filter(o => !o.common);
+    const optBox = h("div", {},
+      sp.options.filter(o => o.common).map(field),
+      h("details", { class: "grp" }, h("summary", {}, t("post.moreOpts", rare.length)),
+        sp.groups.map(g => rare.filter(o => o.group === g.id).length ? h("div", {}, h("div", { class: "group-h" }, lab(g.label)), rare.filter(o => o.group === g.id).map(field)) : null)));
 
     // the blocks of text
     const block = s => {
@@ -246,8 +250,12 @@
           h("div", { class: "chips" }, vars.map(v => chip(v.name, lab(v.text))))),
         h("div", { class: "row" }, reset));
     };
-    const blkBox = h("div", {}, sp.block_groups.map(g => h("div", {},
-      h("div", { class: "group-h" }, lab(g.label)), sp.blocks.filter(b => b.group === g.id).map(block))));
+    // the start and the end of the file (and the tool change) are in sight; every other block is one tap away
+    const rareBlocks = sp.blocks.filter(b => !b.common);
+    const blkBox = h("div", {},
+      sp.blocks.filter(b => b.common).map(b => { const el = block(b); el.open = true; return el; }),
+      h("details", { class: "grp" }, h("summary", {}, t("post.moreBlocks", rareBlocks.length)),
+        sp.block_groups.map(g => rareBlocks.filter(b => b.group === g.id).length ? h("div", {}, h("div", { class: "group-h" }, lab(g.label)), rareBlocks.filter(b => b.group === g.id).map(block)) : null)));
 
     let close;
     const save = () => guarded(async () => {
@@ -267,8 +275,8 @@
       S.gcode = null; close(); toast(t("post.deleted", base.name), "ok"); render();
     });
     const body = h("div", {}, head,
-      h("div", { class: "group-h" }, t("post.options")), optBox,
       h("div", { class: "group-h" }, t("post.blocks")), h("div", { class: "muted small" }, t("post.blocksHint")), blkBox,
+      h("div", { class: "group-h" }, t("post.options")), optBox,
       h("div", { class: "stickybar" },
         h("button", { class: "primary grow", onclick: save }, t("post.save")),
         h("button", { onclick: () => preview(d) }, "👁 " + t("post.preview")),

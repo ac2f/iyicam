@@ -156,6 +156,7 @@ class CutOrderPanel(DocPanel):
         self._loading = True
         self._syncing = False
         self._pending: dict[str, dict] = {}   # settings chosen and not applied yet, by toolpath
+        self._advanced: list = []             # (form, row) of the settings that are rarely used: behind "More options"
         self._dirty = True                    # (what is shown is not what the document says: see showEvent)
         self._shown_preview = None
         self._cuts: list[dict] = []
@@ -172,9 +173,16 @@ class CutOrderPanel(DocPanel):
         lay.addWidget(self._order_group())
         lay.addWidget(self._starts_group())
         lay.addWidget(self._preview_bar())
-        lay.addWidget(self._view_group())
+        self.more = QPushButton()
+        self.more.setCheckable(True)
+        self.more.setFlat(True)
+        self.more.setToolTip("Row size, inner pieces, direction, clear-of-cuts, what is shown on the drawing and the "
+                             "start point of one cut: the settings that are rarely changed")
+        lay.addWidget(self.more)
+        self._more_boxes = [self._view_group(), self._start_edit_group()]
+        lay.addWidget(self._more_boxes[0])
         lay.addWidget(self._cuts_group(), 1)
-        lay.addWidget(self._start_edit_group())
+        lay.addWidget(self._more_boxes[1])
         self.info = QLabel()
         self.info.setWordWrap(True)
         lay.addWidget(self.info)
@@ -188,9 +196,18 @@ class CutOrderPanel(DocPanel):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(scroll)
 
+        self.more.toggled.connect(self._show_more)
+        self._show_more(False)
         self._wire()
         self._connect(ctrl)
         self._refresh()
+
+    def _show_more(self, on: bool) -> None:
+        self.more.setText("▾ Fewer options" if on else "▸ More options")
+        for form, row in self._advanced:
+            form.setRowVisible(row, on)
+        for box in self._more_boxes:
+            box.setVisible(on)
 
     def _connect(self, ctrl) -> None:
         super()._connect(ctrl)
@@ -215,8 +232,9 @@ class CutOrderPanel(DocPanel):
         self.auto.setToolTip("On: the cuts are put in the order of the strategy again whenever the toolpath is "
                              "calculated. Off: the order is frozen; new vectors are added at the end.")
         form.addRow(self.auto)
+        self._advanced.append((form, self.auto))
         self.strategy = _combo()
-        for k, label in seq.STRATEGIES:
+        for k, label in seq.strategy_list():                  # (the ones people use first)
             self.strategy.addItem(label, k)
         self.strategy.setToolTip("Smart: the shortest route between the cuts (nearest next, then improved), "
                                  "inner pieces first. The others sweep the sheet from a corner, by rows, ...")
@@ -227,9 +245,11 @@ class CutOrderPanel(DocPanel):
         self.grouping.setToolTip("Göbek: the inner pieces of a part (holes, the hub of a ring, parts nested in "
                                  "holes). First option: all of them are cut first, then the outlines.")
         form.addRow("Inner pieces", self.grouping)
+        self._advanced.append((form, self.grouping))
         self.band = _length_spin(self.ctrl, 0.0, "Automatic")
         self.band.setToolTip("Row / column size: the height of a row (width of a column) for the row and column strategies")
         form.addRow("Row size", self.band)
+        self._advanced.append((form, self.band))
         self.direction = _combo()
         for k, label in seq.DIRECTIONS:
             self.direction.addItem(label, k)
@@ -241,6 +261,7 @@ class CutOrderPanel(DocPanel):
         r.addWidget(self.direction, 1)
         r.addWidget(self.all_dirs)
         form.addRow("Direction", r)
+        self._advanced.append((form, r))
         r = QHBoxLayout()
         self.preview_order = QPushButton("Preview")
         self.preview_order.setToolTip("Show the order the strategy would give now, and what it saves")
@@ -249,6 +270,7 @@ class CutOrderPanel(DocPanel):
         r.addWidget(self.preview_order)
         r.addWidget(self.reorder)
         form.addRow(r)
+        self._advanced.append((form, r))
         return box
 
     def _starts_group(self) -> QGroupBox:
@@ -262,9 +284,11 @@ class CutOrderPanel(DocPanel):
         self.margin = _length_spin(self.ctrl, 1.0)
         self.margin.setToolTip("Clear of cuts: free material kept between the plunging tool and areas cut before")
         form.addRow("Clear of cuts", self.margin)
+        self._advanced.append((form, self.margin))
         self.corner = _length_spin(self.ctrl, 0.0, "Automatic")
         self.corner.setToolTip("Off corners: keep start points this far from corners")
         form.addRow("Off corners", self.corner)
+        self._advanced.append((form, self.corner))
         r = QGridLayout()
         self.preview_starts = QPushButton("Preview")
         self.preview_starts.setToolTip("Show where smart start points would put the start points (nothing moves yet)")
@@ -280,6 +304,7 @@ class CutOrderPanel(DocPanel):
         r.addWidget(self.release, 1, 0)
         r.addWidget(self.tool, 1, 1)
         form.addRow(r)
+        self._advanced.append((form, r))
         return box
 
     def _preview_bar(self) -> QGroupBox:

@@ -254,3 +254,12 @@ button.chip { min-height: 34px; padding: 0 10px; font: 12.5px ui-monospace, Cons
 .engine { font-size: 12px; padding: 3px 8px; border-radius: 12px; background: #b45309; color: #fff; white-space: nowrap; }
 .engine[hidden] { display: none; }
 .ro { min-height: 44px; display: flex; align-items: center; padding: 0 12px; border-radius: 10px; border: 1px dashed var(--line); color: var(--muted); }
+/* a press is answered at once (pressed), while it works (a bar on top, the button pulses), and when it is done (a tick) */
+button.press { transform: scale(.96); filter: brightness(.92); }
+body::before { content: ""; position: fixed; left: 0; top: 0; height: 3px; width: 0; background: var(--brand); z-index: 100; opacity: 0; transition: opacity .2s; }
+body.working::before { opacity: 1; width: 100%; animation: runbar 1.1s ease-in-out infinite; }
+@keyframes runbar { 0% { width: 0; margin-left: 0; } 50% { width: 60%; margin-left: 20%; } 100% { width: 0; margin-left: 100%; } }
+button.wait { opacity: .75; animation: pulse .9s ease-in-out infinite; pointer-events: none; }
+button.wait::after { content: " …"; }
+button.done::after { content: " ✓"; color: var(--ok); }
+@keyframes pulse { 50% { opacity: .45; } }

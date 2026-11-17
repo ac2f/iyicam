@@ -311,3 +311,15 @@ only touches the boundary with that point (lying outside the plate or in a hole)
 position chosen is checked against the plate once more and the next best one is taken when it
 fails. Plates, shapes and rotations are cached, so several plates of one kind cost no more than
 one.
+
+## Rectangles: the rectangle packer
+
+Parts that are rectangles (or rectangles with rounded or cut corners: the box round the part holds at least 99 % of
+it) on rectangular plates are packed by a rectangle packer (`iyicam/nesting/rects.py`, the MaxRects method) next
+to the free-form nesting: it tries many orders of the parts and several rules, and its layout is taken only when it
+is better than the free-form one (everything placed first, then fewer plates, then less used on the last plate), so a
+job of other shapes is nested exactly as before. It is used when at least 80 % of the area is rectangles that may
+turn by right angles only, no part holds others (*fill holes* off), the arrangement is free and squeezing is off;
+a part that is not a rectangle (lettering, say) is packed as the box round it. A hand-made layout of 270 rectangles
+that covers 90 % of its seven plates (the free-form nesting left 41 of them out) is packed completely, the gaps
+and margins as asked, in a few seconds.

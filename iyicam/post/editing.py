@@ -52,9 +52,15 @@ GROUPS = [
 ]
 
 
+#: what is changed often (the rest is behind "More options" in the editors); the same for the blocks of text
+COMMON_OPTIONS = {"units", "decimals", "arcs", "ijk", "comments", "line_numbers", "drill_cycles", "split_by_tool",
+                  "tool_change_first"}
+COMMON_BLOCKS = {"header", "footer", "tool_change"}
+
+
 def _o(key, group, kind, en, tr, hen, htr, choices=None, lo=None, hi=None) -> dict:
     d = {"key": key, "group": group, "kind": kind, "label": _t(en, tr), "help": _t(hen, htr),
-         "default": DEFAULT_OPTIONS[key]}
+         "default": DEFAULT_OPTIONS[key], "common": key in COMMON_OPTIONS}
     if choices:
         d["choices"] = [[v, _t(a, b)] for v, a, b in choices]
     if lo is not None:
@@ -172,7 +178,8 @@ _MOVE_WORDS = ["G", "X", "Y", "Z", "F"]
 
 def _b(name, group, en, tr, wen, wtr, vars="tool", words=(), extra=()) -> dict:
     return {"name": name, "group": group, "label": _t(en, tr), "when": _t(wen, wtr), "vars": vars,
-            "words": list(words), "extra": list(extra), "default": DEFAULT_BLOCKS.get(name, "")}
+            "words": list(words), "extra": list(extra), "default": DEFAULT_BLOCKS.get(name, ""),
+            "common": name in COMMON_BLOCKS}
 
 
 BLOCK_GROUPS = [

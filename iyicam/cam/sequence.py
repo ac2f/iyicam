@@ -55,6 +55,15 @@ STRATEGIES: list[tuple[str, str]] = [
     ("edges_in", "From the sheet edges inwards"),
 ]
 
+COMMON_STRATEGIES = ("cols_bl", "rows_bl", "smart", "nearest")      # what people use: first in every list
+
+
+def strategy_list() -> list[tuple[str, str]]:
+    """:data:`STRATEGIES` with the common ones first."""
+    by = dict(STRATEGIES)
+    return [(k, by[k]) for k in COMMON_STRATEGIES] + [(k, v) for k, v in STRATEGIES if k not in COMMON_STRATEGIES]
+
+
 GROUPINGS: list[tuple[str, str]] = [
     ("depth", "Inner pieces (göbek) of all parts first, then the outlines"),
     ("part", "Part by part (its inner pieces, then its outline)"),
@@ -71,7 +80,7 @@ DIRECTIONS: list[tuple[str, str]] = [
 
 DEFAULTS: dict = {
     "auto_order": True,        # re-order with the strategy on every calculation
-    "strategy": "nearest",
+    "strategy": "cols_bl",
     "grouping": "depth",
     "band": 0.0,               # row / column width for the row strategies (0 = automatic)
     "order": [],               # the current (or frozen) order of item keys

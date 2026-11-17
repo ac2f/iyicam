@@ -208,13 +208,33 @@ class OptionsForm(QScrollArea):
         self._building = False
         self.fields: dict[str, tuple[QWidget, QWidget, QLabel]] = {}      # key -> (row, input, mark)
         spec = editing.specs()
+        self.more = QPushButton()
+        self.more.setCheckable(True)
+        self.more.setFlat(True)
+        lay.addWidget(self.more)
+        self._boxes: list[tuple[QGroupBox, list[tuple[bool, QWidget]]]] = []
         for g in spec["groups"]:
             box = QGroupBox(g["label"]["en"])
             gl = QVBoxLayout(box)
+            rows = []
             for o in (o for o in spec["options"] if o["group"] == g["id"]):
-                gl.addWidget(self._field(o))
+                row = self._field(o)
+                gl.addWidget(row)
+                rows.append((bool(o.get("common")), row))
             lay.addWidget(box)
+            self._boxes.append((box, rows))
         lay.addStretch(1)
+        self._hidden = sum(1 for _, rows in self._boxes for c, _ in rows if not c)
+        self.more.toggled.connect(self._show_more)
+        self._show_more(False)
+
+    def _show_more(self, on: bool) -> None:
+        """The options that are changed often are always there; the others when asked for."""
+        self.more.setText("▾ Fewer options" if on else f"▸ More options ({self._hidden})")
+        if hasattr(self, "options") and self.fields:
+            self._refresh()
+        for box, rows in self._boxes:
+            box.setVisible(any(row.isVisibleTo(box) for _, row in rows))
 
     def _field(self, o: dict) -> QWidget:
         key, kind = o["key"], o["kind"]
@@ -274,10 +294,15 @@ class OptionsForm(QScrollArea):
         self.changed.emit()
 
     def _refresh(self) -> None:
+        more = self.more.isChecked()
+        common = {k for _, rows in self._boxes for c, row in rows if c for k, (r, _w, _m) in self.fields.items() if r is row}
         for key, (row, _w, mark) in self.fields.items():
             need = SHOWN.get(key)
-            row.setVisible(True if need is None else bool(need(self.options)))
+            row.setVisible((True if need is None else bool(need(self.options))) and (more or key in common
+                                                                                      or self.options.get(key) != self._orig.get(key)))
             mark.setVisible(self.options.get(key) != self._orig.get(key))
+        for box, rows in self._boxes:
+            box.setVisible(any(row.isVisibleTo(box) for _, row in rows))
 
     def load(self, options: dict, original: dict | None = None, editable: bool = True) -> None:
         """Show ``options`` (a copy is kept), compare them with ``original`` for the marks of what was changed."""
