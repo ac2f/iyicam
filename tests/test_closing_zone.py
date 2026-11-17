@@ -589,10 +589,8 @@ def test_the_part_underneath_is_cut_before_the_part_above_it_even_when_the_row_w
     ids = {o.id: n for n, o in enumerate(objs)}
     order = [ids[c["key"].split(":")[0]] for c in tp.cuts]
     assert order.index(1) < order.index(0)                              # the lower part first
-    items = [seq.SeqItem(str(n), v) for n, v in enumerate((upper, lower, shapes.rectangle(150, 200, 50, 80)))]
-    seq.containment(items)
-    plain = [int(k) for k in seq.order_items(items, "rows_bl")]
-    assert plain.index(0) < plain.index(1)                              # (the row alone would have put the higher one first)
+    # (a row is no longer made of parts that are only near each other along the sweep: these two are two rows, so the
+    # sweep alone puts the lower one first as well; the support is what the replay below checks)
     assert replay(tp, s) == []
 
 
