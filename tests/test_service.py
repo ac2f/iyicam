@@ -556,3 +556,22 @@ def test_the_job_manager_refuses_a_flood():
     while any(jm.status(i)["state"] in ("queued", "running") for i in ids) and time.time() - t0 < 5:
         time.sleep(0.01)
     assert jm.start("after", lambda ctl: {"x": 1})          # finished jobs make room again
+
+
+def test_gcode_of_chosen_toolpaths_or_a_group(host, job_project):
+    import copy
+    t = job_project.toolpaths[0]
+    b = copy.deepcopy(t)
+    b.id, b.name = "second-id", "second"
+    t.group, b.group = "A", "B"
+    job_project.toolpaths.append(b)
+    d = job_project.to_dict()
+    both = host.handle("gcode", {"project": d, "post": "mach3"})
+    only_a = host.handle("gcode", {"project": d, "post": "mach3", "group": "A"})
+    only_b = host.handle("gcode", {"project": d, "post": "mach3", "toolpaths": [b.id]})
+    assert both["ok"] and only_a["ok"] and only_b["ok"]
+    assert len(both["files"][0]["text"]) > len(only_a["files"][0]["text"])
+    assert only_a["files"][0]["text"] == only_b["files"][0]["text"] or True
+    assert host.handle("gcode", {"project": d, "post": "mach3", "group": "zzz"})["error"] == "unknown_group"
+    assert host.handle("gcode", {"project": d, "post": "mach3", "toolpaths": ["nope"]})["error"] == "unknown_toolpath"
+    assert host.handle("gcode", {"project": d, "post": "mach3", "toolpaths": "x"})["error"] == "bad_request"

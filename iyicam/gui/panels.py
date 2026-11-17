@@ -3,10 +3,11 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QIcon, QPixmap
-from PySide6.QtWidgets import (QAbstractItemView, QColorDialog, QComboBox, QDoubleSpinBox, QFormLayout, QHBoxLayout,
-                               QHeaderView, QInputDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMenu,
-                               QMessageBox, QPushButton, QToolButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
-                               QWidget)
+from PySide6.QtWidgets import (QAbstractItemView, QInputDialog, QColorDialog, QFormLayout, QHBoxLayout,
+                                QHeaderView, QInputDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMenu,
+                                QMessageBox, QPushButton, QToolButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
+                                QWidget)
+from .wheelguard import QComboBox, QDoubleSpinBox
 
 from ..cam.moves import PathStats, format_time
 from ..core.geom import BBox, Transform
@@ -294,7 +295,7 @@ class ToolpathsPanel(DocPanel):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(2, 2, 2, 2)
         self.tree = QTreeWidget()
-        self.tree.setHeaderLabels(["Toolpath", "Tool", "Time"])
+        self.tree.setHeaderLabels(["Toolpath", "Group", "Tool", "Time"])
         self.tree.setRootIsDecorated(False)
         self.tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
@@ -379,7 +380,7 @@ class ToolpathsPanel(DocPanel):
                     st = st.merge(tp.stats(rate))
             if t.enabled:
                 total = total.merge(st)
-            it = QTreeWidgetItem([t.name, t.tool.name, format_time(st.time_s) if here and here.toolpaths else ""])
+            it = QTreeWidgetItem([t.name, t.group, t.tool.name, format_time(st.time_s) if here and here.toolpaths else ""])
             it.setData(0, Qt.UserRole, t.id)
             it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
             it.setCheckState(0, Qt.Checked if t.enabled else Qt.Unchecked)
@@ -430,6 +431,8 @@ class ToolpathsPanel(DocPanel):
         m.addAction("Delete", self.delete)
         m.addSeparator()
         m.addAction("Select its vectors", self.select_vectors)
+        self._group_menu(m.addMenu("Group"))
+        m.addAction("Save G-code of the selected...", self.save_selected)
         ids = self.selected_ids()
         t = self.ctrl.project.toolpath(ids[0]) if ids else None
         op = self.ctrl.registry.operations.get(t.op) if t else None
@@ -441,6 +444,54 @@ class ToolpathsPanel(DocPanel):
         m.addAction("Save as template...", self.window.save_toolpath_template)
         m.addAction("Load template...", self.window.load_toolpath_template)
         menus.show_menu(m, self.tree.mapToGlobal(pos))
+
+    def _group_menu(self, menu: QMenu) -> None:
+        ids = self.selected_ids()
+        menu.setEnabled(bool(ids))
+        menu.addAction("New group from the selected...", self.new_group)
+        for g in self.ctrl.groups():
+            sub = menu.addMenu(g)
+            sub.addAction("Put the selected in it", lambda g=g: self.ctrl.set_group(self.selected_ids(), g))
+            sub.addAction("Select its toolpaths", lambda g=g: self._select_group(g))
+            sub.addAction("Switch only this group on", lambda g=g: self.ctrl.enable_only(self.ctrl.group_ids(g)))
+            sub.addAction("Switch it off", lambda g=g: self._switch_group(g, False))
+            sub.addAction("Switch it on", lambda g=g: self._switch_group(g, True))
+            sub.addAction("Rename...", lambda g=g: self.rename_group(g))
+            sub.addAction("Save G-code of this group...", lambda g=g: self.window.export_gcode(self.ctrl.group_ids(g), g))
+        menu.addSeparator()
+        menu.addAction("Take the selected out of their group", lambda: self.ctrl.set_group(self.selected_ids(), ""))
+
+    def new_group(self) -> None:
+        ids = self.selected_ids()
+        if not ids:
+            return
+        name, ok = QInputDialog.getText(self, "Group", "Name of the group:")
+        if ok and name.strip():
+            self.ctrl.set_group(ids, name)
+
+    def rename_group(self, old: str) -> None:
+        name, ok = QInputDialog.getText(self, "Group", "New name:", text=old)
+        if ok and name.strip():
+            self.ctrl.rename_group(old, name)
+
+    def _select_group(self, g: str) -> None:
+        ids = set(self.ctrl.group_ids(g))
+        for i in range(self.tree.topLevelItemCount()):
+            it = self.tree.topLevelItem(i)
+            it.setSelected(it.data(0, Qt.UserRole) in ids)
+
+    def _switch_group(self, g: str, on: bool) -> None:
+        ids = set(self.ctrl.group_ids(g))
+        with self.ctrl.edit("Switch toolpaths", geometry=False):
+            for t in self.ctrl.project.toolpaths:
+                if t.id in ids:
+                    t.enabled = on
+        self.ctrl.toolpaths_changed.emit()
+
+    def save_selected(self) -> None:
+        ids = self.selected_ids()
+        if ids:
+            self.window.export_gcode(ids)
 
     def edit(self) -> None:
         ids = self.selected_ids()

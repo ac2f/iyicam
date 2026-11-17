@@ -253,3 +253,4 @@ button.chip { min-height: 34px; padding: 0 10px; font: 12.5px ui-monospace, Cons
 .plates .plate { margin: 8px 0; padding: 10px 12px; }
 .engine { font-size: 12px; padding: 3px 8px; border-radius: 12px; background: #b45309; color: #fff; white-space: nowrap; }
 .engine[hidden] { display: none; }
+.ro { min-height: 44px; display: flex; align-items: center; padding: 0 12px; border-radius: 10px; border: 1px dashed var(--line); color: var(--muted); }

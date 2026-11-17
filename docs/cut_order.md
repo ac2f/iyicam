@@ -31,23 +31,28 @@ list says why the start point is where it is: which side of the part the cut clo
 how firmly the last stretch is held, how far it is from the nearest corner and how much
 material is left between the plunge and the areas cut before.
 
-## Preview before applying
+## When things are calculated
 
-Changing the strategy, the inner pieces grouping, the row size or the cutting direction
-does not change the toolpath at first (**Preview a change first**, on by default and
-remembered). The toolpath is calculated with the new settings and drawn in **pink**, the
-list shows the new order, and the preview bar says what it changes:
+**Nothing is calculated until you say so.** Editing the drawing, moving a start point, switching a setting or
+changing a toolpath marks the toolpaths as old (the panel says *the toolpaths are not calculated*); **Toolpaths >
+Recalculate All (F5)** calculates them when you are ready. (Edit > Preferences > *Recalculate toolpaths
+automatically* brings back the old behaviour, calculating after every edit; it is off by default.)
 
-* how many cuts would be cut at another place of the order,
-* how far the tool travels between the cuts now and with the preview (`2169 mm → 3681 mm (+70 %)`),
-* how many cuts would be cut the other way round,
-* how many start points would move (a dotted line runs from every start point to the place
-  it would go to).
+On this panel the settings you choose (strategy, grouping, row size, direction, smart order, smart start points,
+the clear-of-cuts and off-corners numbers) **wait**: the bar says *Settings waiting* and nothing is calculated.
 
-**Apply** makes it so (undoable), **Cancel** drops it. **Preview** next to *Re-order now*
-and next to *Optimise now* show what those one-time actions would do. Any change of the
-drawing or closing the panel drops a preview. Switch *Preview a change first* off to apply
-changes at once.
+* **Apply** calculates this toolpath once with the waiting settings (undoable).
+* **Preview** (next to *Re-order now* and *Optimise now*) calculates the result with them and draws it in **pink**
+  without touching the toolpath: the list shows the new order and the bar says what it changes: how many cuts would
+  be cut at another place of the order, how far the tool travels between the cuts now and with the preview
+  (`2169 mm → 3681 mm (+70 %)`), how many cuts would be cut the other way round, how many start points would move.
+  Apply makes it so, Cancel drops it.
+* **Reset order** applies the waiting settings and orders the cuts again from nothing: a frozen order or a
+  hand-made one is forgotten (*Smart order* is switched on again).
+* **Cancel** forgets the waiting settings.
+* *Calculate while I change settings* (off by default, remembered) applies every choice at once, as before.
+
+Smart start points on several selected vectors (Start Point > Smart) find all their places with one calculation.
 
 | | Cut order (G-code sequence) | Start points (vector editing) |
 |---|---|---|

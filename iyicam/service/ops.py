@@ -450,6 +450,27 @@ def op_compute(payload: dict, ctl: JobControl | None = None) -> dict:
             "seconds": round(time.perf_counter() - t0, 2)}
 
 
+def _only_toolpaths(project, ids, group) -> None:
+    """Save only some toolpaths: the ones named in ``ids`` (a list of ids), or those of the group ``group``; the others
+    are switched off in this copy of the project.  Neither given: the ones that are switched on, as always."""
+    if group:
+        want = {t.id for t in project.toolpaths if t.group == str(group)}
+        if not want:
+            raise ServiceError("unknown_group", "there is no such group of toolpaths", group=str(group))
+    elif ids is not None:
+        if not isinstance(ids, (list, tuple)) or not all(isinstance(i, str) for i in ids):
+            raise ServiceError("bad_request", "toolpaths must be a list of toolpath ids")
+        want = set(ids)
+        known = {t.id for t in project.toolpaths}
+        if not want or not want <= known:
+            raise ServiceError("unknown_toolpath", "some of the toolpaths are not in the project",
+                               unknown=sorted(want - known)[:10])
+    else:
+        return
+    for t in project.toolpaths:
+        t.enabled = t.id in want
+
+
 def op_gcode(payload: dict, ctl: JobControl | None = None) -> dict:
     """G-code for the sheets: one file per sheet (and per tool for a post that splits by tool)."""
     ensure_ready()
@@ -461,6 +482,7 @@ def op_gcode(payload: dict, ctl: JobControl | None = None) -> dict:
         raise ServiceError("unknown_post", "there is no such post-processor", post=str(payload.get("post")),
                            known=sorted(REGISTRY.posts))
     _only_sheets(project, payload.get("sheets"))
+    _only_toolpaths(project, payload.get("toolpaths"), payload.get("group"))
     cancel, prog = _ctl_hooks(ctl, "Calculating")
     try:
         res, _ = calculate(project, cancel, (lambda k, n, name: prog(k, n, name)) if prog else None)

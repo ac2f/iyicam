@@ -144,6 +144,8 @@ class ToolpathDef:
     sequence: dict = field(default_factory=dict)  # cut order and start point settings (cam.sequence)
     safe_z: float | None = None      # the heights of this toolpath when they are not the project's (Material Setup):
     clearance: float | None = None   # None = the project's safe Z / rapid-down clearance
+    group: str = ""                  # the name of the group of toolpaths this one is in ("" = none): a group is saved,
+                                     # switched on and off, and sent to the machine as one
 
 
 class Project:
@@ -339,7 +341,7 @@ def toolpath_to_dict(t: ToolpathDef) -> dict:
             "params": _jsonable(t.params), "enabled": t.enabled, "sheets": t.sheet_ids,
             "selection": {"mode": t.selection.mode, "vectors": list(t.selection.vector_ids),
                           "layers": list(t.selection.layer_ids)}, "sequence": _jsonable(t.sequence),
-            "safe_z": t.safe_z, "clearance": t.clearance}
+            "safe_z": t.safe_z, "clearance": t.clearance, **({"group": t.group} if t.group else {})}
 
 
 def _jsonable(v):
@@ -368,7 +370,8 @@ def toolpath_from_dict(d: dict) -> ToolpathDef:
                        Selection(sel.get("mode", "vectors"), list(sel.get("vectors", [])),
                                  list(sel.get("layers", []))),
                        d.get("enabled", True), d.get("sheets"), d["id"], dict(d.get("sequence") or {}),
-                       _height(d.get("safe_z")), _height(d.get("clearance")))
+                       _height(d.get("safe_z")), _height(d.get("clearance")),
+                       d["group"].strip() if isinstance(d.get("group"), str) else "")
 
 
 def _height(v):

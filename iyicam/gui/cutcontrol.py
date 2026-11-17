@@ -199,8 +199,7 @@ class CutControl:
                     o.contours[ci] = vectorops.set_start_point(o.contours[ci], point)
                     if lock and ci not in o.locked_starts:
                         o.locked_starts.append(ci)
-            if self.stale:
-                self.recalculate()
+            self.calc_if_auto()
         return valid
 
     def move_start(self, key: str, delta: float) -> bool:
@@ -258,8 +257,7 @@ class CutControl:
     def edit_start(self, vid: str, ci: int, point: Pt, lock: bool = True) -> None:
         """Start a contour at ``point`` and calculate the toolpaths again at once (what the drawing shows)."""
         self.set_start_point(vid, ci, point, lock)
-        if self.stale:
-            self.recalculate()
+        self.calc_if_auto()
 
     def smart_start_one(self, tid: str, key: str) -> bool:
         """Let smart start points choose the start of one cut (it stops being a hand-set one). Whether it moved."""
@@ -270,24 +268,37 @@ class CutControl:
         if ci in o.locked_starts:
             with self.edit("Release start point", geometry=False):
                 o.locked_starts.remove(ci)
+        return bool(self.smart_start_many(tid, [key]))
+
+    def smart_start_many(self, tid: str, keys) -> int:
+        """Smart start points for several cuts as ONE change: one calculation to find the places (not one per cut),
+        one undo step, and no calculation after it unless the automatic mode is on. How many starts moved."""
+        keys = [k for k in keys if (g := self.contour_of(k)) is not None and g[2].closed and g[2].segs]
+        if not keys:
+            return 0
+        released = [g for g in (self.contour_of(k) for k in keys) if g[1] in g[0].locked_starts]
+        if released:
+            with self.edit("Release start point", geometry=False):
+                for o, ci, _ in released:
+                    o.locked_starts.remove(ci)
         p = self.preview_cut_order(tid, smart_starts=True, label="Smart start point")
         self.cut_preview = None
         self.cut_view_changed.emit()
-        if p is None or key not in p.starts:
-            self.stale = True
-            self.recalculate({tid})
-            return False
-        self.edit_start(o.id, ci, p.starts[key][1], lock=False)
-        return True
+        if p is None:
+            return 0
+        items = [(*k.rsplit(":", 1)[:1], int(k.rsplit(":", 1)[1]), p.starts[k][1]) for k in keys if k in p.starts]
+        if not items:
+            return 0
+        return self.set_start_points(items, lock=False, label="Smart start point") and len(items)
 
-    def unlock_start(self, key: str) -> bool:
+    def unlock_start(self, key: str, calc: bool = True) -> bool:
         """Give the start point of one vector back to smart start points."""
         got = self.contour_of(key)
         if got is None or got[1] not in got[0].locked_starts:
             return False
         o, ci, _ = got
-        with self.edit("Release start point", geometry=False):
+        with self.edit("Release start point"):
             o.locked_starts.remove(ci)
-        self.stale = True
-        self.recalculate()
+        if calc:
+            self.calc_if_auto()
         return True

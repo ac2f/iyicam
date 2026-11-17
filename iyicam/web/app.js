@@ -31,9 +31,12 @@ const TXT = {
     "paths.op": "İşlem", "paths.tool": "Takım", "paths.layers": "İşlenecek katmanlar", "paths.toolvals": "Takım ayarları",
     "paths.params": "İşlem ayarları", "paths.save": "Kaydet", "paths.delete": "Sil", "paths.cancel": "Vazgeç",
     "paths.nolayer": "En az bir katman seç.", "paths.on": "Açık", "paths.none_tool": "(yok)",
-    "tool.diameter": "Çap (mm)", "tool.feed_rate": "İlerleme (mm/dk)", "tool.plunge_rate": "Dalış (mm/dk)",
+    "tool.sizeLocked": "Takımın çapı burada değiştirilemez: başka bir takım seç.", "tool.diameter": "Çap (mm)", "tool.feed_rate": "İlerleme (mm/dk)", "tool.plunge_rate": "Dalış (mm/dk)",
     "tool.spindle_speed": "Devir (dev/dk)", "tool.stepdown": "Paso derinliği (mm)", "tool.stepover": "Yanal adım (mm)",
     "tool.number": "Takım no",
+    "grp.label": "Grup", "grp.none": "(grupsuz)", "grp.new": "Yeni grup adı", "grp.hint": "Aynı gruptaki takım yolları birlikte açılır/kapanır ve tek dosyada kaydedilebilir.",
+    "grp.which": "Dosyaya girecek takım yolları", "grp.all": "Hepsi", "grp.noneSel": "Hiçbiri", "grp.onlyGroup": "Yalnız grup: {0}", "grp.pickOne": "En az bir takım yolu seç.",
+    "grp.save": "Seçilenleri tek dosyada üret", "grp.count": "{0} / {1} seçili",
     "out.post": "G-code biçimi (post)", "out.compute": "Hesapla", "out.gcode": "G-code üret", "out.sim": "Simülasyon",
     "out.export": "Dışa aktar", "out.needpaths": "Önce Yollar sekmesinden bir takım yolu ekle.",
     "out.results": "Hesap sonucu", "out.show": "Çizimde göster", "out.time": "süre", "out.cut": "kesim",
@@ -88,9 +91,12 @@ const TXT = {
     "paths.op": "Operation", "paths.tool": "Tool", "paths.layers": "Layers to machine", "paths.toolvals": "Tool settings",
     "paths.params": "Operation settings", "paths.save": "Save", "paths.delete": "Delete", "paths.cancel": "Cancel",
     "paths.nolayer": "Pick at least one layer.", "paths.on": "On", "paths.none_tool": "(none)",
-    "tool.diameter": "Diameter (mm)", "tool.feed_rate": "Feed (mm/min)", "tool.plunge_rate": "Plunge (mm/min)",
+    "tool.sizeLocked": "The size of a tool cannot be changed here: choose another tool.", "tool.diameter": "Diameter (mm)", "tool.feed_rate": "Feed (mm/min)", "tool.plunge_rate": "Plunge (mm/min)",
     "tool.spindle_speed": "Spindle (rpm)", "tool.stepdown": "Step down (mm)", "tool.stepover": "Step over (mm)",
     "tool.number": "Tool number",
+    "grp.label": "Group", "grp.none": "(no group)", "grp.new": "New group name", "grp.hint": "Toolpaths of one group are switched on and off together and can be saved in one file.",
+    "grp.which": "Toolpaths in the file", "grp.all": "All", "grp.noneSel": "None", "grp.onlyGroup": "Only group: {0}", "grp.pickOne": "Choose at least one toolpath.",
+    "grp.save": "Write the chosen ones as one file", "grp.count": "{0} of {1} chosen",
     "out.post": "G-code format (post)", "out.compute": "Calculate", "out.gcode": "Write G-code", "out.sim": "Simulation",
     "out.export": "Export", "out.needpaths": "Add a toolpath on the Toolpaths tab first.",
     "out.results": "Result", "out.show": "Show on the drawing", "out.time": "time", "out.cut": "cutting",
@@ -602,6 +608,12 @@ function drawStage(sheet, opts = {}) {
 const NUMERIC = new Set(["float", "length", "int", "angle", "feed", "percent"]);
 const visibleParam = (p, vals) => !p.visible || Object.entries(p.visible).every(([k, want]) => Array.isArray(want) ? want.includes(vals[k]) : vals[k] === want);
 
+// the wheel scrolls the page: a number box under the pointer does not change (a focused one is let go of first)
+document.addEventListener("wheel", e => {
+  const el = document.activeElement;
+  if (el && el.tagName === "INPUT" && el.type === "number" && e.target === el) el.blur();
+}, { passive: true });
+
 function numberInput(value, onSet, p = {}) {
   // (the "decimal" keypad of a phone has no minus sign, so it is asked for only where a number cannot be negative)
   const el = h("input", { type: "number", step: p.kind === "int" ? "1" : "any", value: value ?? "" });
@@ -690,6 +702,8 @@ function editToolpath(existing) {
   const modeSel = h("select", {}, h("option", { value: "layers" }, t("paths.bylayers")), h("option", { value: "vectors" }, t("paths.byvectors", vecIds.length)));
   modeSel.value = mode;
   const opBox = h("div"), toolBox = h("div"), name = h("input", { type: "text", value: tp.name });
+  const groupList = h("datalist", { id: "grp-names" }, [...new Set(p.toolpaths.map(x => x.group).filter(Boolean))].map(g => h("option", { value: g })));
+  const groupIn = h("input", { type: "text", value: tp.group || "", placeholder: t("grp.none"), list: "grp-names" });
   const opSel = h("select", {}, ops.map(o => h("option", { value: o.id }, o.label)));
   opSel.value = tp.op;
   let nameTouched = !!existing;
@@ -711,7 +725,9 @@ function editToolpath(existing) {
     toolSel.onchange = () => { tp.tool = { ...opts.find(tl => tl.id === toolSel.value) }; buildTool(); };
     const toolVals = h("div", { class: "grid2" });
     function buildTool() {
-      toolVals.replaceChildren(...TOOL_FIELDS.map(f => h("label", { class: "f" }, h("span", {}, t("tool." + f)),
+      toolVals.replaceChildren(...TOOL_FIELDS.map(f => f === "diameter"          // (the size is the tool's: another size is another tool)
+        ? h("label", { class: "f" }, h("span", {}, t("tool." + f)), h("div", { class: "ro", title: t("tool.sizeLocked") }, "Ø " + fmt(tp.tool[f], 2) + " mm 🔒"))
+        : h("label", { class: "f" }, h("span", {}, t("tool." + f)),
         numberInput(tp.tool[f], v => { tp.tool[f] = f === "number" || f === "spindle_speed" ? Math.round(v) : v; }, { kind: f === "number" ? "int" : "float" }))));
     }
     if (tp.tool) buildTool();
@@ -742,6 +758,7 @@ function editToolpath(existing) {
   const body = h("div", {},
     h("label", { class: "f" }, h("span", {}, t("paths.op")), opSel),
     h("label", { class: "f" }, h("span", {}, t("paths.name")), name),
+    h("label", { class: "f" }, h("span", {}, t("grp.label")), groupIn, groupList), h("div", { class: "muted small" }, t("grp.hint")),
     h("div", { class: "group-h" }, t("paths.layers")), modeSel, layerBox,
     toolBox, opBox, seqDet);
   buildOp();
@@ -749,6 +766,7 @@ function editToolpath(existing) {
   const save = () => {
     if (mode === "vectors" ? !vecIds.length : !chosen.size) return toast(mode === "vectors" ? t("paths.novec") : t("paths.nolayer"), "warn");
     tp.name = name.value.trim() || opOf().label;
+    tp.group = groupIn.value.trim();
     tp.op = opSel.value;
     tp.selection = mode === "vectors" ? { mode: "vectors", vectors: vecIds, layers: [] }
       : { mode: "layers", vectors: [], layers: p.layers.filter(l => chosen.has(l.id)).map(l => l.id) };
@@ -1097,17 +1115,27 @@ function moveToolpath(tp, d) {                       // (the order of the toolpa
 
 function viewPaths() {
   const p = S.project;
-  const items = p.toolpaths.map(tp => {
+  const items = [];
+  let lastGroup = null;
+  for (const tp of p.toolpaths) {
+    const g = tp.group || "";
+    if (g && g !== lastGroup) {                       // (a group's toolpaths that follow each other: one header, a switch for all)
+      const mates = p.toolpaths.filter(x => x.group === g);
+      const all = h("input", { type: "checkbox", checked: mates.every(x => x.enabled), title: t("paths.on"), "aria-label": g });
+      all.onchange = () => { mates.forEach(x => { x.enabled = all.checked; }); touch(); render(); };
+      items.push(h("div", { class: "item group-h", style: "background:var(--card2,transparent);font-weight:600" }, all, h("div", { class: "grow" }, "▣ " + g), h("span", { class: "muted small" }, String(mates.length))));
+    }
+    lastGroup = g;
     const op = S.schema.operations.find(o => o.id === tp.op);
     const cb = h("input", { type: "checkbox", checked: tp.enabled, title: t("paths.on"), "aria-label": t("paths.on") });
     cb.onchange = () => { tp.enabled = cb.checked; touch(); };
-    return h("div", { class: "item" }, cb,
+    items.push(h("div", { class: "item", style: tp.group ? "margin-left:14px" : "" }, cb,
       h("div", { class: "grow" }, h("b", {}, tp.name), h("div", { class: "muted small" }, `${op ? op.label : tp.op} · ${tp.tool.name}`)),
       h("button", { class: "small", title: t("paths.up"), "aria-label": t("paths.up"), onclick: () => moveToolpath(tp, -1) }, "↑"),
       h("button", { class: "small", title: t("paths.down"), "aria-label": t("paths.down"), onclick: () => moveToolpath(tp, 1) }, "↓"),
       h("button", { class: "small", title: t("paths.dup"), "aria-label": t("paths.dup"), onclick: () => { const c = JSON.parse(JSON.stringify(tp)); c.id = newId(); c.name = tp.name + " (2)"; if (c.sequence) delete c.sequence.order; p.toolpaths.splice(p.toolpaths.indexOf(tp) + 1, 0, c); changed(); } }, "⧉"),
-      h("button", { class: "small", onclick: () => editToolpath(tp) }, "✎"));
-  });
+      h("button", { class: "small", onclick: () => editToolpath(tp) }, "✎")));
+  }
   return h("div", {}, h("div", { class: "card" },
     h("div", { class: "row sp" }, h("h2", { style: "margin:0" }, t("paths.title")), h("button", { class: "primary small", onclick: () => editToolpath(null) }, "＋ " + t("paths.add"))),
     items.length ? h("div", { class: "list", style: "margin-top:8px" }, items)
@@ -1124,13 +1152,38 @@ function viewOutput() {
   post.value = S.post; post.onchange = () => { S.post = post.value; store.set("iyicam.post", S.post); S.gcode = null; render(); };
   const stem = (p.name || "job").replace(/[^\w .-]+/g, "_");
   const out = [];
+  // which toolpaths go in the file: ticked here (the ones that are on, to begin with); a group can be taken at once
+  if (!S.outSel || S.outSel.proj !== p) S.outSel = { proj: p, ids: new Set(p.toolpaths.filter(x => x.enabled).map(x => x.id)) };
+  const sel = S.outSel.ids;
+  for (const id of [...sel]) if (!p.toolpaths.some(x => x.id === id)) sel.delete(id);
+  const groups = [...new Set(p.toolpaths.map(x => x.group).filter(Boolean))];
+  const pickCard = h("div", { class: "card" }, h("h2", {}, t("grp.which")),
+    h("div", { class: "row", style: "margin-bottom:8px" },
+      h("button", { class: "small", onclick: () => { p.toolpaths.forEach(x => sel.add(x.id)); render(); } }, t("grp.all")),
+      h("button", { class: "small", onclick: () => { sel.clear(); render(); } }, t("grp.noneSel")),
+      groups.map(g => h("button", { class: "small", onclick: () => { sel.clear(); p.toolpaths.filter(x => x.group === g).forEach(x => sel.add(x.id)); render(); } }, t("grp.onlyGroup", g))),
+      h("span", { class: "muted small" }, t("grp.count", sel.size, p.toolpaths.length))),
+    h("div", { class: "list" }, p.toolpaths.map(x => {
+      const cb = h("input", { type: "checkbox", checked: sel.has(x.id) });
+      cb.onchange = () => { cb.checked ? sel.add(x.id) : sel.delete(x.id); render(); };
+      return h("label", { class: "item chk" }, cb, h("div", { class: "grow" }, x.name, x.group ? h("span", { class: "muted small" }, "  ▣ " + x.group) : null));
+    })));
+  const chosenFile = () => {                                 // (the name of the file: the group, when the choice is exactly one group)
+    const gs = new Set(p.toolpaths.filter(x => sel.has(x.id)).map(x => x.group || ""));
+    const g = gs.size === 1 ? [...gs][0] : "";
+    const all = g ? p.toolpaths.filter(x => x.group === g) : [];
+    return g && all.length === sel.size ? (stem + "_" + g.replace(/[^\w .-]+/g, "_")) : stem;
+  };
 
+  out.push(pickCard);
   out.push(h("div", { class: "card" }, h("h2", {}, t("out.post")), post,
     window.IyiPage.post ? window.IyiPage.post.tools(S.post) : null,            // (post.js: change it, copy it, what I J K mean)
     h("div", { class: "row", style: "margin-top:12px" },
       h("button", { class: "grow", onclick: () => guarded(() => recompute()) }, "▶ " + t("out.compute")),
       h("button", { class: "primary grow", onclick: () => guarded(async () => {
-        const r = await runJob("gcode", { project: p, post: S.post, file_name: stem });
+        if (!sel.size) return toast(t("grp.pickOne"), "warn");
+        const everyOn = p.toolpaths.every(x => sel.has(x.id) === x.enabled);
+        const r = await runJob("gcode", { project: p, post: S.post, file_name: chosenFile(), ...(everyOn ? {} : { toolpaths: [...sel] }) });
         S.gcode = r; render();
         if (!r.ok) toast(t("out.nogcode"), "bad");
       }) }, "⚙ " + t("out.gcode"))),

@@ -504,3 +504,17 @@ the session is 90 days, renewed by `GET /api/session`, without it 12 hours); the
 A service error is `{"error": code, "message": ...}` with status 400 (404 for an unknown operation or job, 409 for a
 job that has not finished, 503 for `too_busy`). `GET /health` answers `ok` without a key (for a proxy or a monitor).
 Tests: `tests/test_server.py`.
+
+
+## Groups of toolpaths and what goes in one file
+
+A toolpath can belong to a **group** (the *Group* field of its dialog, on the desktop the *Group* column and the
+right-click menu *Group*). The toolpaths of a group are switched on and off together (the switch in the group's row
+on the Toolpaths tab) and can be saved as one file. On the Output tab, *Toolpaths in the file* lists every toolpath
+with a tick (the ones that are switched on to begin with), *All*, *None* and *Only group: ...* choose quickly, and
+*Write G-code* writes the ticked ones as one file per sheet (named after the group when exactly one group is
+ticked). The service operation `gcode` takes `toolpaths` (a list of ids) or `group` (a name) for the same.
+
+The size of a tool cannot be changed in a toolpath (the diameter shows with a lock): choose another tool, or change
+the tool in the tool database. The mouse wheel only scrolls the page: a number box changes only when it has the
+focus.

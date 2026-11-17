@@ -11,12 +11,12 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices, QFont, QFontDatabase, QGuiApplication
-from PySide6.QtWidgets import (QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog,
-                               QDialogButtonBox, QDoubleSpinBox, QFontComboBox, QFormLayout,
-                               QGroupBox, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QListWidget,
-                               QListWidgetItem, QMessageBox, QPlainTextEdit, QProgressDialog, QPushButton,
-                               QRadioButton, QScrollArea, QSpinBox, QSplitter, QTableWidget, QTableWidgetItem,
-                               QTabWidget, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QDialog, QDialogButtonBox,
+                                QFormLayout, QGroupBox, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit,
+                                QListWidget, QListWidgetItem, QMessageBox, QPlainTextEdit, QProgressDialog,
+                                QPushButton, QRadioButton, QScrollArea, QSplitter, QTableWidget, QTableWidgetItem,
+                                QTabWidget, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
+from .wheelguard import QComboBox, QDoubleSpinBox, QFontComboBox, QSpinBox
 
 from ..core import clip, paths
 from ..core.document import XY_ORIGINS, Selection, ToolpathDef
@@ -282,9 +282,14 @@ def tool_params(t: Tool) -> list[Param]:
 
 
 class ToolEditor(QWidget):
-    def __init__(self, ctrl, tool: Tool | None = None, parent=None):
+    #: the size of the cutter: once a tool is chosen for a toolpath these cannot be changed there (the toolpath is
+    #: calculated for that size; another size is another tool: the tool database)
+    SIZE_FIELDS = ("diameter", "tip_diameter", "angle", "corner_radius")
+
+    def __init__(self, ctrl, tool: Tool | None = None, parent=None, lock_size: bool = False):
         super().__init__(parent)
         self.ctrl = ctrl
+        self.lock_size = lock_size
         self.lay = QVBoxLayout(self)
         self.lay.setContentsMargins(0, 0, 0, 0)
         self.form = None
@@ -297,6 +302,13 @@ class ToolEditor(QWidget):
             self.lay.removeWidget(self.form)
             self.form.deleteLater()
         self.form = ParamForm(tool_params(t), None, self.ctrl.units)
+        if self.lock_size:
+            for name in self.SIZE_FIELDS:
+                w = self.form.widgets.get(name)
+                if w is not None:
+                    w.setEnabled(False)
+                    w.setToolTip("The size of the tool cannot be changed here: choose another tool (Select from "
+                                 "database...) or change it in the tool database")
         self.lay.addWidget(self.form)
 
     def tool(self) -> Tool:
@@ -529,7 +541,7 @@ class ToolpathDialog(RemembersSize, QDialog):
         self.memory_key = f"toolpath:{op_id}"
         mem = {} if self.tdef else ctrl.settings.recall(self.memory_key)
         tool = self.tdef.tool if self.tdef else self._remembered_tool(mem.get("tool")) or self._default_tool()
-        self.tool_editor = ToolEditor(ctrl, tool)
+        self.tool_editor = ToolEditor(ctrl, tool, lock_size=True)
         tl.addWidget(scroll(self.tool_editor))
         # -- vectors tab
         vec_tab = QWidget()
@@ -1422,9 +1434,12 @@ class NestingDialog(RemembersSize, QDialog):
 # ---------------------------------------------------------------------------
 
 class ExportDialog(RemembersSize, QDialog):
-    def __init__(self, ctrl, parent=None):
+    def __init__(self, ctrl, parent=None, only: set[str] | None = None, group: str = ""):
+        """``only``: the toolpaths that are ticked (otherwise the ones that are switched on); ``group``: the name
+        that is offered for the file."""
         super().__init__(parent)
         self.ctrl = ctrl
+        self.group = group
         self.setWindowTitle("Save G-code")
         lay = QVBoxLayout(self)
         form = QFormLayout()
@@ -1486,16 +1501,32 @@ class ExportDialog(RemembersSize, QDialog):
         self.desc = QLabel()
         self.desc.setWordWrap(True)
         lay.addWidget(self.desc)
-        lay.addWidget(QLabel("Toolpaths (in machining order):"))
+        lay.addWidget(QLabel("Toolpaths in this file (in machining order):"))
+        pick = QHBoxLayout()
         self.list = QListWidget()
         for t in ctrl.project.toolpaths:
-            it = QListWidgetItem(f"{t.name}  —  T{t.tool.number} {t.tool.name}")
+            it = QListWidgetItem(f"{t.name}  —  T{t.tool.number} {t.tool.name}" + (f"   [{t.group}]" if t.group else ""))
             it.setData(Qt.UserRole, t.id)
             it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
-            it.setCheckState(Qt.Checked if t.enabled else Qt.Unchecked)
+            on = t.id in only if only is not None else t.enabled
+            it.setCheckState(Qt.Checked if on else Qt.Unchecked)
             self.list.addItem(it)
         self.list.itemChanged.connect(self.preview)
         self.list.setMaximumHeight(140)
+        for text, fn in (("All", lambda: self._tick(lambda t: True)), ("None", lambda: self._tick(lambda t: False))):
+            b = QPushButton(text)
+            b.clicked.connect(fn)
+            pick.addWidget(b)
+        self.by_group = QComboBox()
+        self.by_group.addItem("Only the group...", None)
+        for g in ctrl.groups():
+            self.by_group.addItem(g, g)
+        self.by_group.setVisible(self.by_group.count() > 1)
+        self.by_group.activated.connect(lambda *_: self._tick(lambda t: t.group == self.by_group.currentData())
+                                        if self.by_group.currentData() else None)
+        pick.addWidget(self.by_group)
+        pick.addStretch(1)
+        lay.addLayout(pick)
         lay.addWidget(self.list)
         self.view = ExplainedGcode()          # (click a line to read what it says: G2 X20 Y0 I5 J0 ...)
         self.text = self.view.text
@@ -1508,6 +1539,16 @@ class ExportDialog(RemembersSize, QDialog):
         bb.addButton(QDialogButtonBox.Close).clicked.connect(self.reject)
         lay.addWidget(bb)
         self.keep_size(ctrl, "export", 640, 720)
+        self.preview()
+
+    def _tick(self, wanted) -> None:
+        """Tick the toolpaths that ``wanted(toolpath)`` says yes to, and no others."""
+        self.list.blockSignals(True)
+        for i in range(self.list.count()):
+            it = self.list.item(i)
+            t = self.ctrl.project.toolpath(it.data(Qt.UserRole))
+            it.setCheckState(Qt.Checked if t is not None and wanted(t) else Qt.Unchecked)
+        self.list.blockSignals(False)
         self.preview()
 
     def _material_setup(self) -> None:
@@ -1583,7 +1624,7 @@ class ExportDialog(RemembersSize, QDialog):
         post = self.current_post()
         ctrl = self.ctrl
         proj = ctrl.project
-        name = proj.path.stem if proj.path else proj.name
+        name = self.group or (proj.path.stem if proj.path else proj.name)
         fn, _ = save_file(self, ctrl.settings, "gcode", "Save G-code", f"{name}.{post.extension}",
                           f"{post.name} (*.{post.extension});;All files (*)",
                           str(proj.path.parent) if proj.path else str(Path.home()))

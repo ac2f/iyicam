@@ -10,9 +10,10 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox,
-                               QFormLayout, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel, QPushButton,
-                               QScrollArea, QSpinBox, QToolButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QDialog, QDialogButtonBox, QFormLayout, QGridLayout,
+                                QGroupBox, QHBoxLayout, QHeaderView, QLabel, QPushButton, QScrollArea, QToolButton,
+                                QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
+from .wheelguard import QComboBox, QDoubleSpinBox, QSpinBox
 
 from ..cam import cutinfo
 from ..cam import sequence as seq
@@ -154,6 +155,7 @@ class CutOrderPanel(DocPanel):
         self.window_ = window
         self._loading = True
         self._syncing = False
+        self._pending: dict[str, dict] = {}   # settings chosen and not applied yet, by toolpath
         self._dirty = True                    # (what is shown is not what the document says: see showEvent)
         self._shown_preview = None
         self._cuts: list[dict] = []
@@ -288,8 +290,14 @@ class CutOrderPanel(DocPanel):
         lay.addWidget(self.summary)
         r = QHBoxLayout()
         self.apply_btn = QPushButton("Apply")
+        self.apply_btn.setToolTip("Calculate this toolpath with the settings above (the only thing that does)")
         self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn.setToolTip("Forget the changes (and the preview)")
+        self.reset_btn = QPushButton("Reset order")
+        self.reset_btn.setToolTip("Apply the settings and order the cuts again from nothing: a hand-made or frozen "
+                                  "order is forgotten")
         r.addWidget(self.apply_btn)
+        r.addWidget(self.reset_btn)
         r.addWidget(self.cancel_btn)
         lay.addLayout(r)
         self.bar.hide()
@@ -312,11 +320,11 @@ class CutOrderPanel(DocPanel):
             'first</span> \u2192 <span style="color:#d9541e">last</span>')
         legend.setWordWrap(True)
         legend.setTextFormat(Qt.RichText)
-        self.preview_first = QCheckBox("Preview a change first")
-        self.preview_first.setToolTip("On: changing the strategy, the grouping or the direction shows the result "
-                                      "in pink first; Apply makes it so. Off: it is applied at once (Ctrl+Z undoes).")
-        self.preview_first.setChecked(bool(self.ctrl.settings.recall(MEMORY_KEY).get("preview_first", True)))
-        grid.addWidget(self.preview_first, 2, 0, 1, 2)
+        self.live = QCheckBox("Calculate while I change settings")
+        self.live.setToolTip("Off (the default): choosing a setting calculates nothing; Preview shows the "
+                                      "result in pink and Apply makes it so. On: every choice is applied at once.")
+        self.live.setChecked(bool(self.ctrl.settings.recall(MEMORY_KEY).get("live", False)))
+        grid.addWidget(self.live, 2, 0, 1, 2)
         grid.addWidget(legend, 3, 0, 1, 2)
         return box
 
@@ -410,9 +418,10 @@ class CutOrderPanel(DocPanel):
         self.tool.clicked.connect(self._start_tool)
         self.apply_btn.clicked.connect(self._apply)
         self.cancel_btn.clicked.connect(self._cancel)
+        self.reset_btn.clicked.connect(self._reset_order)
         for key, c in self.view.items():
             c.toggled.connect(lambda v, k=key: self._set_view(k, v))
-        self.preview_first.toggled.connect(self._remember)
+        self.live.toggled.connect(self._remember)
         self.list.currentItemChanged.connect(self._row_changed)
         self.list.moved.connect(self._dragged)
         self.up.clicked.connect(lambda: self._move(-1))
@@ -496,20 +505,21 @@ class CutOrderPanel(DocPanel):
                 c.setChecked(bool(getattr(ctrl.settings, key)))
             c = self.cfg()
             p = self._preview()
-            shown = {**c, **(p.changes if p else {})}
+            wait = self._pending.get(self.tid) or {}
+            shown = {**c, **wait, **(p.changes if p else {})}
             for w, v in ((self.strategy, shown["strategy"]), (self.grouping, shown["grouping"]),
                          (self.direction, seq.direction_for(shown))):
                 w.blockSignals(True)
                 w.setCurrentIndex(max(0, w.findData(v)))
                 w.blockSignals(False)
-            for w, v in ((self.auto, bool(shown["auto_order"])), (self.smart, bool(c["smart_starts"]))):
+            for w, v in ((self.auto, bool(shown["auto_order"])), (self.smart, bool(shown["smart_starts"]))):
                 w.blockSignals(True)
                 w.setChecked(v)
                 w.blockSignals(False)
             u = ctrl.units
             self.band.setValue(u.to_display(shown["band"]))
-            self.margin.setValue(u.to_display(c["start_margin"]))
-            self.corner.setValue(u.to_display(c["corner_distance"]))
+            self.margin.setValue(u.to_display(shown["start_margin"]))
+            self.corner.setValue(u.to_display(shown["corner_distance"]))
             for w in (self.band, self.margin, self.corner, self.step):
                 w.setDecimals(u.decimals)
                 w.setSuffix(u.suffix)
@@ -555,8 +565,15 @@ class CutOrderPanel(DocPanel):
     def _summary(self, p) -> None:
         ctrl = self.ctrl
         u = ctrl.units
+        wait = self._pending.get(self.tid) if self.tid else None
         if p is not None:
             self.summary.setText(p.summary(lambda v: f"{u.to_display(v):.{0 if u.name == 'mm' else 1}f}{u.suffix}"))
+            self.bar.setTitle("Preview (pink on the drawing)")
+            self.bar.show()
+        elif wait:
+            self.summary.setText("Chosen, not applied yet: " + ", ".join(sorted(wait)) +
+                                 ".\nNothing is calculated until Apply.")
+            self.bar.setTitle("Settings waiting")
             self.bar.show()
         else:
             self.bar.hide()
@@ -574,14 +591,14 @@ class CutOrderPanel(DocPanel):
         if len(cuts) > 1:
             text += f", {u.to_display(cutinfo.route_length(cuts, ctrl.route_home())):.{0 if u.name == 'mm' else 1}f}" \
                     f"{u.suffix} between the cuts"
-        if not ctrl.settings.auto_recalculate and ctrl.stale:
+        if ctrl.stale and not ctrl.settings.auto_recalculate:
             text += " (the toolpaths are not calculated: F5)"
         self.info.setText("\n".join([text] + list(dict.fromkeys(notes))))
 
     # -- what the settings do ----------------------------------------------------------------------------
     def _remember(self, *_) -> None:
         if not self._loading:
-            self.ctrl.settings.remember(MEMORY_KEY, {"preview_first": self.preview_first.isChecked()})
+            self.ctrl.settings.remember(MEMORY_KEY, {"live": self.live.isChecked()})
 
     def _set_view(self, key: str, value: bool) -> None:
         if self._loading:
@@ -592,29 +609,34 @@ class CutOrderPanel(DocPanel):
             setattr(self.ctrl.settings, key, value)
             self.ctrl.cut_view_changed.emit()
 
-    def _set_now(self, **changes) -> None:
-        """Settings that are applied at once: the modes (smart order, smart start points) and their numbers."""
+    def pending(self) -> dict:
+        """The settings that were chosen on the panel and are not applied yet (nothing is calculated for them)."""
+        return self._pending.setdefault(self.tid, {}) if self.tid else {}
+
+    def _stage(self, **changes) -> None:
+        """A setting was chosen: it waits for Apply (or a Preview); no calculation is made for it."""
         if self._loading or not self.tid:
             return
         self.ctrl.clear_cut_preview()
-        self.ctrl.set_sequence(self.tid, **changes)
-        self.ctrl.remember_cut_order(**changes)
-
-    def _change(self, **changes) -> None:
-        """A change of the order: previewed first (when that is on), else applied at once."""
-        if self._loading or not self.tid:
+        if self.live.isChecked():                   # (the person asked for every choice to be applied at once)
+            self.ctrl.set_sequence(self.tid, **changes)
+            self.ctrl.remember_cut_order(**changes)
             return
-        if self.preview_first.isChecked():
-            p = self._preview()
-            self.ctrl.preview_cut_order(self.tid, {**(p.changes if p else {}), **changes},
-                                        p.smart_starts if p else False)
-        else:
-            self._set_now(**changes)
+        self.pending().update(changes)
+        self._summary(self._preview())
+
+    _set_now = _change = _stage
+
+    def _discard(self) -> None:
+        self._pending.pop(self.tid, None)
+        self.ctrl.clear_cut_preview()
+        self.refresh()
+        self._summary(None)
 
     def _direction_changed(self) -> None:
         if self._loading or not self.tid:
             return
-        dirs = dict(self.cfg()["directions"])
+        dirs = dict({**self.cfg(), **(self._pending.get(self.tid) or {})}["directions"])
         p = self._preview()
         if p is not None and "directions" in p.changes:
             dirs = dict(p.changes["directions"])
@@ -624,7 +646,7 @@ class CutOrderPanel(DocPanel):
     def _all_directions(self) -> None:
         if not self.tid:
             return
-        dlg = DirectionsDialog(self.ctrl, self.cfg(), self)
+        dlg = DirectionsDialog(self.ctrl, {**self.cfg(), **(self._pending.get(self.tid) or {})}, self)
         if dlg.exec():
             self._set_now(directions=dlg.directions())
             if dlg.as_default.isChecked():
@@ -634,21 +656,38 @@ class CutOrderPanel(DocPanel):
     def _preview_order(self) -> None:
         if self.tid:
             p = self._preview()
-            self.ctrl.preview_cut_order(self.tid, {**(p.changes if p else {}), "order": []}, p.smart_starts if p else False)
+            self.ctrl.preview_cut_order(self.tid, {**(self._pending.get(self.tid) or {}), **(p.changes if p else {}),
+                                                   "order": []}, p.smart_starts if p else False)
+
+    def _take_pending(self) -> dict:
+        """The settings that wait: they leave the waiting list because they are about to be applied."""
+        changes = dict(self._pending.pop(self.tid, None) or {})
+        if changes:
+            self.ctrl.remember_cut_order(**changes)
+        return changes
 
     def _reorder(self) -> None:
         if self.tid:
             self.ctrl.clear_cut_preview()
-            self.ctrl.reorder_now(self.tid)
+            self.ctrl.set_sequence(self.tid, order=[], **self._take_pending())
+
+    def _reset_order(self) -> None:
+        """Order the cuts again from nothing (the frozen or hand-made order is forgotten), with the settings chosen."""
+        if self.tid:
+            self.ctrl.clear_cut_preview()
+            self.ctrl.reset_order(self.tid, **self._take_pending())
 
     def _preview_starts(self) -> None:
         if self.tid:
             p = self._preview()
-            self.ctrl.preview_cut_order(self.tid, p.changes if p else {}, True)
+            self.ctrl.preview_cut_order(self.tid, {**(self._pending.get(self.tid) or {}), **(p.changes if p else {})}, True)
 
     def _optimise_now(self) -> None:
         if self.tid:
             self.ctrl.clear_cut_preview()
+            changes = self._take_pending()
+            if changes:
+                self.ctrl.set_sequence(self.tid, **changes)
             self.ctrl.optimise_starts({self.tid})
 
     def _release(self) -> None:
@@ -659,7 +698,7 @@ class CutOrderPanel(DocPanel):
         sel = set(self.ctrl.selection)
         ids = [o.id for o in objs if o.id in sel] or [o.id for o in objs]
         self.ctrl.unlock_starts(ids)
-        self.ctrl.recalculate({t.id})
+        self.ctrl.calc_if_auto({t.id})
 
     def _start_tool(self) -> None:
         from .tools import StartPointTool
@@ -668,10 +707,16 @@ class CutOrderPanel(DocPanel):
             canvas.set_tool(StartPointTool(canvas))
 
     def _apply(self) -> None:
-        self.ctrl.apply_cut_preview()
+        """The one command that calculates: the preview becomes real, or the settings that wait are applied."""
+        if self.ctrl.cut_preview is not None:
+            self._pending.pop(self.tid, None)
+            self.ctrl.apply_cut_preview()
+        elif self.tid and self._pending.get(self.tid):
+            self.ctrl.set_sequence(self.tid, **self._take_pending())
+        self._summary(None)
 
     def _cancel(self) -> None:
-        self.ctrl.clear_cut_preview()
+        self._discard()
 
     # -- the list ---------------------------------------------------------------------------------------------
     def focus_key(self) -> str | None:

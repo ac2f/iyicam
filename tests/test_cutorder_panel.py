@@ -34,7 +34,7 @@ def opened(win, **kw):
     win.cut_order(t.id)
     process()
     panel = win.cutorder_panel
-    panel.preview_first.setChecked(False)
+    panel.live.setChecked(True)
     return c, t, objs, panel
 
 
@@ -128,31 +128,46 @@ def test_ctrl_alt_o_opens_the_panel_and_no_shortcut_is_used_twice(rwin):
 
 
 # -- previews in the panel -------------------------------------------------------------------------------------------
-def test_a_change_is_previewed_first_and_applied_with_the_button(rwin):
+def test_a_setting_waits_for_apply_and_nothing_is_calculated_before(rwin):
     win, robot = rwin
     c, t, objs, panel = opened(win, strategy="rows_bl")
-    panel.preview_first.setChecked(True)
+    panel.live.setChecked(False)
     keys = keys_of(objs)
+    calls = []
+    orig = c.recalculate
+    c.recalculate = lambda *a, **k: (calls.append(1), orig(*a, **k))[1]
     panel.strategy.setCurrentIndex(panel.strategy.findData("rows_br"))
-    p = c.cut_preview
-    assert p is not None and p.changes == {"strategy": "rows_br"} and c.cut_order(t.id) == keys
-    assert panel.bar.isVisible() and "another place" in panel.summary.text()
-    assert rows(panel) == keys[::-1]                                          # the list shows the new order
-    assert panel.strategy.currentData() == "rows_br" and t.sequence["strategy"] == "rows_bl"
+    assert c.cut_preview is None and not calls and t.sequence["strategy"] == "rows_bl" and c.cut_order(t.id) == keys
+    assert panel.bar.isVisible() and "Nothing is calculated" in panel.summary.text()
     panel.apply_btn.click()
     process()
-    assert c.cut_preview is None and not panel.bar.isVisible()
+    assert calls and not panel.bar.isVisible()
     assert t.sequence["strategy"] == "rows_br" and c.cut_order(t.id) == keys[::-1] and rows(panel) == keys[::-1]
     assert robot.problems() == []
 
 
-def test_a_preview_that_is_cancelled_puts_the_settings_back(rwin):
+def test_the_preview_button_shows_the_waiting_settings_and_apply_makes_them_so(rwin):
     win, _ = rwin
     c, t, objs, panel = opened(win, strategy="rows_bl")
-    panel.preview_first.setChecked(True)
+    panel.live.setChecked(False)
+    keys = keys_of(objs)
     panel.strategy.setCurrentIndex(panel.strategy.findData("rows_br"))
-    panel.direction.setCurrentIndex(panel.direction.findData("ccw"))          # two changes add up in one preview
-    assert c.cut_preview.changes["strategy"] == "rows_br" and "directions" in c.cut_preview.changes
+    panel.preview_order.click()
+    p = c.cut_preview
+    assert p is not None and p.changes["strategy"] == "rows_br" and c.cut_order(t.id) == keys
+    assert "another place" in panel.summary.text() and rows(panel) == keys[::-1]
+    panel.apply_btn.click()
+    process()
+    assert c.cut_preview is None and t.sequence["strategy"] == "rows_br" and c.cut_order(t.id) == keys[::-1]
+
+
+def test_settings_that_wait_can_be_cancelled(rwin):
+    win, _ = rwin
+    c, t, objs, panel = opened(win, strategy="rows_bl")
+    panel.live.setChecked(False)
+    panel.strategy.setCurrentIndex(panel.strategy.findData("rows_br"))
+    panel.direction.setCurrentIndex(panel.direction.findData("ccw"))          # two choices add up
+    assert set(panel.pending()) >= {"strategy", "directions"}
     panel.cancel_btn.click()
     process()
     assert c.cut_preview is None and not panel.bar.isVisible()
@@ -160,16 +175,30 @@ def test_a_preview_that_is_cancelled_puts_the_settings_back(rwin):
     assert rows(panel) == keys_of(objs) and t.sequence["strategy"] == "rows_bl"
 
 
-def test_the_preview_of_the_direction_in_the_panel(rwin):
+def test_the_direction_waits_too_and_the_preview_shows_it(rwin):
     win, _ = rwin
     c, t, objs, panel = opened(win)
     c.set_sequence(t.id, direction="cw")
-    panel.preview_first.setChecked(True)
+    panel.live.setChecked(False)
     panel.direction.setCurrentIndex(panel.direction.findData("ccw"))
+    panel.preview_order.click()
     assert c.cut_preview.directions == 3 and "other way round" in panel.summary.text()
     assert {r.text(2) for r in (panel.list.topLevelItem(i) for i in range(3))} == {"↺ ccw"}
     panel.apply_btn.click()
     assert {cutinfo.direction(x["path"]) for x in c.cuts_of(t.id)} == {"ccw"}
+
+
+def test_reset_order_forgets_a_hand_made_order_and_applies_the_waiting_settings(rwin):
+    win, _ = rwin
+    c, t, objs, panel = opened(win, strategy="rows_bl")
+    panel.live.setChecked(False)
+    keys = keys_of(objs)
+    c.set_manual_order(t.id, 0, [keys[2]])
+    assert t.sequence["auto_order"] is False and c.cut_order(t.id)[0] == keys[2]
+    panel.strategy.setCurrentIndex(panel.strategy.findData("rows_br"))
+    panel.reset_btn.click()
+    process()
+    assert t.sequence["auto_order"] is True and t.sequence["strategy"] == "rows_br" and c.cut_order(t.id) == keys[::-1]
 
 
 def test_the_preview_buttons_for_the_order_and_the_start_points(rwin):
@@ -192,22 +221,23 @@ def test_the_preview_buttons_for_the_order_and_the_start_points(rwin):
     assert [o.contours[0].start for o in c.sheet.vectors] != starts and c.cut_order(t.id) == keys
 
 
-def test_changes_are_applied_at_once_when_the_preview_is_switched_off_and_that_is_remembered(tmp_path, monkeypatch):
+def test_live_mode_applies_at_once_and_is_remembered(tmp_path, monkeypatch):
     monkeypatch.setenv("IYICAM_HOME", str(tmp_path / "home"))
     s = Session(monkeypatch)
     try:
         win = s.win
-        c, t, objs, panel = opened(win)
-        assert not panel.preview_first.isChecked()
-        panel.strategy.setCurrentIndex(panel.strategy.findData("rows_br"))
-        assert c.cut_preview is None and t.sequence["strategy"] == "rows_br"
-        win = s.restart()
-        assert win.cutorder_panel.preview_first.isChecked() is False
-        c2, t2, objs2 = parts(win)
+        c, t, objs = parts(win)
+        win.cut_order(t.id)
+        process()
         panel = win.cutorder_panel
-        panel.preview_first.setChecked(True)
+        assert not panel.live.isChecked()                                     # the default: nothing is calculated
+        panel.strategy.setCurrentIndex(panel.strategy.findData("rows_br"))
+        assert t.sequence.get("strategy") != "rows_br"
+        panel.live.setChecked(True)
+        panel.strategy.setCurrentIndex(panel.strategy.findData("rows_bl"))
+        assert c.cut_preview is None and t.sequence["strategy"] == "rows_bl"
         win = s.restart()
-        assert win.cutorder_panel.preview_first.isChecked() is True
+        assert win.cutorder_panel.live.isChecked() is True
     finally:
         s.close()
 

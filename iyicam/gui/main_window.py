@@ -790,12 +790,15 @@ class MainWindow(QMainWindow):
         if tid is None:
             self.statusBar().showMessage("Add a profile or engraving toolpath first", 5000)
             return
-        for key in self.selected_cut_keys():
-            self.ctrl.smart_start_one(tid, key)
+        moved = self.ctrl.smart_start_many(tid, self.selected_cut_keys())     # (one calculation for all of them)
+        self.statusBar().showMessage(f"{moved} start point(s) moved to the best place" + (
+            "; Toolpaths > Recalculate All (F5) calculates the toolpaths" if moved and self.ctrl.stale else ""), 6000)
 
     def release_selected_starts(self) -> None:
-        for key in self.selected_cut_keys():
-            self.ctrl.unlock_start(key)
+        keys = self.selected_cut_keys()
+        for key in keys:
+            self.ctrl.unlock_start(key, calc=False)
+        self.ctrl.calc_if_auto()
 
     START_PLACES = (("sw", "Bottom Left Corner"), ("se", "Bottom Right Corner"), ("nw", "Top Left Corner"),
                     ("ne", "Top Right Corner"))
@@ -1349,13 +1352,17 @@ class MainWindow(QMainWindow):
                 p.toolpaths.append(t)
         self.ctrl.recalculate()
 
-    def export_gcode(self) -> None:
+    def export_gcode(self, ids=None, group: str = "") -> None:
+        """Save G-code. ``ids``: the toolpaths to save (a list: the ones chosen on the panel, or a group); without
+        them the ones that are switched on."""
+        if not isinstance(ids, (list, tuple, set)):      # (a menu or a button passes its own "checked")
+            ids = None
         if self.ctrl.stale:
             self.ctrl.recalculate()
         if not self.ctrl.project.toolpaths:
             QMessageBox.information(self, "Save G-code", "Create a toolpath first (Toolpaths ▸ New Toolpath).")
             return
-        ExportDialog(self.ctrl, self).exec()
+        ExportDialog(self.ctrl, self, only=set(ids) if ids else None, group=group).exec()
 
     def simulate(self) -> None:
         from ..cam.simulate import shade, simulate

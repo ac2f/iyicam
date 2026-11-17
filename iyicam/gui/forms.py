@@ -5,8 +5,9 @@ from typing import Any
 
 from PySide6.QtCore import Signal
 from PySide6.QtGui import QDoubleValidator, QFont
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFontComboBox, QFormLayout, QGroupBox,
-                               QHBoxLayout, QLineEdit, QPlainTextEdit, QSpinBox, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QCheckBox, QFormLayout, QGroupBox, QHBoxLayout, QLineEdit, QPlainTextEdit,
+                                QVBoxLayout, QWidget)
+from .wheelguard import QComboBox, QDoubleSpinBox, QFontComboBox, QSpinBox
 
 from ..core.params import Param, is_visible
 from ..core.tooling import Tool, ToolLibrary

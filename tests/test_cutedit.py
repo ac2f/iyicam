@@ -21,9 +21,11 @@ def rwin(tmp_path, monkeypatch):
     yield from rwin_gen(tmp_path, monkeypatch)
 
 
-def parts(win, n=3, smart=False, **seqcfg):
-    """``n`` rectangles in a row with a through profile toolpath: ``(ctrl, toolpath, vectors)``."""
+def parts(win, n=3, smart=False, auto=True, **seqcfg):
+    """``n`` rectangles in a row with a through profile toolpath: ``(ctrl, toolpath, vectors)``. ``auto``: the
+    toolpaths are calculated after every edit (the setting the program does not have by default)."""
     c = win.ctrl
+    c.settings.auto_recalculate = auto
     objs = [VectorObject([shapes.rectangle(50 + i * 120, 100, 100, 80)], c.layer_id, f"P{i}") for i in range(n)]
     c.add_vectors(objs, "t")
     t = ToolpathDef("Cut out", "profile", Tool("EM6", "end_mill", 6.0, 1, stepdown=6.0), {"through": True},

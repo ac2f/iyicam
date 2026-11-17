@@ -30,7 +30,8 @@ class Settings:
     memory: dict = field(default_factory=dict)  # what every dialog was last set to, by dialog (see remember)
     dirs: dict = field(default_factory=dict)    # the folder last used for every kind of file
     window_geometry: str = ""
-    auto_recalculate: bool = True     # recalculate toolpaths after edits (small projects)
+    auto_recalculate: bool = False    # recalculate toolpaths after every edit (off: only when asked, F5)
+    calc_mode: int = 2                # 2: the "when asked" default (an older file that says automatic is not kept)
     recent_files: list[str] = field(default_factory=list)
     disabled_plugins: list[str] = field(default_factory=list)
     last_post: str = "mach3"
@@ -116,6 +117,8 @@ class Settings:
             return cls()
         default = cls()
         out = {}
+        if data.get("calc_mode") != default.calc_mode:         # (a file from before the manual default: ask again)
+            data.pop("auto_recalculate", None)
         for fld in fields(cls):
             if fld.name not in data:
                 continue
@@ -133,6 +136,7 @@ class Settings:
             if fld.name == "snap_radius" and not 2.0 <= v <= 60.0:
                 continue
             out[fld.name] = v
+        out["calc_mode"] = default.calc_mode           # (what is read now is written as the current kind)
         return cls(**out)
 
 

@@ -633,7 +633,7 @@ def _order_panel(win, tid):
     win.cut_order(tid)
     QApplication.processEvents()
     panel = win.cutorder_panel
-    panel.preview_first.setChecked(False)
+    panel.live.setChecked(True)
     return panel
 
 

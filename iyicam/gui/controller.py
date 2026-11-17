@@ -424,6 +424,38 @@ class Controller(CutControl, QObject):
         self.results = {k: v for k, v in self.results.items() if k[0] not in ids}
         self.toolpaths_changed.emit()
 
+    # -- groups of toolpaths -----------------------------------------------------------------------------
+    def groups(self) -> list[str]:
+        """The names of the groups, in the order their first toolpath comes."""
+        return list(dict.fromkeys(t.group for t in self.project.toolpaths if t.group))
+
+    def group_ids(self, name: str) -> list[str]:
+        return [t.id for t in self.project.toolpaths if t.group == name]
+
+    def set_group(self, ids, name: str) -> int:
+        """Put the toolpaths in the group ``name`` ("" takes them out of their group). How many changed."""
+        name = (name or "").strip()
+        ids = set(ids)
+        todo = [t for t in self.project.toolpaths if t.id in ids and t.group != name]
+        if not todo:
+            return 0
+        with self.edit("Group toolpaths" if name else "Ungroup toolpaths", geometry=False):
+            for t in todo:
+                t.group = name
+        self.toolpaths_changed.emit()
+        return len(todo)
+
+    def rename_group(self, old: str, new: str) -> int:
+        return self.set_group(self.group_ids(old), new) if new.strip() else 0
+
+    def enable_only(self, ids, enabled: bool = True) -> None:
+        """Switch the toolpaths ``ids`` on (``enabled``) and every other off: only they are saved and shown."""
+        ids = set(ids)
+        with self.edit("Switch toolpaths", geometry=False):
+            for t in self.project.toolpaths:
+                t.enabled = (t.id in ids) == enabled
+        self.toolpaths_changed.emit()
+
     def move_toolpath(self, tid: str, delta: int) -> None:
         tps = self.project.toolpaths
         i = next((k for k, t in enumerate(tps) if t.id == tid), None)
@@ -530,13 +562,25 @@ class Controller(CutControl, QObject):
         return None
 
     def set_sequence(self, tid: str, **changes) -> None:
-        """Change cut order / start point settings of a toolpath and recalculate it."""
+        """Change cut order / start point settings of a toolpath and recalculate it (this is a command: the
+        panel calls it when the person presses Apply)."""
         t = self.project.toolpath(tid)
         if t is None:
             return
         with self.edit("Cut order settings", geometry=False):
             t.sequence.update(changes)
         self.recalculate({tid})
+
+    def reset_order(self, tid: str, **changes) -> None:
+        """Forget the order the toolpath has (a hand-made one too) and order it again from nothing with its
+        settings (``changes`` are applied with it)."""
+        self.set_sequence(tid, order=[], auto_order=True, **changes)
+
+    def calc_if_auto(self, only: set[str] | None = None) -> None:
+        """What an edit does about the toolpaths: they are calculated again only when the setting says so
+        (otherwise they are marked as old and the person calculates when ready: F5)."""
+        if self.stale and self.settings.auto_recalculate:
+            self.recalculate(only)
 
     # cut order and start point settings that new toolpaths start with (what was chosen last)
     REMEMBERED_SEQUENCE = ("strategy", "grouping", "direction", "smart_starts", "start_margin", "corner_distance")

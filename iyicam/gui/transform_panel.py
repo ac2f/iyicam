@@ -7,9 +7,9 @@ transformation, the next one by it twice, and so on - a row of five copies is "M
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QGridLayout,
-                               QHBoxLayout, QLabel, QPushButton, QScrollArea, QSpinBox, QStackedWidget, QToolButton,
-                               QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QFormLayout, QGridLayout, QHBoxLayout, QLabel, QPushButton,
+                                QScrollArea, QStackedWidget, QToolButton, QVBoxLayout, QWidget)
+from .wheelguard import QComboBox, QDoubleSpinBox, QSpinBox
 
 from ..core import placement
 from ..core.geom import BBox, Transform

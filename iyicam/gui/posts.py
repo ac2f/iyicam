@@ -10,9 +10,10 @@ import math
 
 from PySide6.QtCore import QPointF, Qt, Signal
 from PySide6.QtGui import QColor, QFontDatabase, QPainter, QPainterPath, QPen
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
-                               QListWidget, QListWidgetItem, QPlainTextEdit, QPushButton, QScrollArea, QSpinBox,
-                               QTextBrowser, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QCheckBox, QDialog, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget,
+                                QListWidgetItem, QPlainTextEdit, QPushButton, QScrollArea, QTextBrowser,
+                                QVBoxLayout, QWidget)
+from .wheelguard import QComboBox, QDoubleSpinBox, QSpinBox
 
 from ..post import editing, guide
 
