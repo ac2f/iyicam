@@ -186,6 +186,40 @@ def _pack(n, sizes, order, plates, heur, bin_first, cancel):
     return bins, unplaced
 
 
+def compact(b: "_Bin") -> None:
+    """Push every box down and then left as far as it goes (until the margin or the next box, the spacing is in the
+    boxes), again and again until nothing moves: a part is then exactly the spacing from its neighbours where it touches
+    one, and the free room is left together at the top and the right instead of in many holes."""
+    items = [list(it) for it in b.items]          # shape, copy, x, y, w, h, rot
+    for _ in range(50):
+        moved = False
+        for axis in (1, 0):                       # down (y), then left (x)
+            lo = b.y0 if axis else b.x0
+            for it in sorted(items, key=lambda r: (r[3], r[2]) if axis else (r[2], r[3])):
+                pos = it[3] if axis else it[2]
+                best = lo
+                for o in items:
+                    if o is it:
+                        continue
+                    # an overlap across the direction of the move, and lying behind the box
+                    if axis:
+                        across = min(it[2] + it[4], o[2] + o[4]) - max(it[2], o[2]) > EPS
+                        behind = o[3] + o[5] <= pos + EPS
+                        edge = o[3] + o[5]
+                    else:
+                        across = min(it[3] + it[5], o[3] + o[5]) - max(it[3], o[3]) > EPS
+                        behind = o[2] + o[4] <= pos + EPS
+                        edge = o[2] + o[4]
+                    if across and behind and edge > best:
+                        best = edge
+                if best < pos - EPS:
+                    it[3 if axis else 2] = best
+                    moved = True
+        if not moved:
+            break
+    b.items = [tuple(r) for r in items]
+
+
 def _result(n, sizes, bins, unplaced) -> "N.NestResult":
     res = N.NestResult()
     res.unplaced = list(unplaced)
@@ -294,5 +328,7 @@ def pack_rects(n: "N.Nester", order: list[tuple[int, int]], iterations: int, tim
             break                                           # everything on one plate: nothing better exists
     if best is None:
         return None
+    for b in best[1]:
+        compact(b)
     res = _result(n, sizes, best[1], best[2] + cant)
     return res

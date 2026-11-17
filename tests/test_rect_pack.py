@@ -94,3 +94,23 @@ def test_a_plate_that_is_too_small_leaves_the_part_unplaced_and_the_rest_is_plac
     st = NestSettings(rotations=[0, 90], containers=[Container.rect(500, 500, quantity=1)])
     res = nest(shapes, st)
     assert res.unplaced == [(0, 0)] and len(res.placements) == 3
+
+
+def test_the_gap_between_neighbours_is_exactly_the_spacing_and_the_edge_gap_the_margin():
+    shapes = job(seed=9, n=50)
+    st = NestSettings(margin=13, spacing=4.1, rotations=[0, 90], iterations=3,
+                      containers=[Container.rect(1250, 3200, quantity=0)])
+    res = nest(shapes, st)
+    assert not res.unplaced
+    near, lows = [], []
+    for boxes in placed_boxes(shapes, res).values():
+        lows.append((min(b[0] for b in boxes), min(b[1] for b in boxes)))
+        for b in boxes:
+            up = [c[1] - b[3] for c in boxes if c is not b and min(b[2], c[2]) - max(b[0], c[0]) > 1 and c[1] >= b[3] - 1e-6]
+            right = [c[0] - b[2] for c in boxes if c is not b and min(b[3], c[3]) - max(b[1], c[1]) > 1 and c[0] >= b[2] - 1e-6]
+            near += [min(g) for g in (up, right) if g and min(g) < 40]       # (the nearest one: the next is further)
+    # never closer than the spacing; where a part rests on a neighbour it is exactly the spacing (a part that rests on a taller
+    # neighbour is further from the lower one beside it: that is the shape of the parts, not a hole)
+    assert near and min(near) >= 4.1 - 1e-6
+    assert sum(1 for g in near if abs(g - 4.1) < 1e-6) >= 0.8 * len(near), sorted(set(round(g, 3) for g in near))[:8]
+    assert all(abs(x - 13) < 1e-6 and abs(y - 13) < 1e-6 for x, y in lows)

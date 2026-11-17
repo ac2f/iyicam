@@ -471,10 +471,10 @@ def test_squeezing_by_tilting_takes_the_smallest_tilt_that_fits():
 
 
 def test_squeezing_in_can_save_a_sheet_and_is_only_offered_when_it_helps():
-    # two 135 x 170 parts need 289 mm: 2 sheets between 10 mm border gaps, one when 1 mm is given back
+    # two 136 x 170 parts and the gap need 280 mm: exactly what 10 mm border gaps leave, and the outlines are a little looser than that: 2 sheets, one when a little is given back
     st = NestSettings(margin=10, spacing=8, rotations=[0, 90], containers=[Container.rect(300, 200)],
                       squeeze_margin=3.0)
-    shapes_ = [NestShape([rect_poly(135, 170)], 2)]
+    shapes_ = [NestShape([rect_poly(136, 170)], 2)]
     res = nest(shapes_, st)
     assert res.sheets == 2 and not res.unplaced
     assert res.suggestion is not None and res.suggestion.sheets == 1 and not res.suggestion.unplaced

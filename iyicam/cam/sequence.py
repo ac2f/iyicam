@@ -576,6 +576,8 @@ def sequence(items: list[SeqItem], cfg: dict, pos: Pt = (0.0, 0.0),
             if unheld:
                 notes.append(f"{len(unheld)} cut(s) cannot be made to close held by sheet that is still there: "
                              "parts packed round them are cut before them whatever the order")
+        if supporting and hold_w and rp is not None:
+            order = enforce_holds(order, hold_w, by_key, rp, settle)
     else:
         order = list(dict.fromkeys(k for k in s["order"] if k in by_key))
         known = set(order)
@@ -933,7 +935,10 @@ def hold_contacts(items: list[SeqItem], cfg: dict, sheet: BBox | None = None, re
             and it.kerf]
     if len(cand) < 2:
         return {}
-    boxes = _bboxes([it.kerf for it in cand])
+    # what a neighbour takes up: the loop its tool walks, filled, and the cut width round it (not only the band the tool
+    # cuts: with parts as close as the tool is wide the ray would pass through the band into the part and see nothing)
+    foot = {it.key: clip.offset([it.loop.flatten(0.1)], it.radius) or it.kerf for it in cand}
+    boxes = _bboxes([foot[it.key] for it in cand])
     by_key = {it.key: it for it in items}
     out: dict[str, dict[str, float]] = {}
     for it in cand:
@@ -965,7 +970,7 @@ def hold_contacts(items: list[SeqItem], cfg: dict, sheet: BBox | None = None, re
             o = cand[j]
             if o is it or o.key in related:
                 continue
-            hit = clip.region_mask(Q, o.kerf).reshape(len(Pf), len(rhos)).any(axis=1)
+            hit = clip.region_mask(Q, foot[o.key]).reshape(len(Pf), len(rhos)).any(axis=1)
             if hit.any():
                 found[o.key] = float(hit.sum()) * L / n
         if found:
@@ -1125,6 +1130,42 @@ def zone_order(order: list[str], blockers: dict[str, set[str]], items: dict[str,
 def pull_reach(n: int) -> int:
     """How many places earlier than the strategy put it a cut may be brought for its closing zone."""
     return max(6, min(25, round(0.35 * n)))
+
+
+def enforce_holds(order: list[str], strength: dict[tuple[str, str], float], items: dict[str, SeqItem], rp: "Replayer",
+                  settle) -> list[str]:
+    """The last word about the support: every wish "a before b" (``strength``: a stands on the side where the sheet holds
+    b... the other way round: b stands on the hold side of a) that can be had together is had. Each cut keeps its place
+    except that those that have to be before it come first (stable); kept only when no cut runs in loose scrap because of
+    it, else the order is left as it was."""
+    pos = {k: i for i, k in enumerate(order)}
+    edges: dict[str, set[str]] = {}
+    for (a, b) in strength:
+        edges.setdefault(a, set()).add(b)
+    wishes = _acyclic(edges, pos, strength)
+    first: dict[str, list[str]] = defaultdict(list)          # what has to be before a cut
+    for a, bs in wishes.items():
+        for b in bs:
+            first[b].append(a)
+    placed: set[str] = set()
+    out: list[str] = []
+
+    def place(k: str) -> None:
+        if k in placed:
+            return
+        placed.add(k)
+        for a in sorted(first.get(k, ()), key=pos.get):
+            place(a)
+        out.append(k)
+
+    for k in order:
+        place(k)
+    if out == order:
+        return order
+    out, _, _ = settle(out)
+    if rp.first_loose(out) is None or rp.first_loose(order) is not None:
+        return out
+    return order
 
 
 def _acyclic(edges: dict[str, set[str]], pos: dict[str, int], weight: dict[tuple[str, str], float] | None = None

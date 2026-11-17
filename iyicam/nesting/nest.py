@@ -23,7 +23,7 @@ import itertools
 import math
 import random
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Sequence
 
 import numpy as np
@@ -485,6 +485,9 @@ class _Box:
 class Nester:
     def __init__(self, shapes: Sequence[NestShape], settings: NestSettings):
         self.shapes = list(shapes)
+        # the outlines are simplified, and what the simplification adds is gap: a small spacing asks for a small
+        # tolerance (the gap between two curved parts is then the spacing and a few hundredths of it more)
+        settings = replace(settings, tolerance=min(settings.tolerance, max(0.05, settings.spacing * 0.025)))
         self.st = settings
         half = settings.spacing / 2.0
         conts = settings.containers or [Container.rect(settings.sheet_width, settings.sheet_height)]
@@ -535,13 +538,23 @@ class Nester:
                 self._vcache.append({})
             self.cls.append(c)
             self.offset.append((mx, my))
-            seen, keep = set(), []
+            seen, keep, looks = set(), [], []
+            src = classes[c][0]
             for ang in (sh.rotations if sh.rotations is not None else settings.rotations):
                 a = round(float(ang) % 360.0, 6)
                 v = self._variant(c, a)
-                if a not in keep and v.sig not in seen:
-                    seen.add(v.sig)
-                    keep.append(a)
+                if a in keep or v.sig in seen:
+                    continue
+                # (the outline as drawn turned by this angle: a part that looks the same turned is tried once, also when the
+                # grown, simplified outlines differ a little)
+                r = math.radians(a)
+                q = src @ np.array([[math.cos(r), math.sin(r)], [-math.sin(r), math.cos(r)]])
+                q = q - q.min(axis=0)
+                if any(_same_outline(q, o) for o in looks):
+                    continue
+                seen.add(v.sig)
+                looks.append(q)
+                keep.append(a)
             self.angles.append(keep)
             self.skey.append((c, tuple(keep), sh.tilt))
         self._rank: dict[int, int] = {}                 # the place of every plate in the order ``best`` found
