@@ -198,6 +198,14 @@ class ProfileOp(Operation):
         for n in notes:
             ctx.warn(n)
         ctx.order = order
+        if cfg["strategy"] in ("cols_bl", "rows_bl") and len(sitems) <= 800:     # (the plate is looked at the way a person does)
+            from . import audit
+            parts = {it.key: it.bbox for it in sitems if it.depth % 2 == 0}
+            bad = audit.violations([k for k in order if k in parts], parts, columns=cfg["strategy"] == "cols_bl")
+            if bad:
+                kinds = sorted({r for _, _, r in bad})
+                ctx.warn(f"{len(bad)} pair(s) of cuts break the {' / '.join(kinds)} rule of the order "
+                         f"(first: {bad[0][0]} before {bad[0][1]})")
 
         # machine them, choosing where each closed cut starts
         machined = Machined()  # what is machined so far: start points keep clear of it

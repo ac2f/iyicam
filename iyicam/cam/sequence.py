@@ -376,12 +376,14 @@ def _rows(ys: np.ndarray, sizes: list[float], band: float) -> np.ndarray:
     if band > 0:
         raw = np.floor((ys - ys.min()) / band + 1e-9)
     else:
-        gap = 0.5 * max(1.0, float(np.median(sizes)))
+        med = max(1.0, float(np.median(sizes)))
         order = np.argsort(ys, kind="stable")
         raw = np.empty(len(ys))
         r = 0
         for n, i in enumerate(order):
-            if n and ys[i] - ys[order[n - 1]] > gap:
+            # a new row starts where the next item is more than half the smaller of the two further on (never less
+            # than an eighth of the typical size): a wide part does not swallow the narrow column beside it
+            if n and ys[i] - ys[order[n - 1]] > 0.5 * max(min(sizes[i], sizes[order[n - 1]]), 0.25 * med):
                 r += 1
             raw[i] = r
     return np.searchsorted(np.unique(raw), raw)
