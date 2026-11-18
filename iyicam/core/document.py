@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 import json
 import math
+import os
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -298,7 +299,9 @@ class Project:
         d = self.to_dict()
         if calc:
             d["calc"] = calc
-        path.write_text(json.dumps(d, separators=(",", ":")), encoding="utf-8")
+        tmp = path.with_name(path.name + ".tmp")           # (written whole, then put in place: a crash never leaves half a project)
+        tmp.write_text(json.dumps(d, separators=(",", ":")), encoding="utf-8")
+        os.replace(tmp, path)
         self.path = path
 
     @classmethod

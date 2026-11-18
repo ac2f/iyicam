@@ -610,10 +610,12 @@ def _signature(items: list[SeqItem], s: dict, pos: Pt, sheet: BBox | None, zones
     sh = None if sheet is None else (round(sheet.xmin, 3), round(sheet.ymin, 3), round(sheet.xmax, 3), round(sheet.ymax, 3),
                                      repr(getattr(sheet, "region", None)))
     cfg = (s["strategy"], s["grouping"], s["band"], s["auto_order"], () if s["auto_order"] else tuple(s["order"]),
-           s["corner_distance"], bool(zones))   # (an automatic order does not depend on the one made last time)
+           s["corner_distance"], s["start_margin"], bool(zones))   # (an automatic order does not depend on the one made last time)
     rows = tuple((it.key, round(it.bbox.xmin, 3), round(it.bbox.ymin, 3), round(it.bbox.xmax, 3), round(it.bbox.ymax, 3),
                   round(it.area, 0), it.frees, round(it.radius, 3), None if it.fixed is None else tuple(round(v, 3) for v in it.fixed),
-                  len(it.kerf or ()), len(it.solid or ())) for it in items)
+                  len(it.kerf or ()), len(it.solid or ()),
+                  hash(tuple((round(sg.a[0], 3), round(sg.a[1], 3), round(sg.b[0], 3), round(sg.b[1], 3), round(getattr(sg, "bulge", 0.0), 6))
+                             for sg in it.contour.segs))) for it in items)     # (the shape too: two shapes with the same box are not the same order)
     return (cfg, sh, tuple(round(v, 3) for v in pos), rows)
 
 

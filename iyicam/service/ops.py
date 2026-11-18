@@ -96,9 +96,14 @@ def _report_dict(r: ImportReport) -> dict:
             "summary": r.summary(), "clean": r.clean, "via": r.via}
 
 
+_RESERVED = {"CON", "PRN", "AUX", "NUL"} | {f"COM{i}" for i in range(1, 10)} | {f"LPT{i}" for i in range(1, 10)}
+
+
 def _stem(project: Project, given=None) -> str:
     name = str(given or project.name or "job")
     keep = "".join(c if (c.isalnum() or c in "-_ .") else "_" for c in name).strip(" .") or "job"
+    if keep.split(".")[0].upper() in _RESERVED:           # (CON, NUL ... are not file names on Windows)
+        keep = "_" + keep
     return keep[:80]
 
 
@@ -577,6 +582,11 @@ def op_gcode(payload: dict, ctl: JobControl | None = None) -> dict:
     if cached is not None and all((t.id, s.id) in cached for t in project.toolpaths if t.enabled
                                   for s in sheets_for(project, t)):
         res, reused = cached, True                        # the toolpaths as they were calculated: not calculated again
+        for (tid, _sid), r in res.items():                # (a toolpath that was renamed since is written under its name now)
+            d = project.toolpath(tid)
+            for tp in r.toolpaths:
+                if d is not None:
+                    tp.name = d.name
     else:
         try:
             res, _ = calculate(project, cancel, (lambda k, n, name: prog(k, n, name)) if prog else None)
@@ -621,6 +631,15 @@ def op_gcode(payload: dict, ctl: JobControl | None = None) -> dict:
         for suffix, text in post_toolpaths(project, sheet, tps, post, base, program):
             files.append({"name": f"{base}{suffix}.{post.extension}", "mime": "text/plain", "text": text,
                           "sheet": sheet.id})
+    seen: dict[str, int] = {}                             # (two files with one name would overwrite each other when saved)
+    for f in files:
+        key = f["name"].lower()
+        if key in seen:
+            seen[key] += 1
+            stem, dot, ext = f["name"].rpartition(".")
+            f["name"] = f"{stem}_{seen[key]}{dot}{ext}" if dot else f"{f['name']}_{seen[key]}"
+        else:
+            seen[key] = 1
     return {"files": files, "errors": errors, "warnings": [w[:2000] for w in warnings], "ok": bool(files), "reused": reused}
 
 

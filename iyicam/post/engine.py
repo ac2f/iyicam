@@ -21,6 +21,7 @@ import datetime as _dt
 import math
 import re
 import string
+import threading
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -152,12 +153,17 @@ class _Vars(dict):
         raise KeyError(f"unknown post variable {{{key}}}")
 
 
+#: the variables that hold text somebody typed (see PostProcessor.block)
+_TEXT_VARS = {"file_name", "project_name", "sheet_name", "post_name", "tool_name", "toolpath_name", "tools", "text"}
+
+
 class PostProcessor:
     """Template based post-processor.  Subclass and override hooks for custom logic."""
 
     def __init__(self, definition: dict | None = None, path=None):
         d = copy.deepcopy(definition or {})
         self.path = path
+        self._lock = threading.RLock()
         self.id = d.get("id", "custom")
         self.name = d.get("name", self.id)
         self.description = d.get("description", "")
@@ -174,7 +180,12 @@ class PostProcessor:
         return self._generate(job, job.toolpaths)
 
     def generate_files(self, job: PostJob) -> list[tuple[str, str]]:
-        """``[(file suffix, text)]``; several files when ``split_by_tool`` is set."""
+        """``[(file suffix, text)]``; several files when ``split_by_tool`` is set. A post keeps its working state in itself, so
+        two jobs at once (threads of the service) take turns."""
+        with self._lock:
+            return self._generate_files(job)
+
+    def _generate_files(self, job: PostJob) -> list[tuple[str, str]]:
         if not self.options["split_by_tool"]:
             return [("", self.generate(job))]
         groups: list[list[Toolpath]] = []
@@ -299,7 +310,8 @@ class PostProcessor:
         for ln in lines:
             if o["uppercase"] and not self._is_comment(ln):
                 ln = ln.upper()
-            if o["line_numbers"] and ln and not ln.startswith("%") and not self._is_comment(ln):
+            if (o["line_numbers"] and ln and not ln.startswith("%") and not self._is_comment(ln)
+                    and not re.match(r"[O:]\d", ln)):          # (the program number line has no N word before it)
                 ln = f"N{n}{' ' if o['line_number_space'] else ''}{ln}"
                 n += o["line_number_step"]
                 if n > o["line_number_max"]:
@@ -365,6 +377,10 @@ class PostProcessor:
         if self._rotary:  # Y positions are angles on a wrapped job
             tpl = re.sub(r"Y(?=\{(?:home_y|ymin|ymax)\})", self._yl, tpl)
         tpl = self._sums(tpl, variables)
+        # names (of the project, a sheet, a toolpath, a tool ...) are text of other people: a line break or a bracket in one of them
+        # would end its comment and start G-code of its own
+        variables = {k: (re.sub(r"[\r\n]+", " ", v).replace("(", "[").replace(")", "]") if k in _TEXT_VARS and isinstance(v, str) else v)
+                     for k, v in variables.items()}
         text = string.Formatter().vformat(tpl, (), _Vars(variables))
         for ln in text.split("\n"):
             self.emit(ln)
@@ -504,11 +520,12 @@ class PostProcessor:
             return
         sx, sy, sz = self._pos
         r = math.hypot(sx - m.cx, sy - m.cy)
-        if math.hypot(m.x - sx, m.y - sy) * self._k < 10 ** -o["decimals"]:
-            # start and end coincide in the output: a G2/G3 here would be read as a full circle
+        sweep = arc_sweep(sx, sy, m)
+        if math.hypot(m.x - sx, m.y - sy) * self._k < 10 ** -o["decimals"] and abs(sweep) < math.pi:
+            # start and end coincide in the output: a G2/G3 here would be read as a full circle (a tiny arc is a line; a real
+            # full circle is cut in pieces below)
             self.linear(m.x, m.y, m.z, m.f, tv)
             return
-        sweep = arc_sweep(sx, sy, m)
         helical = abs(m.z - sz) > 1e-9
         if (o["arcs"] == "none" or r * self._k < o["arc_min_radius"] or r * self._k > o["arc_max_radius"]
                 or (helical and not o["helical"]) or self._rotary):  # wrapped arcs are no circles
@@ -519,6 +536,8 @@ class PostProcessor:
             # R words are ill-conditioned near 180 degrees: keep each arc to a quarter circle
             max_sw = min(max_sw, math.pi / 2)
         n = max(1, math.ceil(abs(sweep) / max_sw - 1e-9))
+        if abs(sweep) > 2 * math.pi - 1e-6:
+            n = max(n, 2)                                   # (a full circle is never one G2: start and end are the same place)
         a0 = math.atan2(sy - m.cy, sx - m.cx)
         for i in range(1, n + 1):
             if i == n:

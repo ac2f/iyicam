@@ -852,6 +852,8 @@
       else done = false;
       if (done) { fillBars(); redraw(); }                        // (what a key did shows in the bars and the drawing, and the keys held for it are let go)
     };
+    if (E.keyHandler) document.removeEventListener("keydown", E.keyHandler);       // (one handler: a drawing that is made again does not add another)
+    E.keyHandler = onKey;
     document.addEventListener("keydown", onKey);
 
     const fitBtns = h("div", { class: "tools" },
@@ -1086,7 +1088,7 @@
       o.reserve = s.noReserve ? false : { width: s.width, height: s.height, quantity: s.reserveQty || 0 };
     }
     if (s.onSheet) o.place_on = "current";
-    if (s.onGroup) { o.place_on = "group"; o.group = s.onGroup; }
+    if (s.onGroup && S.project.sheets.some(x => x.group === s.onGroup)) { o.place_on = "group"; o.group = s.onGroup; }       // (a group of another project is not sent)
     return o;
   }
   function nestDialog() {
@@ -1264,6 +1266,7 @@
       }));
     }
     const view = { el, build };
+    for (const v of [...LAYER_VIEWS]) if (!v.el.isConnected) LAYER_VIEWS.delete(v);       // (lists of screens that are gone)
     LAYER_VIEWS.add(view);
     build();
     return el;

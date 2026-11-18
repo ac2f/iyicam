@@ -66,14 +66,7 @@ def evaluate(text: str, names: dict | None = None) -> float | None:
         return v
 
     def power():
-        v = unary()
-        if peek() == "^":
-            take()
-            e = power()
-            if abs(e) > 64:
-                raise OverflowError
-            v = v ** e
-        return v
+        return unary()
 
     def unary():
         t = peek()
@@ -83,7 +76,17 @@ def evaluate(text: str, names: dict | None = None) -> float | None:
         if t == "+":
             take()
             return unary()
-        return atom()
+        return pow_()
+
+    def pow_():
+        v = atom()
+        if peek() == "^":
+            take()
+            e = unary()                                   # (-2^2 is -4, 2^-1 is a half)
+            if abs(e) > 64:
+                raise OverflowError
+            v = v ** e
+        return v
 
     def atom():
         t = take() if peek() is not None else None
@@ -108,7 +111,7 @@ def evaluate(text: str, names: dict | None = None) -> float | None:
         if pos != len(toks) or isinstance(v, complex) or not math.isfinite(v):
             return None
         return float(v)
-    except (ValueError, ZeroDivisionError, OverflowError, IndexError):
+    except (ValueError, ZeroDivisionError, OverflowError, IndexError, RecursionError):
         return None
 
 

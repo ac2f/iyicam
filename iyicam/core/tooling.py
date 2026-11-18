@@ -180,6 +180,6 @@ class ToolLibrary:
         if path.exists():
             try:
                 return cls.load(path)
-            except (OSError, ValueError, TypeError):
+            except Exception:                              # (a tool file that is damaged in any way: the default tools, not a program that will not start)
                 pass
         return cls(None, path)

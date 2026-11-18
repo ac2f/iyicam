@@ -222,10 +222,10 @@ async function packBody(text) {
 /** Something is being done: a thin bar runs along the top while any request is out, and the button that was pressed shows it
  *  ("working", then a tick or a cross), so a press is never left without an answer. */
 let pending = 0, pressed = null;
-function pendingChange(d) {
-  pending += d;
+function pendingChange(d, failed = false) {
+  pending = Math.max(0, pending + d);
   document.body.classList.toggle("working", pending > 0 || !!(S && S.busy));
-  if (pending <= 0 && pressed) { const b = pressed; pressed = null; b.classList.remove("wait"); b.classList.add(pending < 0 ? "x" : "done"); setTimeout(() => b.classList.remove("done", "x"), 700); }
+  if (pending <= 0 && !(S && S.busy) && pressed) { const b = pressed; pressed = null; b.classList.remove("wait"); b.classList.add(failed ? "x" : "done"); setTimeout(() => b.classList.remove("done", "x"), 700); }
 }
 document.addEventListener("click", e => {
   const b = e.target.closest && e.target.closest("button");
@@ -236,7 +236,8 @@ document.addEventListener("click", e => {
 
 async function api(op, payload) {
   pendingChange(1);
-  try { return await apiCall(op, payload); } finally { pendingChange(-1); }
+  let failed = false;
+  try { return await apiCall(op, payload); } catch (e) { failed = true; throw e; } finally { pendingChange(-1, failed); }
 }
 async function apiCall(op, payload) {
   let r;
@@ -662,18 +663,25 @@ document.addEventListener("wheel", e => {
 
 /** The value of what was typed in a number box: a number or a sum (``12+3,5``, ``(100-8)/2``; a comma is a decimal point
  *  like the dot). Numbers, ``+ - * / ^`` and brackets only: nothing is run. NaN when it is not one. */
+/** the thickness box of the open screen (a sum or a number with a comma is read the way the box shows it) */
+function thkValue() {
+  const v = $("#thk") ? calc($("#thk").value) : NaN;
+  return Number.isFinite(v) && v > 0 ? v : 18;
+}
+
 function calc(text) {
   if (typeof text !== "string") return NaN;
-  const s = text.replace(/,/g, ".").replace(/[−]/g, "-").replace(/[×·x]/g, "*").replace(/[÷:]/g, "/").replace(/\s+/g, "");
+  const s = text.replace(/,/g, ".").replace(/[−]/g, "-").replace(/[×·x]/g, "*").replace(/[÷:]/g, "/").trim();
   if (!s) return NaN;
-  const toks = s.match(/\d+\.?\d*(?:[eE][+-]?\d+)?|\.\d+(?:[eE][+-]?\d+)?|[-+*/^()]|./g) || [];
+  const toks = s.match(/\d+\.?\d*(?:[eE][+-]?\d+)?|\.\d+(?:[eE][+-]?\d+)?|[-+*/^()]|\S/g) || [];      // (two numbers with a space between are not one)
   let i = 0;
   const peek = () => toks[i], take = () => toks[i++];
   const bad = () => { throw new Error("calc"); };
   function expr() { let v = term(); while (peek() === "+" || peek() === "-") v = take() === "+" ? v + term() : v - term(); return v; }
   function term() { let v = power(); while (peek() === "*" || peek() === "/") { if (take() === "*") v *= power(); else { const d = power(); if (d === 0) bad(); v /= d; } } return v; }
-  function power() { const v = unary(); if (peek() === "^") { take(); const e = power(); if (Math.abs(e) > 64) bad(); return v ** e; } return v; }
-  function unary() { if (peek() === "-") { take(); return -unary(); } if (peek() === "+") { take(); return unary(); } return atom(); }
+  function power() { const v = unary(); return v; }
+  function unary() { if (peek() === "-") { take(); return -unary(); } if (peek() === "+") { take(); return unary(); } return pow(); }
+  function pow() { const v = atom(); if (peek() === "^") { take(); const e = unary(); if (Math.abs(e) > 64) bad(); return v ** e; } return v; }   // (-2^2 is -4)
   function atom() {
     const t = take();
     if (t === undefined) bad();
@@ -715,7 +723,12 @@ function paramsForm(params, vals, tools, opts = {}) {
   // ``opts.collapse``: the settings that are rarely changed (``advanced`` in the schema) are behind "More options"
   const root = h("div"), rows = [];
   let more = false;
-  const refresh = () => rows.forEach(([p, el]) => { el.hidden = !visibleParam(p, vals) || (!!opts.collapse && !!p.advanced && !more); });
+  const heads = new Map();                                              // group -> its heading (hidden when none of its rows is shown)
+  const refresh = () => {
+    const shown = new Map();
+    rows.forEach(([p, el]) => { el.hidden = !visibleParam(p, vals) || (!!opts.collapse && !!p.advanced && !more); if (!el.hidden && p.group) shown.set(p.group, true); });
+    heads.forEach((el, g) => { el.hidden = !shown.get(g); });
+  };
   let group = null;
   for (const p of params) {
     if (!(p.name in vals) && p.default != null) vals[p.name] = p.default;
@@ -752,11 +765,11 @@ function paramsForm(params, vals, tools, opts = {}) {
       inp.addEventListener("input", () => { vals[p.name] = inp.value; refresh(); });
       el = h("label", { class: "f" }, h("span", {}, p.label), inp, help);
     }
-    if (p.group && p.group !== group) { group = p.group; root.append(h("div", { class: "group-h" }, p.group)); }
+    if (p.group && p.group !== group) { group = p.group; const hd = h("div", { class: "group-h" }, p.group); heads.set(p.group, hd); root.append(hd); }
     rows.push([p, el]);
     root.append(el);
   }
-  const hidden = opts.collapse ? rows.filter(([p]) => p.advanced).length : 0;
+  const hidden = opts.collapse ? rows.filter(([p]) => p.advanced && visibleParam(p, vals)).length : 0;
   if (hidden) {
     const btn = h("button", { class: "small", style: "margin-top:10px" });
     const label = () => { btn.textContent = more ? t("more.fewer") : t("more.show", hidden); };
@@ -806,9 +819,11 @@ function editToolpath(existing, draft) {
   const modeSel = h("select", {}, h("option", { value: "layers" }, t("paths.bylayers")), h("option", { value: "vectors" }, t("paths.byvectors", vecIds.length)));
   modeSel.value = mode;
   const opBox = h("div"), toolBox = h("div"), name = h("input", { type: "text", value: tp.name });
+  if (draft && draft.chosen) { chosen.clear(); draft.chosen.forEach(x => chosen.add(x)); }
   // a name that is changed can make a new toolpath (the original stays): asked for here, and remembered
   const keepNew = h("input", { type: "checkbox" }), autoNew = h("input", { type: "checkbox", checked: store.get("iyicam.renameNew") === "1" });
-  const firstName = tp.name;
+  const firstName = draft && draft.firstName !== undefined ? draft.firstName : tp.name;
+  if (draft && draft.keepNew) keepNew.checked = true;
   autoNew.onchange = () => { store.set("iyicam.renameNew", autoNew.checked ? "1" : "0"); };
   name.addEventListener("input", () => { if (existing && autoNew.checked && name.value !== firstName) keepNew.checked = true; });
   const sgroups = [...new Set(p.sheets.map(x => x.group).filter(Boolean))];
@@ -820,7 +835,7 @@ function editToolpath(existing, draft) {
   const groupIn = h("input", { type: "text", value: tp.group || "", placeholder: t("grp.none"), list: "grp-names" });
   const opSel = h("select", {}, ops.map(o => h("option", { value: o.id }, o.label)));
   opSel.value = tp.op;
-  let nameTouched = !!existing;
+  let nameTouched = !!existing || !!draft;
   name.addEventListener("input", () => { nameTouched = true; });
   const opOf = () => ops.find(o => o.id === opSel.value);
   const toolsFor = o => sc.tools.filter(tl => !o.tool_types || o.tool_types.includes(tl.type));
@@ -898,8 +913,9 @@ function editToolpath(existing, draft) {
   // pick the vectors on the drawing: the window closes, the drawing is shown with a bar that says how many are selected, and the
   // window comes back with them (what was typed stays)
   function pickOnDrawing() {
-    tp.name = name.value; tp.group = groupIn.value.trim();
-    S.pickTp = { tp, existing, mode: "vectors", vecIds: vecIds.slice() };
+    tp.name = name.value; tp.group = groupIn.value.trim(); tp.op = opSel.value;
+    if (sgSel.value) tp.sheet_group = sgSel.value; else delete tp.sheet_group;
+    S.pickTp = { tp, existing, mode: "vectors", vecIds: vecIds.slice(), chosen: [...chosen], firstName, keepNew: keepNew.checked };
     close(); S.tab = "draw"; render();
   }
   const del = () => { p.toolpaths = p.toolpaths.filter(x => x.id !== tp.id); close(); changed(); };
@@ -927,7 +943,7 @@ async function openFile(input, replace) {
   try {
     setBusy({ label: t("busy"), k: 0, n: 0 });
     const add = !replace && S.project;
-    const thickness = +($("#thk") && $("#thk").value) || 18;
+    const thickness = thkValue();
     let out;
     if (add) {                                       // (added to a project: the project goes with it, as JSON)
       const data_b64 = await fileToB64(file);
@@ -1067,7 +1083,7 @@ async function openPath(path, replace) {
   try {
     setBusy({ label: t("busy"), k: 0, n: 0 });
     const add = !replace && S.project;
-    const out = await api("open", { path, thickness: +($("#thk") && $("#thk").value) || 18, ...(add ? { project: S.project } : {}) });
+    const out = await api("open", { path, thickness: thkValue(), ...(add ? { project: S.project } : {}) });
     S.project = out.project; S.report = out.report;
     S.sheetId = S.project.sheets[0].id; S.views = {};
     if (out.kind === "project") setFile({ path: out.path, hash: out.hash });
@@ -1135,7 +1151,16 @@ function sheetGroupInput(s) {
   list.replaceChildren(...names.map(g => h("option", { value: g })));
   if (!list.isConnected) document.body.append(list);
   const inp = h("input", { type: "text", value: s.group || "", placeholder: t("sg.none"), list: id });
-  inp.onchange = () => { const g = inp.value.trim(); if (g) s.group = g; else delete s.group; touch(); render(); };
+  inp.onchange = () => {
+    const old = s.group || "", g = inp.value.trim();
+    if (g) s.group = g; else delete s.group;
+    // what pointed at the old name follows it when no other sheet has it any more (a toolpath or layer of a group is not lost)
+    if (old && old !== g && !S.project.sheets.some(x => x !== s && x.group === old)) {
+      for (const tp of S.project.toolpaths) if (tp.sheet_group === old) { if (g) tp.sheet_group = g; else delete tp.sheet_group; }
+      for (const l of S.project.layers) if (l.sheet_group === old) { if (g) l.sheet_group = g; else delete l.sheet_group; }
+    }
+    touch(); render();
+  };
   return inp;
 }
 
@@ -1329,7 +1354,7 @@ function revisionAfterSave() {
   if (r.auto === false) return;
   if (r.scope === "group") { for (const s of S.project.sheets) if (s.group) r.groups[s.group] = (r.groups[s.group] ?? r.project ?? 1) + 1; }
   r.project = (r.project ?? 1) + 1;
-  touch();
+  S.rev++; persist();                       // (not touch(): the G-code that was just written is not stale)
 }
 
 /** the name of the G-code files: prefixes with variables (the engine puts the values in, so a file is called the same wherever
@@ -1412,7 +1437,10 @@ function viewOutput() {
   const stem = (p.name || "job").replace(/[^\w .-]+/g, "_");
   const out = [];
   // which toolpaths go in the file: ticked here (the ones that are on, to begin with); a group can be taken at once
-  if (!S.outSel || S.outSel.proj !== p) S.outSel = { proj: p, ids: new Set(p.toolpaths.filter(x => x.enabled).map(x => x.id)) };
+  // the toolpaths in the file: the ones that are on to begin with; one that is made later joins, one that is gone leaves
+  const key = p.sheets[0] ? p.sheets[0].id : "";
+  if (!S.outSel || S.outSel.key !== key) S.outSel = { key, ids: new Set(), seen: new Set() };
+  for (const x of p.toolpaths) if (!S.outSel.seen.has(x.id)) { S.outSel.seen.add(x.id); if (x.enabled) S.outSel.ids.add(x.id); }
   const sel = S.outSel.ids;
   for (const id of [...sel]) if (!p.toolpaths.some(x => x.id === id)) sel.delete(id);
   const groups = [...new Set(p.toolpaths.map(x => x.group).filter(Boolean))];
@@ -1518,13 +1546,15 @@ const EXTRA_TABS = [];
 const allTabs = () => [...TABS.slice(0, 3), ...EXTRA_TABS.map(x => [x.id, x.icon, x.key]), TABS[3]];
 
 /** the bar of "pick the vectors on the drawing" (a toolpath window that was left to select vectors) */
+let pickTimer = 0;
 function pickBar() {
   document.getElementById("pickbar")?.remove();
+  clearInterval(pickTimer);
   if (!S.pickTp) return;
   const ed = window.IyiPage.editor, count = () => (ed ? ed.state.sel.size : 0);
   const label = h("span", { class: "grow" }), tick = () => { label.textContent = t("tp.picked", count()); };
   tick();
-  const timer = setInterval(() => { if (!document.getElementById("pickbar")) clearInterval(timer); else tick(); }, 300);
+  pickTimer = setInterval(() => { if (!label.isConnected) clearInterval(pickTimer); else tick(); }, 300);
   const use = h("button", { class: "primary", onclick: () => {
     const d = S.pickTp; S.pickTp = null;
     if (ed && ed.state.sel.size) d.vecIds = [...ed.state.sel];

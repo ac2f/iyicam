@@ -581,6 +581,8 @@ def find_duplicates(objects: Sequence, tol: float = 0.05) -> list[list]:
     for i, o in enumerate(objects):
         bb = o.bbox()
         boxes.append(bb)
+        if bb.empty or not all(math.isfinite(v) for v in (bb.xmin, bb.xmax, bb.ymin, bb.ymax)):     # (a vector with nothing in it is no duplicate of anything)
+            continue
         grid[(int((bb.xmin + bb.xmax) / 2 // cell), int((bb.ymin + bb.ymax) / 2 // cell))].append(i)
     parent = list(range(len(objects)))
 
@@ -591,7 +593,7 @@ def find_duplicates(objects: Sequence, tol: float = 0.05) -> list[list]:
         return i
 
     for i, o in enumerate(objects):
-        if not o.contours:
+        if not o.contours or not all(math.isfinite(v) for v in (boxes[i].xmin, boxes[i].xmax, boxes[i].ymin, boxes[i].ymax)):
             continue
         cx, cy = int((boxes[i].xmin + boxes[i].xmax) / 2 // cell), int((boxes[i].ymin + boxes[i].ymax) / 2 // cell)
         for dx in (-1, 0, 1):

@@ -114,6 +114,8 @@ class ServiceHost:
             return self.call(op, payload)
         except ServiceError as exc:
             return exc.to_dict()
+        except (TypeError, AttributeError, ValueError, OverflowError, KeyError) as exc:       # (input of the wrong kind: the person's, not ours)
+            return {"error": "bad_request", "message": f"{type(exc).__name__}: {exc}"}
         except Exception as exc:  # noqa: BLE001  (a bug: said as it is, the service stays up)
             traceback.print_exc(file=sys.stderr)
             return {"error": "internal_error", "message": f"{type(exc).__name__}: {exc}"}

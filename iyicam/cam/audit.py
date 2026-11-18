@@ -62,13 +62,26 @@ def violations(order: list[str], boxes: dict[str, BBox], columns: bool = True) -
         for a, b in holds:                       # a after b
             before.setdefault(a, set()).add(b)
 
-        def must_follow(x: str, y: str, seen=None) -> bool:
+        reach: dict[str, set[str]] = {}
+
+        def before_all(x: str) -> set[str]:
+            """Everything x has to be cut after, by chains of support pairs (worked out once for each, not once for each way)."""
+            if x in reach:
+                return reach[x]
+            out: set[str] = set()
+            stack = list(before.get(x, ()))
+            while stack:
+                z = stack.pop()
+                if z in out:
+                    continue
+                out.add(z)
+                stack.extend(before.get(z, ()))
+            reach[x] = out
+            return out
+
+        def must_follow(x: str, y: str) -> bool:
             """x has to be cut after y by a chain of support pairs."""
-            seen = seen or set()
-            for z in before.get(x, ()):
-                if z == y or (z not in seen and must_follow(z, y, seen | {z})):
-                    return True
-            return False
+            return y in before_all(x)
         keys = sorted(pos, key=pos.get)
         for i, a in enumerate(keys):
             A = boxes[a]

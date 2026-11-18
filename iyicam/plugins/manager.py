@@ -88,6 +88,8 @@ class PluginManager:
         if info.entry_point:
             return importlib.import_module(info.entry_point.split(":")[0])
         modname = f"iyicam_plugin_{info.key}"
+        for name in [n for n in sys.modules if n == modname or n.startswith(modname + ".")]:
+            del sys.modules[name]                       # (its helper modules are read again: a reload gets what was changed)
         spec = importlib.util.spec_from_file_location(
             modname, info.path, submodule_search_locations=[str(info.path.parent)]
             if info.path.name == "__init__.py" else None)
@@ -115,7 +117,9 @@ class PluginManager:
             info.module = mod
             info.loaded = True
             info.error = ""
-        except Exception:
+        except (Exception, SystemExit) as exc:             # (a plugin that calls sys.exit() is a plugin that failed, not the end of the program)
+            if isinstance(exc, KeyboardInterrupt):
+                raise
             self.registry.remove_source(self.source_of(info))
             info.error = traceback.format_exc(limit=6)
             info.loaded = False

@@ -34,6 +34,9 @@ _FIELD = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
 _BAD = re.compile(r"[^\w\-. ()+,=#@]+", re.UNICODE)
 
 
+_RESERVED = {"CON", "PRN", "AUX", "NUL"} | {f"COM{i}" for i in range(1, 10)} | {f"LPT{i}" for i in range(1, 10)}
+
+
 class NamingError(ValueError):
     pass
 
@@ -58,6 +61,13 @@ def check(parts, sep: str = DEFAULT_SEP) -> tuple[list[str], str]:
     return parts, sep
 
 
+def _revision_text(revision) -> str:
+    try:
+        return "" if revision is None else str(int(revision))
+    except (TypeError, ValueError, OverflowError):
+        return ""
+
+
 def values(project_name: str = "", sheet_name: str = "", sheet_number: int = 1, sheet_count: int = 1, post_name: str = "",
            group: str = "", toolpath_count: int = 0, tool_number=None, tool_name: str = "", thickness=None,
            width=None, height=None, now: _dt.datetime | None = None, tool_diameter=None, toolpath_name: str = "",
@@ -73,13 +83,16 @@ def values(project_name: str = "", sheet_name: str = "", sheet_number: int = 1, 
             "material_thickness": num(thickness), "sheet_width": num(width), "sheet_height": num(height),
             "date": now.strftime("%Y-%m-%d"), "time": now.strftime("%H%M"), "tool_diameter": num(tool_diameter),
             "toolpath_name": toolpath_name, "safe_z": num(safe_z), "cut_depth": num(cut_depth), "sheet_group": sheet_group,
-            "revision": "" if revision is None else str(int(revision))}
+            "revision": _revision_text(revision)}
 
 
 def clean(text: str) -> str:
     """A text that can be (a part of) a file name: letters, digits and a few signs, the rest becomes ``_``."""
     out = _BAD.sub("_", text).strip(" ._")
-    return re.sub(r"_{2,}", "_", out)
+    out = re.sub(r"_{2,}", "_", out)
+    if out.split(".")[0].upper() in _RESERVED:            # (CON, NUL ... are not file names on Windows)
+        out = "_" + out
+    return out
 
 
 def render(parts, vals: dict, sep: str = DEFAULT_SEP) -> str:

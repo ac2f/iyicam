@@ -53,6 +53,11 @@ def compute_toolpath(project: Project, tdef: ToolpathDef, sheet: Sheet,
     objects = project.vectors_for(tdef, sheet)
     if not objects:
         return res
+    reach = 2.0 * max(sheet.width, sheet.height, 100.0)
+    if tdef.tool.diameter > reach:                       # (a cutter wider than the sheet makes the offset ask the geometry for the impossible)
+        res.error = (f"The tool diameter ({tdef.tool.diameter:g} mm) is more than twice the sheet: "
+                     "check the tool (millimetres, not micrometres?)")
+        return res
     if cls.tool_types and tdef.tool.type not in cls.tool_types:
         res.warnings.append(f"{cls.label} is not meant for a {tdef.tool.type.replace('_', ' ')} tool")
     ctx = OpContext(project, sheet, tdef, objects, tolerance, previous=list(previous or []),

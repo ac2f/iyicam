@@ -5,6 +5,7 @@ Toolpath strategies, vector commands and plugins describe their settings with
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
@@ -38,12 +39,19 @@ class Param:
         if v is None:
             return None
         k = self.kind
+        if k in ("float", "length", "angle", "feed", "percent", "int") and not isinstance(v, bool):
+            try:
+                finite = math.isfinite(float(v))
+            except (TypeError, ValueError):
+                finite = True                                # (a text: the conversion below says what is wrong with it)
+            if not finite:                                   # (NaN and infinity are not numbers a setting can have)
+                return self.default
         if k in ("float", "length", "angle", "feed", "percent"):
             v = float(v)
         elif k == "int":
             v = int(round(float(v)))
         elif k == "bool":
-            v = v if isinstance(v, bool) else str(v).lower() in ("1", "true", "yes", "on")
+            v = v if isinstance(v, bool) else (bool(v) if isinstance(v, (int, float)) else str(v).lower() in ("1", "true", "yes", "on"))
         elif k == "choice":
             v = str(v)
             if v not in [c[0] for c in self.choices or []]:
@@ -58,9 +66,9 @@ class Param:
             return v
         if isinstance(v, (int, float)) and not isinstance(v, bool):
             if self.min is not None and v < self.min:
-                v = type(v)(self.min)
+                v = type(v)(math.ceil(self.min) if isinstance(v, int) else self.min)
             if self.max is not None and v > self.max:
-                v = type(v)(self.max)
+                v = type(v)(math.floor(self.max) if isinstance(v, int) else self.max)
         return v
 
 

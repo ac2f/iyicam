@@ -52,7 +52,7 @@ def rotation_angles(rule: dict | None, tilt_step: float = 5.0) -> list[float] | 
         angles = [round(k * step, 6) for k in range(-n, n + 1)]
         if mode == "limit_flip":
             angles += [a + 180.0 for a in angles]
-        return angles
+        return sorted({round(a % 360.0, 6) for a in angles})        # (each angle once: a wide limit does not repeat angles)
     if mode == "step":
         return [0.0] if v <= 0 else [round(k * v, 6) for k in range(max(1, int(round(360.0 / v))))]
     return None

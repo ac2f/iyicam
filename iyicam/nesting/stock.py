@@ -71,12 +71,14 @@ def use_up(stock: list[StockItem], made_from: list) -> list[StockItem]:
     for m in made_from:
         if isinstance(m, StockItem):
             used[m.id] = used.get(m.id, 0) + 1
+    import dataclasses
     keep = []
     for it in stock:
         n = used.get(it.id, 0)
         if it.quantity > 0 and n:
-            it.quantity -= n
-            if it.quantity <= 0:
+            left = it.quantity - n
+            if left <= 0:
                 continue
+            it = dataclasses.replace(it, quantity=left)        # (a copy: the item somebody else holds is not changed, and 0 means "as many as needed")
         keep.append(it)
     return keep

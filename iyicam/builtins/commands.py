@@ -158,6 +158,8 @@ def _centerline(ctx, v):
 def _weld(ctx, v):
     sel = ctx.selected
     out = vectorops.weld([o.contours for o in sel])
+    if not out:                                       # (open lines have no area to weld: nothing is taken away for nothing)
+        raise CommandError("Weld works on closed vectors: nothing to weld in the selection")
     ctx.remove([o.id for o in sel])
     new = ctx.add(out, sel[0].layer_id, "Welded")
     ctx.select([new.id])
@@ -168,6 +170,8 @@ def _subtract(ctx, v):
     base = max(sel, key=lambda o: o.bbox().width * o.bbox().height) if v["base"] == "largest" else sel[0]
     others = [c for o in sel if o is not base for c in o.contours]
     out = vectorops.boolean(base.contours, others, "difference")
+    if not out and not any(c.closed for o in sel for c in o.contours):
+        raise CommandError("Subtract works on closed vectors")
     ctx.remove([o.id for o in sel])
     if out:
         ctx.select([ctx.add(out, base.layer_id, "Subtracted").id])
@@ -178,6 +182,8 @@ def _intersect(ctx, v):
     cur = sel[0].contours
     for o in sel[1:]:
         cur = vectorops.boolean(cur, o.contours, "intersection")
+    if not cur and not any(c.closed for o in sel for c in o.contours):
+        raise CommandError("Intersect works on closed vectors")
     ctx.remove([o.id for o in sel])
     if cur:
         ctx.select([ctx.add(cur, sel[0].layer_id, "Intersection").id])

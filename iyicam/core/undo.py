@@ -15,6 +15,7 @@ class UndoStack:
         self._undo.append((label, project.to_dict()))
         if len(self._undo) > self.limit:
             self._undo.pop(0)
+        self._kept_redo = list(self._redo)               # (a checkpoint that is discarded gives the redo steps back)
         self._redo.clear()
 
     def rollback(self, project: Project) -> None:
@@ -30,6 +31,7 @@ class UndoStack:
         """Forget the last checkpoint (e.g. when the action was cancelled)."""
         if self._undo:
             self._undo.pop()
+            self._redo = list(getattr(self, "_kept_redo", []))
 
     @property
     def can_undo(self) -> bool:

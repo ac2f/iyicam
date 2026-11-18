@@ -43,6 +43,7 @@
 
   let cache = null;                 // what the engine said last: {plugins, install, plugins_on, folder, limits}
   let loading = false;
+  const live = new Set();           // the cards on show: they are all made again when the answer comes
 
   /** the lists of the page follow what the engine has now (commands, toolpath types, formats) */
   async function refreshSchema() {
@@ -102,6 +103,7 @@
   /** the card of the Project tab */
   function card() {
     const box = h("div", { class: "card plugins" });
+    for (const b of [...live]) if (!b.box.isConnected) live.delete(b);
     const build = () => {
       const c = cache;
       const pick = h("input", { type: "file", accept: ".py,.zip", hidden: true, onchange: e => { const f = e.target.files[0]; e.target.value = ""; if (f) installDialog(f); } });
@@ -132,6 +134,7 @@
       box.replaceChildren(...kids);
     };
     build();
+    live.add({ box, build });
     if (!loading && !cache) {
       loading = true;
       api("plugins").then(r => { cache = r; }).catch(e => {
@@ -139,7 +142,7 @@
         cache = { plugins: [], install: false, plugins_on: true, folder: "", note: away ? e.text : "" };
         if (!away) fail(e);
       })
-        .finally(() => { loading = false; if (box.isConnected) build(); });
+        .finally(() => { loading = false; for (const b of live) if (b.box.isConnected) b.build(); });
     }
     return box;
   }

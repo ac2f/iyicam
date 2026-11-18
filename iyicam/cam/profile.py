@@ -36,8 +36,10 @@ CACHE_STATS = {"hits": 0, "misses": 0}
 
 
 def _signature(c: Contour) -> tuple:
+    def ctl(s):                                           # (the handles of a curve are part of its shape)
+        return tuple(round(v, 6) for k in ("c1", "c2") if getattr(s, k, None) is not None for v in getattr(s, k))
     return tuple((type(s).__name__, round(s.a[0], 6), round(s.a[1], 6), round(s.b[0], 6), round(s.b[1], 6),
-                  round(getattr(s, "bulge", 0.0), 9)) for s in c.segs)
+                  round(getattr(s, "bulge", 0.0), 9), ctl(s)) for s in c.segs)
 
 
 def offset_loops(closed: list[Contour], delta: float, sharp: bool, tol: float) -> list[Contour]:
@@ -323,6 +325,8 @@ class ProfileOp(Operation):
         """How far before its closing point a cut starts: passes without a lead-in go on where the
         previous pass ended (by the ramp and the overlap), so the last pass closes further on."""
         v = self.values
+        if L <= 1e-9:                                       # (a loop with no length: nothing to shift along)
+            return 0.0
         if (v["lead"] != "none" and it.wall_right is not None) or v["ramp"] == "helix":
             return 0.0
         if v["ramp"] == "linear":
@@ -340,6 +344,8 @@ class ProfileOp(Operation):
         """
         walker = PathWalker(c.segs, True)
         L = walker.length
+        if L <= 1e-9:                                         # (a loop with no length starts and closes where it is)
+            return c, tuple(c.start)
         pos = mb.pos[:2] if mb.pos is not None else ctx.material.home[:2]
         shift = self._closing_shift(L, passes, it)
 
