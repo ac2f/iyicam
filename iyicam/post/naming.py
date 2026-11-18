@@ -19,6 +19,11 @@ _V = [
     ("group", "Group of toolpaths saved (or empty)", "Kaydedilen takım yolu grubu (ya da boş)"),
     ("toolpath_count", "Number of toolpaths in the file", "Dosyadaki takım yolu sayısı"),
     ("tool_number", "Number of the first tool", "İlk takımın numarası"), ("tool_name", "Name of the first tool", "İlk takımın adı"),
+    ("tool_diameter", "Diameter of the first tool", "İlk takımın çapı"),
+    ("toolpath_name", "Name of the first toolpath", "İlk takım yolunun adı"),
+    ("safe_z", "Safe Z", "Güvenli Z"), ("cut_depth", "Cut depth of the first toolpath", "İlk takım yolunun kesim derinliği"),
+    ("sheet_group", "Group of the sheet (or empty)", "Sacın grubu (ya da boş)"),
+    ("revision", "Revision number (counts up by itself, or typed)", "Revizyon numarası (kendiliğinden artar, elle de yazılır)"),
     ("material_thickness", "Thickness of the material", "Malzeme kalınlığı"),
     ("sheet_width", "Width of the sheet", "Sac genişliği"), ("sheet_height", "Height of the sheet", "Sac yüksekliği"),
     ("date", "Date (2026-11-18)", "Tarih (2026-11-18)"), ("time", "Time (0930)", "Saat (0930)"),
@@ -55,7 +60,8 @@ def check(parts, sep: str = DEFAULT_SEP) -> tuple[list[str], str]:
 
 def values(project_name: str = "", sheet_name: str = "", sheet_number: int = 1, sheet_count: int = 1, post_name: str = "",
            group: str = "", toolpath_count: int = 0, tool_number=None, tool_name: str = "", thickness=None,
-           width=None, height=None, now: _dt.datetime | None = None) -> dict:
+           width=None, height=None, now: _dt.datetime | None = None, tool_diameter=None, toolpath_name: str = "",
+           safe_z=None, cut_depth=None, sheet_group: str = "", revision=None) -> dict:
     """The value of every variable (as text)."""
     now = now or _dt.datetime.now()
 
@@ -65,7 +71,9 @@ def values(project_name: str = "", sheet_name: str = "", sheet_number: int = 1, 
             "sheet_count": str(sheet_count), "post_name": post_name, "group": group, "toolpath_count": str(toolpath_count),
             "tool_number": "" if tool_number is None else str(tool_number), "tool_name": tool_name,
             "material_thickness": num(thickness), "sheet_width": num(width), "sheet_height": num(height),
-            "date": now.strftime("%Y-%m-%d"), "time": now.strftime("%H%M")}
+            "date": now.strftime("%Y-%m-%d"), "time": now.strftime("%H%M"), "tool_diameter": num(tool_diameter),
+            "toolpath_name": toolpath_name, "safe_z": num(safe_z), "cut_depth": num(cut_depth), "sheet_group": sheet_group,
+            "revision": "" if revision is None else str(int(revision))}
 
 
 def clean(text: str) -> str:

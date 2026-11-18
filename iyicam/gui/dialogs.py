@@ -530,6 +530,14 @@ class ToolpathDialog(RemembersSize, QDialog):
         n = sum(1 for t in ctrl.project.toolpaths if t.op == op_id) + 1
         self.name = QLineEdit(self.tdef.name if self.tdef else f"{self.op.label.split(' (')[0]} {n}")
         top.addRow("Name", self.name)
+        self.keep_old = QCheckBox("Keep the original: save this as a new toolpath")
+        self.auto_new = QCheckBox("Changing the name does this by itself")
+        self.auto_new.setChecked(bool(ctrl.settings.rename_makes_new))
+        self._first_name = self.name.text()
+        self.name.textChanged.connect(self._name_edited)
+        if self.tdef is not None:                          # (a toolpath that is edited: the name can make a new one)
+            top.addRow(self.keep_old)
+            top.addRow(self.auto_new)
         lay.addLayout(top)
         tabs = QTabWidget()
         lay.addWidget(tabs)
@@ -590,6 +598,12 @@ class ToolpathDialog(RemembersSize, QDialog):
             cur_ids = list(self.tdef.selection.vector_ids)
         self.vector_ids = cur_ids
         self.rb_sel.setText(f"Selected vectors ({len(cur_ids)})")
+        self.follow = QCheckBox("Follow the selection on the drawing while this window is open")
+        self.follow.setChecked(self.tdef is None)
+        self.follow.setToolTip("Select vectors on the drawing with this window open: they are the vectors of the toolpath")
+        vl.addWidget(self.follow)
+        ctrl.selection_changed.connect(self._follow_selection)
+        self.finished.connect(self._let_go)
         (self.rb_layers if sel is not None and sel.mode == "layers" else self.rb_sel).setChecked(True)
         if not cur_ids and (sel is None or sel.mode != "layers"):
             self.rb_layers.setChecked(True)
@@ -742,10 +756,46 @@ class ToolpathDialog(RemembersSize, QDialog):
         return ToolpathDef(self.name.text(), self.op.id, self.tool_editor.tool(), params, sel, True, sheets,
                            safe_z=safe_z, clearance=clearance, sheet_group=group)
 
+    def _name_edited(self, text: str) -> None:
+        if self.tdef is not None and self.auto_new.isChecked() and text != self._first_name:
+            self.keep_old.setChecked(True)
+
+    def _follow_selection(self) -> None:
+        """The selection on the drawing changed while the window is open: the vectors of the toolpath follow it."""
+        if not self.follow.isChecked() or not hasattr(self, "rb_sel"):
+            return
+        ids = [o.id for o in self.ctrl.selected_objects()]
+        if ids:
+            self.vector_ids = ids
+            self.rb_sel.setText(f"Selected vectors ({len(ids)})")
+            self.rb_sel.setChecked(True)
+
+    def _let_go(self, *_) -> None:
+        try:
+            self.ctrl.selection_changed.disconnect(self._follow_selection)
+        except (RuntimeError, TypeError):
+            pass
+
+    def open_modeless(self, on_accept) -> None:
+        """Show the window beside the drawing, not as a pop-up in front of it: the vectors can be selected, the drawing zoomed, ...
+        while it is open; ``on_accept()`` is called when the person presses Calculate."""
+        self.setWindowModality(Qt.NonModal)
+        self.setWindowFlag(Qt.Tool, True)
+        self.accepted.connect(on_accept)
+        win = self.parent()
+        if win is not None and hasattr(win, "frameGeometry"):
+            g = win.frameGeometry()
+            self.resize(min(self.width(), 480), min(self.height(), max(400, g.height() - 80)))
+            self.move(max(0, g.right() - self.width() - 8), g.top() + 40)       # (the right edge of the program)
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
     def accept(self) -> None:
         if self.rb_sel.isChecked() and not self.vector_ids:
             QMessageBox.information(self, "Toolpath", "Select vectors first, or choose layers on the Vectors tab.")
             return
+        self.ctrl.settings.rename_makes_new = self.auto_new.isChecked()
         self._remember()
         super().accept()
 
@@ -1525,6 +1575,7 @@ class ExportDialog(RemembersSize, QDialog):
         self.desc.setWordWrap(True)
         lay.addWidget(self.desc)
         lay.addWidget(self._name_box(mem))
+        lay.addWidget(self._where_box(mem))
         lay.addWidget(QLabel("Toolpaths in this file (in machining order):"))
         pick = QHBoxLayout()
         self.list = QListWidget()
@@ -1556,7 +1607,7 @@ class ExportDialog(RemembersSize, QDialog):
         self.text = self.view.text
         lay.addWidget(self.view, 1)
         bb = QDialogButtonBox()
-        save = bb.addButton("Save...", QDialogButtonBox.AcceptRole)
+        save = bb.addButton("Save", QDialogButtonBox.AcceptRole)       # (nothing is written before this is pressed)
         save.clicked.connect(self.save)
         cp = bb.addButton("Copy", QDialogButtonBox.ActionRole)
         cp.clicked.connect(lambda: QApplication.clipboard().setText(self.text.toPlainText()))
@@ -1607,6 +1658,83 @@ class ExportDialog(RemembersSize, QDialog):
         self.name_preview.setTextInteractionFlags(Qt.TextSelectableByMouse)
         lay.addWidget(self.name_preview)
         return box
+
+    # -- where the files go, and the revision --------------------------------------------------------------------
+    def _where_box(self, mem: dict) -> QGroupBox:
+        box = QGroupBox("Save to")
+        lay = QVBoxLayout(box)
+        row = QHBoxLayout()
+        last = self.ctrl.settings.last_dir("gcode")
+        self.folder = QLineEdit(mem.get("folder") if isinstance(mem.get("folder"), str) and mem.get("folder") else last)
+        self.folder.setPlaceholderText("Choose the folder first, then press Save")
+        browse = QPushButton("Folder...")
+        browse.clicked.connect(self._pick_folder)
+        row.addWidget(self.folder, 1)
+        row.addWidget(browse)
+        lay.addLayout(row)
+        row = QHBoxLayout()
+        self.subfolder = QLineEdit(mem.get("subfolder") if isinstance(mem.get("subfolder"), str) else "")
+        self.subfolder.setPlaceholderText("a folder inside it, with {variables}, like Rev{revision} (empty: none)")
+        self.subfolder.textChanged.connect(self._name_changed)
+        row.addWidget(QLabel("Folder inside:"))
+        row.addWidget(self.subfolder, 1)
+        lay.addLayout(row)
+        row = QHBoxLayout()
+        self.revision = QSpinBox()
+        self.revision.setRange(0, 99999)
+        self.revision.setToolTip("The revision number: it counts up by itself after every save, and can be typed")
+        self.rev_scope = QComboBox()
+        self.rev_scope.addItem("of the project", "project")
+        self.rev_scope.addItem("of the sheet group (each group counts for itself)", "group")
+        i = self.rev_scope.findData(mem.get("rev_scope"))
+        self.rev_scope.setCurrentIndex(max(0, i))
+        self.rev_auto = QCheckBox("count up after saving")
+        self.rev_auto.setChecked(mem.get("rev_auto") is not False)
+        self.revision.setValue(self._next_revision())
+        self.revision.valueChanged.connect(self._name_changed)
+        self.rev_scope.currentIndexChanged.connect(lambda *_: (self.revision.setValue(self._next_revision()), self._name_changed()))
+        for w in (QLabel("Revision"), self.revision, self.rev_scope, self.rev_auto):
+            row.addWidget(w)
+        row.addStretch(1)
+        lay.addLayout(row)
+        self.last_saved = QLabel()
+        self.last_saved.setWordWrap(True)
+        self.last_saved.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self._show_last(mem.get("last"))
+        lay.addWidget(self.last_saved)
+        return box
+
+    def _revisions(self) -> dict:
+        return self.ctrl.project.metadata.setdefault("revisions", {"project": 1, "groups": {}})
+
+    def _next_revision(self) -> int:
+        r = self._revisions()
+        if self.rev_scope.currentData() == "group":
+            groups = {s.group for s in self.ctrl.project.sheets if s.group}
+            return max([r["groups"].get(g, 1) for g in groups] or [r.get("project", 1)])
+        return int(r.get("project", 1))
+
+    def _pick_folder(self) -> None:
+        from .files import open_dir
+        d = open_dir(self, self.ctrl.settings, "gcode", "Folder for the G-code")
+        if d:
+            self.folder.setText(d)
+
+    def _show_last(self, last) -> None:
+        if isinstance(last, dict) and last.get("files"):
+            self.last_saved.setText(f"Last saved ({last.get('when', '')}, revision {last.get('revision', '')}): "
+                                    + ", ".join(last["files"][:4]) + (" ..." if len(last["files"]) > 4 else "")
+                                    + (f"\nin {last.get('folder', '')}" if last.get("folder") else ""))
+        else:
+            self.last_saved.setText("Nothing saved yet.")
+
+    def subfolder_name(self, vals: dict) -> str:
+        from ..post import naming
+        text = self.subfolder.text().strip()
+        if not text:
+            return ""
+        parts = [naming.render([p], vals, "_") for p in text.replace("\\", "/").split("/") if p.strip()]
+        return "/".join(p for p in parts if p and p != "job")
 
     def _add_prefix(self, text: str = "", focus: bool = False) -> None:
         row = QHBoxLayout()
@@ -1664,9 +1792,14 @@ class ExportDialog(RemembersSize, QDialog):
         t0 = tps[0] if tps else None
         group = self.group or next(iter({t.group for t in project.toolpaths if t.id in self.chosen() and t.group}), "")
         post = self.current_post()
+        d0 = project.toolpath(t0.def_id) if t0 is not None else None
         vals = naming.values(project.name, sheet.name, index, len(sheets), post.name, group, len(tps),
                              t0.tool.number if t0 else None, t0.tool.name if t0 else "", project.sheet_thickness(sheet),
-                             sheet.width, sheet.height)
+                             sheet.width, sheet.height, tool_diameter=t0.tool.diameter if t0 else None,
+                             toolpath_name=d0.name if d0 else "",
+                             safe_z=d0.safe_z if d0 is not None and d0.safe_z is not None else project.material.safe_z,
+                             cut_depth=d0.params.get("cut_depth") if d0 is not None else None, sheet_group=sheet.group,
+                             revision=self.revision.value())
         parts, sep = naming.check(self.name_parts(), self.name_sep.text() or naming.DEFAULT_SEP)
         name = naming.render(parts, vals, sep)
         many = len(sheets) > 1
@@ -1769,52 +1902,81 @@ class ExportDialog(RemembersSize, QDialog):
         self.view.set_gcode("\n".join(out), post.options["units"] == "inch", post.options["ijk"] == "absolute")
 
     def save(self) -> None:
+        """Write the files into the folder that was chosen, named by the prefixes (and in a folder of the revision when that is
+        asked for). Nothing is written before this."""
+        import datetime
+        from ..post import naming
         from ..post.export import write_gcode
         post = self.current_post()
         ctrl = self.ctrl
-        proj = ctrl.project
-        from ..post import naming
         sheets = [ctrl.sheet] if self.sheets.currentData() == "current" else ctrl.project.sheets
         try:
             naming.check(self.name_parts(), self.name_sep.text() or naming.DEFAULT_SEP)
         except naming.NamingError as exc:
             QMessageBox.warning(self, "Save G-code", f"The file name: {exc}")
             return
-        first = next(((i, s) for i, s in enumerate(sheets, 1) if self.toolpaths(s)), None)
-        proposed = self.file_stem(first[0], first[1], self.toolpaths(first[1])) if first else (self.group or proj.name)
-        fn, _ = save_file(self, ctrl.settings, "gcode", "Save G-code", f"{proposed}.{post.extension}",
-                          f"{post.name} (*.{post.extension});;All files (*)",
-                          str(proj.path.parent) if proj.path else str(Path.home()))
-        if not fn:
+        folder = self.folder.text().strip()
+        if not folder:
+            QMessageBox.information(self, "Save G-code", "Choose the folder first (Folder...), then press Save.")
             return
-        # the name as proposed: every file is named by the prefixes; a name typed over it is the person's own (the old way)
-        by_prefixes = Path(fn).stem == proposed
+        base = Path(folder)
         written = []
-        for i, s in enumerate(sheets):
-            path = Path(fn)
-            if by_prefixes:
-                tps_here = self.toolpaths(s)
-                if not tps_here:
-                    continue
-                path = path.with_name(f"{self.file_stem(i + 1, s, tps_here)}{path.suffix}")
-            elif len(sheets) > 1:
-                path = path.with_name(f"{path.stem}_{i + 1}{path.suffix}")
+        plan = []
+        for i, s in enumerate(sheets, 1):
+            tps_here = self.toolpaths(s)
+            if not tps_here:
+                continue
+            stem = self.file_stem(i, s, tps_here)
+            t0 = tps_here[0]
+            d0 = ctrl.project.toolpath(t0.def_id)
+            vals = naming.values(ctrl.project.name, s.name, i, len(sheets), post.name, self.group, len(tps_here), t0.tool.number,
+                                 t0.tool.name, ctrl.project.sheet_thickness(s), s.width, s.height, tool_diameter=t0.tool.diameter,
+                                 toolpath_name=d0.name if d0 else "", sheet_group=s.group, revision=self.revision.value())
+            sub = self.subfolder_name(vals)
+            plan.append((i, s, tps_here, (base / sub if sub else base) / f"{stem}.{post.extension}"))
+        if not plan:
+            QMessageBox.information(self, "Save G-code", "There is nothing to save: no calculated toolpath on these sheets.")
+            return
+        taken = [p for *_x, p in plan if p.exists()]
+        if taken and QMessageBox.question(self, "Save G-code", f"{len(taken)} file(s) are there already ({taken[0].name} ...). "
+                                          "Replace them?", QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
+            return
+        for i, s, tps_here, path in plan:
             try:
                 for tile, sheet, tps in self.jobs(s):
-                    written += write_gcode(path.with_name(path.stem + tile + path.suffix), ctrl.project, sheet,
-                                           tps, post)
+                    written += write_gcode(path.with_name(path.stem + tile + path.suffix), ctrl.project, sheet, tps, post)
             except Exception as exc:
                 QMessageBox.warning(self, "Save G-code", f"{type(exc).__name__}: {exc}")
                 return
         ctrl.settings.last_post = post.id
-        self._remember()
+        ctrl.settings.set_last_dir("gcode", folder)
+        used = self.revision.value()
+        last = {"files": [p.name for p in written], "folder": str(written[0].parent) if written else folder,
+                "revision": used, "when": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")}
+        r = self._revisions()
+        nxt = used + 1 if self.rev_auto.isChecked() else used        # (counting up: the next save is the next revision)
+        if self.rev_scope.currentData() == "group":
+            for g in {s.group for _i, s, _t, _p in plan if s.group}:
+                r["groups"][g] = nxt
+            if any(not s.group for _i, s, _t, _p in plan):
+                r["project"] = nxt
+        else:
+            r["project"] = nxt
+        ctrl.dirty = True
+        self._remember(last)
+        self._show_last(last)
+        self.revision.setValue(self._next_revision())
         ctrl.message.emit("Saved " + ", ".join(p.name for p in written) if written else "Nothing to save")
-        self.accept()
+        # the window stays open: the next revision can be saved from it
 
-    def _remember(self) -> None:
+    def _remember(self, last=None) -> None:
         s, u = self.ctrl.settings, self.ctrl.units
+        prev = s.recall("export_gcode").get("last") if last is None else last
         s.remember("export_gcode", {"sheets": self.sheets.currentData(), "tile": self.tile.isChecked(),
                                     "name_parts": self.name_parts(), "name_sep": self.name_sep.text(),
+                                    "folder": self.folder.text().strip(), "subfolder": self.subfolder.text(),
+                                    "rev_scope": self.rev_scope.currentData(), "rev_auto": self.rev_auto.isChecked(),
+                                    "last": prev,
                                     "tile_axis": self.tile_axis.currentData(),
                                     "tile_len": u.from_display(self.tile_len.value())})
 
@@ -2412,7 +2574,8 @@ class PreferencesDialog(QDialog):
             Param("snap_edges", "Snap to any point on a vector", "bool", s.snap_edges),
             Param("snap_radius", "Snap reach (pixels)", "float", s.snap_radius, min=2.0, max=60.0,
                   help="How near the pointer has to be for something to catch it; the same at every zoom"),
-            Param("auto_recalculate", "Recalculate toolpaths automatically", "bool", s.auto_recalculate),
+            Param("auto_recalculate", "Recalculate toolpaths automatically after every edit", "bool", s.auto_recalculate),
+            Param("calculate_on_open", "Calculate the toolpaths of a project when it is opened", "bool", s.calculate_on_open),
             Param("show_directions", "Show direction arrows", "bool", s.show_directions),
             Param("sim_resolution", "Simulation resolution (mm, 0 = auto)", "float", s.sim_resolution, min=0.0),
         ]

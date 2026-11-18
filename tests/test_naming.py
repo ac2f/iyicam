@@ -73,3 +73,104 @@ def test_the_save_window_names_the_files_by_the_prefixes(tmp_path, monkeypatch):
         d.close()
     finally:
         gen.close()
+
+
+def test_the_save_window_saves_into_the_folder_by_revision_and_counts_up(tmp_path, monkeypatch):
+    pytest.importorskip("PySide6.QtWidgets")
+    from gui_robot import rwin_gen
+    from test_cutedit import parts
+    from iyicam.gui.dialogs import ExportDialog
+    gen = rwin_gen(tmp_path / "h", monkeypatch)
+    win, _ = next(gen)
+    try:
+        c, t, objs = parts(win)
+        c.recalculate()
+        out = tmp_path / "nc"
+        out.mkdir()
+        d = ExportDialog(c, win)
+        d.sheets.setCurrentIndex(d.sheets.findData("current"))
+        d._add_prefix("R{revision}")
+        d.subfolder.setText("Rev{revision}")
+        d.revision.setValue(4)
+        assert not list(out.rglob("*.tap"))                  # (nothing is written before Save is pressed)
+        d.save()                                             # (no folder yet: it asks)
+        assert not list(out.rglob("*.tap"))
+        d.folder.setText(str(out))
+        d.save()
+        files = list(out.rglob("*.tap"))
+        assert len(files) == 1 and files[0].parent.name == "Rev4" and files[0].stem.endswith("_R4")
+        assert d.revision.value() == 5 and c.project.metadata["revisions"]["project"] == 5     # counted up
+        assert "Last saved" in d.last_saved.text() and files[0].name in d.last_saved.text()
+        d.rev_auto.setChecked(False)
+        d.revision.setValue(9)
+        d.save()
+        assert (out / "Rev9").is_dir() and d.revision.value() == 9
+        for v in ("toolpath_name", "safe_z", "cut_depth", "tool_diameter", "sheet_group", "revision"):
+            assert v in naming.NAMES
+        d.close()
+    finally:
+        gen.close()
+
+
+def test_renaming_a_toolpath_can_make_a_new_one_and_the_window_follows_the_selection(tmp_path, monkeypatch):
+    pytest.importorskip("PySide6.QtWidgets")
+    from gui_robot import rwin_gen
+    from test_cutedit import parts
+    gen = rwin_gen(tmp_path / "h", monkeypatch)
+    win, robot = next(gen)
+    try:
+        c, t, objs = parts(win)
+        n = len(c.project.toolpaths)
+        # the name is changed and "keep the original" is ticked: a new toolpath, the old one is as it was
+        robot.hook = lambda d: (d.name.setText("Second try"), d.keep_old.setChecked(True)) if hasattr(d, "keep_old") else None
+        win.edit_toolpath(t.id)
+        assert len(c.project.toolpaths) == n + 1 and c.project.toolpath(t.id).name == t.name
+        assert c.project.toolpaths[-1].name == "Second try" and c.project.toolpaths[-1].id != t.id
+        # the setting makes the name do it by itself
+        def hook(d):
+            if hasattr(d, "auto_new"):
+                d.auto_new.setChecked(True)
+                d.name.setText("Third")
+                assert d.keep_old.isChecked()
+        robot.hook = hook
+        win.edit_toolpath(t.id)
+        assert len(c.project.toolpaths) == n + 2 and c.settings.rename_makes_new is True
+        # without it the toolpath is just renamed
+        c.settings.rename_makes_new = False
+        robot.hook = lambda d: d.name.setText("Plain rename") if hasattr(d, "keep_old") else None
+        win.edit_toolpath(t.id)
+        assert len(c.project.toolpaths) == n + 2 and c.project.toolpath(t.id).name == "Plain rename"
+        # a new toolpath follows what is selected on the drawing while its window is open
+        from iyicam.gui.dialogs import ToolpathDialog
+        c.select([])
+        dlg = ToolpathDialog(c, "profile", None, win)
+        c.select([objs[0].id, objs[1].id])
+        assert dlg.vector_ids == [objs[0].id, objs[1].id] and "(2)" in dlg.rb_sel.text()
+        dlg.follow.setChecked(False)
+        c.select([objs[2].id])
+        assert len(dlg.vector_ids) == 2
+        dlg.reject()
+        c.select([objs[0].id])                                # (the window let go of the selection)
+        dlg.close()
+    finally:
+        gen.close()
+
+
+def test_a_project_that_is_opened_has_its_toolpaths_calculated_once(tmp_path, monkeypatch):
+    pytest.importorskip("PySide6.QtWidgets")
+    from gui_robot import rwin_gen
+    from test_cutedit import parts
+    gen = rwin_gen(tmp_path / "h", monkeypatch)
+    win, robot = next(gen)
+    try:
+        c, t, objs = parts(win, auto=False)
+        c.recalculate()
+        path = tmp_path / "p.icam"
+        c.save_project(path)
+        c.open_project(path)
+        assert c.results and not c.stale
+        c.settings.calculate_on_open = False
+        c.open_project(path)
+        assert not c.results and c.stale
+    finally:
+        gen.close()

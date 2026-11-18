@@ -61,6 +61,12 @@ class Robot:
             return QDialog.result(dlg)
 
         mp.setattr(QDialog, "exec", exec_)
+
+        def modeless(dlg, on_accept):                    # (a window beside the drawing is run like a dialog: nothing waits)
+            if exec_(dlg):
+                on_accept()
+        from iyicam.gui.dialogs import ToolpathDialog
+        mp.setattr(ToolpathDialog, "open_modeless", modeless)
         mp.setattr(QDialog, "exec_", exec_, raising=False)
 
         def box(kind, answer):

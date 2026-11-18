@@ -218,3 +218,13 @@ Sheets can be put in groups (the *Group* of the sheet's properties, or the right
 *Sheet group* field of a sheet on the Project tab). A group is nested onto together (*Place on: the sheets of the group*, `place_on:
 "group"` with `group` in the engine) and a toolpath can be made for a group only (*Only on the sheets of the group* in its dialog,
 `sheet_group` in the project): it is calculated on the sheets of the group, also on those put in it later.
+
+## Saving G-code: folder, revision, names
+
+In the Save G-code window (desktop) and on the Output tab (page): the **folder** is chosen first (and remembered), then **Save**
+writes: nothing is written before. The files are named by the prefixes (variables: `{toolpath_name}`, `{safe_z}`, `{cut_depth}`,
+`{tool_diameter}`, `{sheet_group}`, `{revision}` and the others above) and can go in a **folder inside** it with variables of
+its own (`Rev{revision}`). The **revision** counts up by itself after every save (it can be typed; it is of the project or of
+the sheet group, each group counting for itself) and is kept in the project file. The window shows what was saved last
+and stays open for the next revision. What was calculated is saved as it is: the desktop asks when the drawing changed since
+(save as calculated, or calculate again), the engine writes the toolpaths of the last calculation when the project is the same.

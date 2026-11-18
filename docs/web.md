@@ -532,3 +532,12 @@ blocks) in `schema` and `posts`.
 Every number box of the page and of the desktop program takes a sum: `12+3,5`, `(100-8)/2`, `2*7.5`. A comma is a decimal
 point like the dot. Numbers, `+ - * / ^` and brackets are understood (nothing is run); the sum is replaced by its value when
 the box is left or Enter is pressed, and a half-written sum keeps the value that was there.
+
+## Toolpath window beside the drawing, new toolpath from a rename
+
+On the desktop the toolpath window is not a pop-up: it stays beside the drawing (the right edge), the vectors can be selected on
+the drawing while it is open and the toolpath follows the selection (*Follow the selection*). On the page *Pick the vectors on
+the drawing* closes the window, shows the drawing with a bar (how many are selected, *Use them*) and brings the window back with
+them. When a toolpath that exists is edited, *Keep the original: save this as a new toolpath* saves a new one; *Changing the
+name does this by itself* makes a changed name do it. A project that is opened has its toolpaths calculated once (Preferences:
+*Calculate the toolpaths of a project when it is opened*), so they are on the sheets.

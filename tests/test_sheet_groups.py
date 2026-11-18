@@ -127,3 +127,36 @@ def test_a_wrong_sum_is_refused_and_an_unknown_name_is_warned_about():
     assert warn and "foo" in warn[0]
     _, warn = editing.check_blocks({"footer": "G0 Y{sheet_height+50}"})
     assert not warn
+
+
+def test_write_gcode_after_calculate_does_not_calculate_again(monkeypatch):
+    from iyicam.service import ops
+    p, s, objs = make_project([[shapes.rectangle(10, 10, 100, 60)], [shapes.circle((200, 60), 20)]], size=(500, 300))
+    add_tp(p, "profile", end_mill(6), {"through": True}, objs[:1])
+    add_tp(p, "profile", end_mill(3), {"through": True}, objs[1:])
+    h = ServiceHost()
+    c = h.handle("compute", {"project": p.to_dict(), "preview": False})
+    assert "error" not in c
+    q = Project()
+    q.load_state(p.to_dict())
+    for vid, vd in c["patch"]["vectors"].items():
+        from iyicam.core.document import vector_from_dict
+        for sh in q.sheets:
+            for i, v in enumerate(sh.vectors):
+                if v.id == vid:
+                    sh.vectors[i] = vector_from_dict(vd)
+    for tid, seq in c["patch"]["sequences"].items():
+        q.toolpath(tid).sequence = seq["sequence"] if "sequence" in seq else seq
+    calls = []
+    real = ops.calculate
+    monkeypatch.setattr(ops, "calculate", lambda *a, **k: (calls.append(1), real(*a, **k))[1])
+    g = h.handle("gcode", {"project": q.to_dict(), "post": "mach3"})
+    assert g["ok"] and g["reused"] is True and not calls
+    q.toolpaths[1].enabled = False                      # (switching one off is not a change of the toolpaths)
+    g = h.handle("gcode", {"project": q.to_dict(), "post": "mach3"})
+    assert g["reused"] is True and not calls
+    q.toolpaths[0].params["overcut"] = 0.9              # (a change is)
+    g = h.handle("gcode", {"project": q.to_dict(), "post": "mach3"})
+    assert g["reused"] is False and calls
+    again = h.handle("gcode", {"project": q.to_dict(), "post": "mach3", "recalculate": True})
+    assert again["reused"] is False

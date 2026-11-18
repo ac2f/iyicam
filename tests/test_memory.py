@@ -387,9 +387,10 @@ def test_gcode_export_options_and_folder_are_remembered(sess, tmp_path):
     dlg.tile.setChecked(True)
     dlg.tile_axis.setCurrentIndex(dlg.tile_axis.findData("x"))
     dlg.tile_len.setValue(c.units.to_display(75.0))
-    sess.robot.files.append(str(out / "job.nc"))
+    dlg.folder.setText(str(out))
     dlg.save()
-    assert (out / "job_1_tile1.nc").exists() or list(out.glob("*.nc"))
+    assert list(out.glob("*.tap")) or list(out.glob("*.nc"))
+    assert "Last saved" in dlg.last_saved.text()
     sess.restart()
     c = sess.ctrl
     c.add_toolpath(ToolpathDef("p", "profile", end_mill(6), {"through": True},
@@ -397,10 +398,8 @@ def test_gcode_export_options_and_folder_are_remembered(sess, tmp_path):
     dlg = ExportDialog(c, sess.win)
     assert dlg.sheets.currentData() == "all" and dlg.tile.isChecked() and dlg.tile_axis.currentData() == "x"
     assert dlg.tile_len.value() == pytest.approx(75.0)
-    sess.robot.files.append(str(out / "again.nc"))
-    sess.robot.file_calls.clear()
-    dlg.save()
-    assert sess.robot.file_calls[0][1].startswith(str(out))
+    assert dlg.folder.text() == str(out)                       # the folder chosen last time, and what was saved
+    assert "Last saved" in dlg.last_saved.text()
 
 
 def test_command_trace_text_and_feeds_dialogs_remember_their_values(sess):

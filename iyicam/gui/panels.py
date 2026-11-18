@@ -509,9 +509,24 @@ class ToolpathsPanel(DocPanel):
             sub.addAction("Switch it off", lambda g=g: self._switch_group(g, False))
             sub.addAction("Switch it on", lambda g=g: self._switch_group(g, True))
             sub.addAction("Rename...", lambda g=g: self.rename_group(g))
+            sub.addAction("Nest the vectors of this group...", lambda g=g: self.nest_group(g))
             sub.addAction("Save G-code of this group...", lambda g=g: self.window.export_gcode(self.ctrl.group_ids(g), g))
         menu.addSeparator()
         menu.addAction("Take the selected out of their group", lambda: self.ctrl.set_group(self.selected_ids(), ""))
+
+    def nest_group(self, g: str) -> None:
+        """Nest the vectors that the toolpaths of a group machine: they are selected, then the nesting window opens."""
+        ctrl = self.ctrl
+        ids: list[str] = []
+        for tid in ctrl.group_ids(g):
+            t = ctrl.project.toolpath(tid)
+            for sheet in ctrl.project.sheets:
+                ids += [o.id for o in ctrl.project.vectors_for(t, sheet)]
+        ids = list(dict.fromkeys(ids))
+        if not ids:
+            return
+        ctrl.select(ids)
+        self.window.nest()
 
     def new_group(self) -> None:
         ids = self.selected_ids()

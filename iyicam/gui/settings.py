@@ -31,6 +31,8 @@ class Settings:
     dirs: dict = field(default_factory=dict)    # the folder last used for every kind of file
     window_geometry: str = ""
     auto_recalculate: bool = False    # recalculate toolpaths after every edit (off: only when asked, F5)
+    calculate_on_open: bool = True    # a project that is opened has its toolpaths calculated once (so they are on the sheets)
+    rename_makes_new: bool = False    # changing the name of a toolpath in its window saves a new toolpath (the old one stays)
     calc_mode: int = 2                # 2: the "when asked" default (an older file that says automatic is not kept)
     recent_files: list[str] = field(default_factory=list)
     disabled_plugins: list[str] = field(default_factory=list)

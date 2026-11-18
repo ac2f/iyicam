@@ -9,6 +9,7 @@ G-code would differ from the one the desktop program writes.
 from __future__ import annotations
 
 import base64
+import hashlib
 import inspect
 import json
 import math
@@ -16,12 +17,13 @@ import os
 import tempfile
 import threading
 import time
+from collections import OrderedDict
 from pathlib import Path
 from typing import Callable
 
 from .. import __version__
 from ..builtins import ensure_registered, load_user_posts
-from ..cam.job import ComputeCancelled, compute_all, sheet_toolpaths
+from ..cam.job import ComputeCancelled, compute_all, sheet_toolpaths, sheets_for
 from ..cam.moves import PathStats
 from ..cam.simulate import auto_resolution, shade, simulate
 from ..core import paths, vectorops
@@ -387,6 +389,39 @@ def calculate(project: Project, cancel: Callable[[], bool] | None = None, progre
     return res, changed
 
 
+# What was calculated last (a few projects): "Write G-code" after "Calculate" writes those toolpaths, it does not calculate them
+# again. The key is the project as it is after the calculation (its start points moved, its orders kept), without what does not
+# change a toolpath (switched on or off, names, groups), so a page that applied the answer and asks for the G-code gets a hit.
+_CALCULATED: "OrderedDict[str, dict]" = OrderedDict()
+_CALC_LOCK = threading.Lock()
+
+
+def _calc_key(project: Project) -> str:
+    d = project.to_dict()
+    for t in d.get("toolpaths", []):
+        for k in ("enabled", "name", "group"):
+            t.pop(k, None)
+    d.pop("name", None)
+    d.pop("metadata", None)
+    return hashlib.sha1(json.dumps(d, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def _calculated_get(project: Project):
+    with _CALC_LOCK:
+        key = _calc_key(project)
+        res = _CALCULATED.get(key)
+        if res is not None:
+            _CALCULATED.move_to_end(key)
+        return res
+
+
+def _calculated_put(project: Project, res: dict) -> None:
+    with _CALC_LOCK:
+        _CALCULATED[_calc_key(project)] = res
+        while len(_CALCULATED) > 3:
+            _CALCULATED.popitem(last=False)
+
+
 def _only_sheets(project: Project, ids) -> None:
     """A throw-away project of just these sheets (a toolpath on another sheet is then not even calculated)."""
     if ids is None or ids == "all":
@@ -435,6 +470,8 @@ def op_compute(payload: dict, ctl: JobControl | None = None) -> dict:
         res, changed = calculate(project, cancel, (lambda k, n, name: prog(k, n, name)) if prog else None, only, force)
     except ComputeCancelled as exc:
         raise JobCancelled() from exc
+    if only is None and payload.get("sheets") in (None, "all"):
+        _calculated_put(project, res)                     # (what "Write G-code" writes if the project stays as it is)
     want_preview = payload.get("preview", True)
     items = []
     for (tid, sid), r in res.items():
@@ -483,13 +520,19 @@ def op_gcode(payload: dict, ctl: JobControl | None = None) -> dict:
     if post is None:
         raise ServiceError("unknown_post", "there is no such post-processor", post=str(payload.get("post")),
                            known=sorted(REGISTRY.posts))
+    cached = _calculated_get(project) if payload.get("recalculate") is not True else None
     _only_sheets(project, payload.get("sheets"))
     _only_toolpaths(project, payload.get("toolpaths"), payload.get("group"))
     cancel, prog = _ctl_hooks(ctl, "Calculating")
-    try:
-        res, _ = calculate(project, cancel, (lambda k, n, name: prog(k, n, name)) if prog else None)
-    except ComputeCancelled as exc:
-        raise JobCancelled() from exc
+    reused = False
+    if cached is not None and all((t.id, s.id) in cached for t in project.toolpaths if t.enabled
+                                  for s in sheets_for(project, t)):
+        res, reused = cached, True                        # the toolpaths as they were calculated: not calculated again
+    else:
+        try:
+            res, _ = calculate(project, cancel, (lambda k, n, name: prog(k, n, name)) if prog else None)
+        except ComputeCancelled as exc:
+            raise JobCancelled() from exc
     errors = [f"{project.toolpath(t).name}: {r.error}" for (t, _s), r in res.items() if r.error]
     stem = _stem(project, payload.get("file_name"))
     program = int(_num(payload, "program_number", 1000, 0, 999999))
@@ -510,10 +553,15 @@ def op_gcode(payload: dict, ctl: JobControl | None = None) -> dict:
         if parts is not None:
             from ..post import naming
             t0 = tps[0]
+            d0 = project.toolpath(t0.def_id)
+            by_group = payload.get("revision_by_group") if isinstance(payload.get("revision_by_group"), dict) else {}
+            rev = by_group.get(sheet.group, payload.get("revision")) if sheet.group else payload.get("revision")
             vals = naming.values(project.name, sheet.name, i, len(project.sheets), post.name,
                                  str(payload.get("group") or (next(iter(groups)) if len(groups) == 1 else "")),
                                  len(tps), t0.tool.number, t0.tool.name, project.sheet_thickness(sheet), sheet.width,
-                                 sheet.height)
+                                 sheet.height, tool_diameter=t0.tool.diameter, toolpath_name=d0.name if d0 else "",
+                                 safe_z=(d0.safe_z if d0 and d0.safe_z is not None else project.material.safe_z),
+                                 cut_depth=(d0.params.get("cut_depth") if d0 else None), sheet_group=sheet.group, revision=rev)
             name = naming.render(parts, vals, sep)
             # (a job with several sheets needs a number in the name or the files would overwrite each other)
             base = f"{name}_{i}" if many and not naming.uses(parts, "sheet_number", "sheet_name") else name
@@ -524,7 +572,7 @@ def op_gcode(payload: dict, ctl: JobControl | None = None) -> dict:
         for suffix, text in post_toolpaths(project, sheet, tps, post, base, program):
             files.append({"name": f"{base}{suffix}.{post.extension}", "mime": "text/plain", "text": text,
                           "sheet": sheet.id})
-    return {"files": files, "errors": errors, "warnings": [w[:2000] for w in warnings], "ok": bool(files)}
+    return {"files": files, "errors": errors, "warnings": [w[:2000] for w in warnings], "ok": bool(files), "reused": reused}
 
 
 # ---------------------------------------------------------------------------------------------

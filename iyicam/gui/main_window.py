@@ -1249,10 +1249,12 @@ class MainWindow(QMainWindow):
         if not isinstance(sheet_group, str):             # (a menu passes its own "checked")
             sheet_group = ""
         dlg = ToolpathDialog(self.ctrl, op_id, None, self, sheet_group=sheet_group)
-        if dlg.exec():
+
+        def made() -> None:
             t = dlg.toolpath()  # once: every call makes a new definition with a new id
             self.ctrl.add_toolpath(t)
             self._report(t.id)
+        dlg.open_modeless(made)
 
     def edit_toolpath(self, tid: str) -> None:
         t = self.ctrl.project.toolpath(tid)
@@ -1262,9 +1264,19 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Toolpath", f"The toolpath type '{t.op}' is not available (missing plugin?).")
             return
         dlg = ToolpathDialog(self.ctrl, t.op, t, self)
-        if dlg.exec():
-            self.ctrl.replace_toolpath(dlg.toolpath())
-            self._report(tid)
+
+        def edited() -> None:
+            new = dlg.toolpath()
+            if dlg.keep_old.isChecked():                  # the name was changed and the original stays: a new toolpath
+                from ..core.document import new_id
+                new.id = new_id()
+                new.sequence = {k: v for k, v in new.sequence.items() if k != "order"}
+                self.ctrl.add_toolpath(new)
+                self._report(new.id)
+            else:
+                self.ctrl.replace_toolpath(new)
+                self._report(tid)
+        dlg.open_modeless(edited)
 
     def _report(self, tid: str) -> None:
         t = self.ctrl.project.toolpath(tid)
@@ -1359,11 +1371,23 @@ class MainWindow(QMainWindow):
         them the ones that are switched on."""
         if not isinstance(ids, (list, tuple, set)):      # (a menu or a button passes its own "checked")
             ids = None
-        if self.ctrl.stale:
-            self.ctrl.recalculate()
         if not self.ctrl.project.toolpaths:
             QMessageBox.information(self, "Save G-code", "Create a toolpath first (Toolpaths ▸ New Toolpath).")
             return
+        if self.ctrl.stale:
+            # what was calculated is saved as it is; it is calculated again only when the person says so (or when nothing was
+            # calculated yet)
+            if not self.ctrl.results:
+                self.ctrl.recalculate()
+            else:
+                r = QMessageBox.question(
+                    self, "Save G-code", "The drawing or the settings changed after the toolpaths were calculated.\n\n"
+                    "Yes: calculate them again first.\nNo: save the toolpaths as they were calculated.",
+                    QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel, QMessageBox.No)
+                if r == QMessageBox.Cancel:
+                    return
+                if r == QMessageBox.Yes:
+                    self.ctrl.recalculate()
         ExportDialog(self.ctrl, self, only=set(ids) if ids else None, group=group).exec()
 
     def simulate(self) -> None:

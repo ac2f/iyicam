@@ -130,7 +130,7 @@ class Controller(CutControl, QObject):
         self.changed.emit()
         self.selection_changed.emit()
         self.toolpaths_changed.emit()
-        if project.toolpaths and self.settings.auto_recalculate:
+        if project.toolpaths and (self.settings.auto_recalculate or self.settings.calculate_on_open):
             self.recalculate()
 
     def new_project(self, width: float = 600.0, height: float = 400.0, thickness: float = 18.0) -> None:

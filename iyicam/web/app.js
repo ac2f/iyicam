@@ -34,7 +34,11 @@ const TXT = {
     "tool.sizeLocked": "Takımın çapı burada değiştirilemez: başka bir takım seç.", "tool.diameter": "Çap (mm)", "tool.feed_rate": "İlerleme (mm/dk)", "tool.plunge_rate": "Dalış (mm/dk)",
     "tool.spindle_speed": "Devir (dev/dk)", "tool.stepdown": "Paso derinliği (mm)", "tool.stepover": "Yanal adım (mm)",
     "tool.number": "Takım no",
+    "tp.keepnew": "Aslını koru: bunu yeni takım yolu olarak kaydet", "tp.autonew": "İsmi değiştirmek bunu kendiliğinden yapsın", "tp.pick": "Vektörleri çizimde seç",
+    "tp.picked": "{0} vektör seçili", "tp.use": "Bunları kullan",
     "more.show": "▸ Daha fazla seçenek ({0})", "more.fewer": "▾ Daha az seçenek",
+    "rev.label": "Revizyon", "rev.project": "projenin revizyonu", "rev.group": "tabaka grubunun revizyonu (her grup kendi sayar)", "rev.auto": "kayıttan sonra artır",
+    "out.reused": "Hesaplanmış takım yolları olduğu gibi kaydedildi (yeniden hesaplanmadı).",
     "name.title": "Dosya adı", "name.hint": "Her ön ek ayrı yazılır, aralarına ayraç konur. {değişken} yazılan yere değeri gelir; düğmeler ekler.",
     "name.add": "＋ Ön ek ekle", "name.sep": "Ayraç", "name.files": "Dosyalar: {0}", "name.remove": "Bu ön eki kaldır",
     "sg.label": "Tabaka grubu", "sg.none": "(grupsuz)", "sg.only": "Yalnız şu tabaka grubunda hesapla", "sg.all": "(her tabaka)",
@@ -98,7 +102,11 @@ const TXT = {
     "tool.sizeLocked": "The size of a tool cannot be changed here: choose another tool.", "tool.diameter": "Diameter (mm)", "tool.feed_rate": "Feed (mm/min)", "tool.plunge_rate": "Plunge (mm/min)",
     "tool.spindle_speed": "Spindle (rpm)", "tool.stepdown": "Step down (mm)", "tool.stepover": "Step over (mm)",
     "tool.number": "Tool number",
+    "tp.keepnew": "Keep the original: save this as a new toolpath", "tp.autonew": "Changing the name does this by itself", "tp.pick": "Pick the vectors on the drawing",
+    "tp.picked": "{0} vector(s) selected", "tp.use": "Use them",
     "more.show": "▸ More options ({0})", "more.fewer": "▾ Fewer options",
+    "rev.label": "Revision", "rev.project": "of the project", "rev.group": "of the sheet group (each group counts for itself)", "rev.auto": "count up after saving",
+    "out.reused": "The toolpaths were saved as they were calculated (not calculated again).",
     "name.title": "File name", "name.hint": "Every prefix is written on its own, the separator goes between them. Where {variable} is written its value is put in; the buttons add them.",
     "name.add": "＋ Add a prefix", "name.sep": "Separator", "name.files": "Files: {0}", "name.remove": "Remove this prefix",
     "sg.label": "Sheet group", "sg.none": "(no group)", "sg.only": "Calculate only on the sheets of this group", "sg.all": "(every sheet)",
@@ -773,20 +781,26 @@ function sequenceParams() {
 }
 const TOOL_FIELDS = ["diameter", "feed_rate", "plunge_rate", "spindle_speed", "stepdown", "stepover", "number"];
 
-function editToolpath(existing) {
+function editToolpath(existing, draft) {
+  // ``draft``: the window as it was left to pick vectors on the drawing (pickOnDrawing below)
   const p = S.project, sc = S.schema;
   const ops = sc.operations;
-  const tp = existing ? JSON.parse(JSON.stringify(existing)) : {
+  const tp = draft ? draft.tp : existing ? JSON.parse(JSON.stringify(existing)) : {
     id: newId(), name: "", op: ops[0].id, tool: null, params: {}, enabled: true, sheets: null,
     selection: { mode: "layers", vectors: [], layers: p.layers.map(l => l.id) }, sequence: {}, safe_z: null, clearance: null };
   const chosen = new Set(tp.selection.mode === "layers" ? tp.selection.layers : p.layers.map(l => l.id));
   // what it machines: whole layers, or the vectors that are selected on the drawing (edit.js keeps the selection)
   const ed = window.IyiPage.editor, picked = ed ? [...ed.state.sel] : [];
-  let mode = tp.selection.mode === "vectors" ? "vectors" : "layers";
-  const vecIds = tp.selection.mode === "vectors" ? tp.selection.vectors.slice() : picked;
+  let mode = draft && draft.mode ? draft.mode : tp.selection.mode === "vectors" ? "vectors" : "layers";
+  const vecIds = draft && draft.vecIds ? draft.vecIds.slice() : tp.selection.mode === "vectors" ? tp.selection.vectors.slice() : picked;
   const modeSel = h("select", {}, h("option", { value: "layers" }, t("paths.bylayers")), h("option", { value: "vectors" }, t("paths.byvectors", vecIds.length)));
   modeSel.value = mode;
   const opBox = h("div"), toolBox = h("div"), name = h("input", { type: "text", value: tp.name });
+  // a name that is changed can make a new toolpath (the original stays): asked for here, and remembered
+  const keepNew = h("input", { type: "checkbox" }), autoNew = h("input", { type: "checkbox", checked: store.get("iyicam.renameNew") === "1" });
+  const firstName = tp.name;
+  autoNew.onchange = () => { store.set("iyicam.renameNew", autoNew.checked ? "1" : "0"); };
+  name.addEventListener("input", () => { if (existing && autoNew.checked && name.value !== firstName) keepNew.checked = true; });
   const sgroups = [...new Set(p.sheets.map(x => x.group).filter(Boolean))];
   const sgSel = h("select", {}, h("option", { value: "" }, t("sg.all")), sgroups.map(g => h("option", { value: g }, "▣ " + g)));
   if (tp.sheet_group && !sgroups.includes(tp.sheet_group)) sgSel.append(h("option", { value: tp.sheet_group }, "▣ " + tp.sheet_group));
@@ -849,8 +863,8 @@ function editToolpath(existing) {
     h("label", { class: "f" }, h("span", {}, t("paths.op")), opSel),
     h("label", { class: "f" }, h("span", {}, t("paths.name")), name),
     h("label", { class: "f" }, h("span", {}, t("grp.label")), groupIn, groupList), h("div", { class: "muted small" }, t("grp.hint")),
-    sheetGroupBox,
-    h("div", { class: "group-h" }, t("paths.layers")), modeSel, layerBox,
+    sheetGroupBox, existing ? h("div", {}, h("label", { class: "chk" }, keepNew, t("tp.keepnew")), h("label", { class: "chk" }, autoNew, t("tp.autonew"))) : null,
+    h("div", { class: "group-h" }, t("paths.layers")), modeSel, layerBox, h("div", { class: "row" }, h("button", { class: "small", onclick: pickOnDrawing }, "👆 " + t("tp.pick"))),
     toolBox, opBox, seqDet);
   buildOp();
   let close;
@@ -862,10 +876,22 @@ function editToolpath(existing) {
     tp.op = opSel.value;
     tp.selection = mode === "vectors" ? { mode: "vectors", vectors: vecIds, layers: [] }
       : { mode: "layers", vectors: [], layers: p.layers.filter(l => chosen.has(l.id)).map(l => l.id) };
-    const i = p.toolpaths.findIndex(x => x.id === tp.id);
-    if (i >= 0) p.toolpaths[i] = tp; else p.toolpaths.push(tp);
+    if (existing && keepNew.checked) {                      // the original stays: this is a new toolpath
+      tp.id = newId(); if (tp.sequence) delete tp.sequence.order;
+      p.toolpaths.splice(p.toolpaths.findIndex(x => x.id === existing.id) + 1, 0, tp);
+    } else {
+      const i = p.toolpaths.findIndex(x => x.id === tp.id);
+      if (i >= 0) p.toolpaths[i] = tp; else p.toolpaths.push(tp);
+    }
     close(); changed();
   };
+  // pick the vectors on the drawing: the window closes, the drawing is shown with a bar that says how many are selected, and the
+  // window comes back with them (what was typed stays)
+  function pickOnDrawing() {
+    tp.name = name.value; tp.group = groupIn.value.trim();
+    S.pickTp = { tp, existing, mode: "vectors", vecIds: vecIds.slice() };
+    close(); S.tab = "draw"; render();
+  }
   const del = () => { p.toolpaths = p.toolpaths.filter(x => x.id !== tp.id); close(); changed(); };
   body.append(h("div", { class: "row", style: "margin-top:18px" },
     h("button", { class: "primary grow", onclick: save }, t("paths.save")),
@@ -1249,8 +1275,43 @@ function viewPaths() {
 
 async function guarded(fn) { if (S.busy) return; try { await fn(); } catch (e) { fail(e); } }
 
+/** the revision number of the files: kept in the project (so it is in the .icam file), counts up after a save, can be typed; of the
+ *  project or of the sheet group */
+function revisions() {
+  const m = S.project.metadata = S.project.metadata || {};
+  m.revisions = m.revisions || { project: 1, groups: {}, scope: "project", auto: true };
+  m.revisions.groups = m.revisions.groups || {};
+  return m.revisions;
+}
+function revisionNow() {
+  const r = revisions(), sh = activeSheet();
+  return r.scope === "group" && sh && sh.group ? (r.groups[sh.group] ?? 1) : (r.project ?? 1);
+}
+function revisionPayload() {
+  const r = revisions();
+  return { revision: r.project ?? 1, revision_by_group: r.scope === "group" ? { ...r.groups } : {} };
+}
+function revisionAfterSave() {
+  const r = revisions();
+  if (r.auto === false) return;
+  if (r.scope === "group") { for (const s of S.project.sheets) if (s.group) r.groups[s.group] = (r.groups[s.group] ?? r.project ?? 1) + 1; }
+  r.project = (r.project ?? 1) + 1;
+  touch();
+}
+
 /** the name of the G-code files: prefixes with variables (the engine puts the values in, so a file is called the same wherever
  *  it is saved); what was written is kept in this browser */
+function revisionRow() {
+  const r = revisions();
+  const rev = numberInput(r.project ?? 1, v => { r.project = Math.max(0, Math.round(v)); touch(); }, { kind: "int", min: 0 });
+  const scope = h("select", {}, h("option", { value: "project" }, t("rev.project")), h("option", { value: "group" }, t("rev.group")));
+  scope.value = r.scope || "project"; scope.onchange = () => { r.scope = scope.value; touch(); };
+  const auto = h("input", { type: "checkbox", checked: r.auto !== false }); auto.onchange = () => { r.auto = auto.checked; touch(); };
+  return h("div", { class: "row", style: "margin-top:10px;align-items:flex-end" },
+    h("label", { class: "f", style: "width:110px" }, h("span", {}, t("rev.label")), rev), h("label", { class: "f grow" }, h("span", {}, "\u00a0"), scope),
+    h("label", { class: "chk" }, auto, t("rev.auto")));
+}
+
 function nameCard(p, sel, stem) {
   const nm = S.schema.naming || { variables: [], default_parts: ["{project_name}"], default_sep: "_" };
   if (!S.fileName) {
@@ -1266,7 +1327,10 @@ function nameCard(p, sel, stem) {
       post_name: (S.schema.posts.find(x => x.id === S.post) || {}).name || "", group: "", toolpath_count: String(sel.size),
       tool_number: p.toolpaths[0] && p.toolpaths[0].tool ? String(p.toolpaths[0].tool.number) : "", tool_name: p.toolpaths[0] && p.toolpaths[0].tool ? p.toolpaths[0].tool.name : "",
       material_thickness: String((p.material || {}).thickness ?? ""), sheet_width: String(sh ? sh.width : ""), sheet_height: String(sh ? sh.height : ""),
-      date: `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`, time: pad(now.getHours()) + pad(now.getMinutes()) };
+      date: `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`, time: pad(now.getHours()) + pad(now.getMinutes()),
+      tool_diameter: p.toolpaths[0] && p.toolpaths[0].tool ? String(p.toolpaths[0].tool.diameter) : "", toolpath_name: p.toolpaths[0] ? p.toolpaths[0].name : "",
+      safe_z: String((p.material || {}).safe_z ?? ""), cut_depth: p.toolpaths[0] && p.toolpaths[0].params ? String(p.toolpaths[0].params.cut_depth ?? "") : "",
+      sheet_group: sh && sh.group ? sh.group : "", revision: String(revisionNow()) };
     const bad = fn.parts.flatMap(x => [...x.matchAll(/\{(\w+)\}/g)].map(m => m[1])).filter(v => !known.has(v));
     if (bad.length) return { bad };
     const name = fn.parts.map(x => x.replace(/\{(\w+)\}/g, (_, v) => vals[v] ?? "").replace(/[^\w\-. ()+,=#@]+/g, "_").replace(/^[ ._]+|[ ._]+$/g, "")).filter(Boolean).join(fn.sep || "_");
@@ -1303,7 +1367,7 @@ function nameCard(p, sel, stem) {
   return h("div", { class: "card" }, h("h2", {}, t("name.title")), h("div", { class: "muted small" }, t("name.hint")), rows,
     h("div", { class: "row", style: "margin-top:6px" }, h("button", { class: "small", onclick: () => { const i = addRow(""); i.focus(); } }, t("name.add")),
       h("label", { class: "chk" }, t("name.sep") + " ", sep)),
-    h("div", { class: "chips", style: "margin-top:8px" }, nm.variables.map(chip)), prev);
+    h("div", { class: "chips", style: "margin-top:8px" }, nm.variables.map(chip)), prev, revisionRow());
 }
 
 function viewOutput() {
@@ -1346,8 +1410,10 @@ function viewOutput() {
       h("button", { class: "primary grow", onclick: () => guarded(async () => {
         if (!sel.size) return toast(t("grp.pickOne"), "warn");
         const everyOn = p.toolpaths.every(x => sel.has(x.id) === x.enabled);
-        const r = await runJob("gcode", { project: p, post: S.post, file_name: chosenFile(), name_parts: S.fileName.parts, name_sep: S.fileName.sep, ...(everyOn ? {} : { toolpaths: [...sel] }) });
-        S.gcode = r; render();
+        const r = await runJob("gcode", { project: p, post: S.post, file_name: chosenFile(), name_parts: S.fileName.parts, name_sep: S.fileName.sep, ...revisionPayload(), ...(everyOn ? {} : { toolpaths: [...sel] }) });
+        S.gcode = r;
+        if (r.ok) { if (r.reused) toast(t("out.reused"), "ok"); revisionAfterSave(); }
+        render();
         if (!r.ok) toast(t("out.nogcode"), "bad");
       }) }, "⚙ " + t("out.gcode"))),
     h("div", { class: "row", style: "margin-top:8px" },
@@ -1418,6 +1484,23 @@ const TABS = [["project", "📁", "tab.project"], ["draw", "🗺", "tab.draw"], 
 const EXTRA_TABS = [];
 const allTabs = () => [...TABS.slice(0, 3), ...EXTRA_TABS.map(x => [x.id, x.icon, x.key]), TABS[3]];
 
+/** the bar of "pick the vectors on the drawing" (a toolpath window that was left to select vectors) */
+function pickBar() {
+  document.getElementById("pickbar")?.remove();
+  if (!S.pickTp) return;
+  const ed = window.IyiPage.editor, count = () => (ed ? ed.state.sel.size : 0);
+  const label = h("span", { class: "grow" }), tick = () => { label.textContent = t("tp.picked", count()); };
+  tick();
+  const timer = setInterval(() => { if (!document.getElementById("pickbar")) clearInterval(timer); else tick(); }, 300);
+  const use = h("button", { class: "primary", onclick: () => {
+    const d = S.pickTp; S.pickTp = null;
+    if (ed && ed.state.sel.size) d.vecIds = [...ed.state.sel];
+    d.mode = "vectors"; S.tab = "paths"; render(); editToolpath(d.existing, d);
+  } }, t("tp.use"));
+  const no = h("button", { onclick: () => { const d = S.pickTp; S.pickTp = null; S.tab = "paths"; render(); editToolpath(d.existing, d); } }, t("ed.cancel"));
+  document.body.append(h("div", { id: "pickbar", class: "pickbar" }, label, use, no));
+}
+
 function render() {
   const v = $("#view");
   if (!v) return;
@@ -1428,6 +1511,7 @@ function render() {
   v.replaceChildren(view());
   document.querySelectorAll("nav.tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === S.tab));
   v.scrollTop = 0; window.scrollTo(0, 0);
+  pickBar();
 }
 
 function mountApp() {
