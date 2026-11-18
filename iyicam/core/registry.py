@@ -27,6 +27,18 @@ class Exporter:
 
 
 @dataclass
+class NewProjectTemplate:
+    """A way to start a project (the New Project window and the page list it): ``build(project, values)`` changes the new,
+    blank project (its sheets, layers, material, toolpaths ...); ``params`` (a list of Param) are asked for first."""
+    id: str
+    label: str
+    build: Callable
+    params: list = field(default_factory=list)
+    source: str = "builtin"
+    description: str = ""
+
+
+@dataclass
 class Registry:
     operations: dict[str, type] = field(default_factory=dict)
     commands: dict[str, Any] = field(default_factory=dict)
@@ -37,6 +49,8 @@ class Registry:
     hooks: dict[str, list[tuple[str, Callable]]] = field(default_factory=dict)
     gui_extensions: list[tuple[str, Callable]] = field(default_factory=list)
     sources: dict[tuple[str, str], str] = field(default_factory=dict)
+    new_project_templates: dict[str, NewProjectTemplate] = field(default_factory=dict)
+    sheet_presets: dict[str, tuple] = field(default_factory=dict)   # name -> (name, width, height): sizes offered besides the built-in ones
 
     def remove_source(self, source: str) -> None:
         """Unregister everything a plugin added."""

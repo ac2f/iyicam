@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -33,6 +34,14 @@ class Layer:
     visible: bool = True
     locked: bool = False
     id: str = field(default_factory=new_id)
+    sheet_ids: list[str] | None = None   # the layer exists on these sheets only (None: on every sheet) ...
+    sheet_group: str = ""                # ... and on the sheets of this group (either one makes it appear)
+
+    def applies(self, sheet: "Sheet") -> bool:
+        """Whether the layer is there on ``sheet``: a layer of one sheet or of one group of sheets is not shown on the others."""
+        if self.sheet_ids is None and not self.sheet_group:
+            return True
+        return (self.sheet_ids is not None and sheet.id in self.sheet_ids) or (bool(self.sheet_group) and sheet.group == self.sheet_group)
 
 
 @dataclass
@@ -78,6 +87,15 @@ class MaterialSetup:
     home: tuple[float, float, float] = (0.0, 0.0, 20.0)  # X, Y in sheet coordinates, Z above surface
     xy_origin: str = "bottom_left"  # where X0 Y0 lies on the sheet
     rapid_rate: float = 8000.0     # mm/min, used for time estimates
+    z_rapid_rate: float = 3000.0   # mm/min: Z alone in a rapid (0: as the others)
+    accel: float = 200.0           # mm/s2: how fast the machine speeds up and slows down (the estimate of the time follows it)
+    corner_dev: float = 0.05       # mm: how far the machine may cut off a corner (the speed through corners follows it)
+    time_scale: float = 1.0        # what the machine really did over what the estimate says (set by the calibration)
+
+    def machine(self):
+        """What the time estimate needs to know of the machine (cam/timing.py)."""
+        from ..cam.timing import Machine
+        return Machine(self.rapid_rate, self.z_rapid_rate, self.accel, self.corner_dev, self.time_scale)
     rotary: bool = False           # sheets are wrapped around a rotary axis: Y becomes the angle
     rotary_diameter: float = 100.0  # cylinder diameter at the material surface
 
@@ -161,8 +179,13 @@ class Project:
         self.stock: list[StockItem] = []  # plates (leftovers, sheet sizes) that jobs are nested onto
         self.metadata: dict = {}
         self.path: Path | None = None
+        self.calc_cache: dict | None = None   # toolpaths kept in the file this was opened from (cam/store.py)
 
     # -- layers -------------------------------------------------------------------
+    def layers_for(self, sheet: "Sheet") -> list[Layer]:
+        """The layers that are there on this sheet."""
+        return [l for l in self.layers if l.applies(sheet)]
+
     def layer(self, lid: str) -> Layer | None:
         for l in self.layers:
             if l.id == lid:
@@ -269,16 +292,22 @@ class Project:
         self.__dict__.update(other.__dict__)
         self.path = path
 
-    def save(self, path: str | Path) -> None:
+    def save(self, path: str | Path, calc: dict | None = None) -> None:
+        """Write the project; ``calc``: the calculated toolpaths to keep in the file (cam/store.py)."""
         path = Path(path)
-        path.write_text(json.dumps(self.to_dict(), separators=(",", ":")), encoding="utf-8")
+        d = self.to_dict()
+        if calc:
+            d["calc"] = calc
+        path.write_text(json.dumps(d, separators=(",", ":")), encoding="utf-8")
         self.path = path
 
     @classmethod
     def load(cls, path: str | Path) -> "Project":
         path = Path(path)
-        p = project_from_dict(json.loads(path.read_text(encoding="utf-8")))
+        d = json.loads(path.read_text(encoding="utf-8"))
+        p = project_from_dict(d)
         p.path = path
+        p.calc_cache = d.get("calc") if isinstance(d.get("calc"), dict) else None     # the toolpaths kept in the file
         return p
 
 
@@ -378,6 +407,15 @@ def toolpath_from_dict(d: dict) -> ToolpathDef:
                        d["sheet_group"].strip() if isinstance(d.get("sheet_group"), str) else "")
 
 
+def _pos(v, default: float, lo: float = 0.0) -> float:
+    """A number from a project file that must be at least ``lo``; anything else is the default."""
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return default
+    return v if math.isfinite(v) and v >= lo else default
+
+
 def _height(v):
     """A height from a project file: a number, or None (the project's) for anything else."""
     return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) and v == v else None
@@ -389,9 +427,11 @@ def project_to_dict(p: Project) -> dict:
         "format": FORMAT, "version": FORMAT_VERSION, "name": p.name, "units": p.units,
         "material": {"thickness": m.thickness, "z_zero": m.z_zero, "safe_z": m.safe_z,
                      "clearance": m.clearance, "home": list(m.home), "xy_origin": m.xy_origin,
-                     "rapid_rate": m.rapid_rate, "rotary": m.rotary, "rotary_diameter": m.rotary_diameter},
+                     "rapid_rate": m.rapid_rate, "rotary": m.rotary, "rotary_diameter": m.rotary_diameter,
+                     "z_rapid_rate": m.z_rapid_rate, "accel": m.accel, "corner_dev": m.corner_dev, "time_scale": m.time_scale},
         "layers": [{"id": l.id, "name": l.name, "color": l.color, "visible": l.visible,
-                    "locked": l.locked} for l in p.layers],
+                    "locked": l.locked, **({"sheets": list(l.sheet_ids)} if l.sheet_ids is not None else {}),
+                    **({"sheet_group": l.sheet_group} if l.sheet_group else {})} for l in p.layers],
         "sheets": [{"id": s.id, "name": s.name, "width": s.width, "height": s.height,
                     "thickness": s.thickness, "vectors": [vector_to_dict(v) for v in s.vectors],
                     "outline": [[[x, y] for x, y in poly] for poly in s.outline] if s.outline else None,
@@ -413,9 +453,13 @@ def project_from_dict(d: dict) -> Project:
         thickness=m.get("thickness", 18.0), z_zero=m.get("z_zero", "top"), safe_z=m.get("safe_z", 10.0),
         clearance=m.get("clearance", 2.0), home=tuple(m.get("home", (0, 0, 20))),
         xy_origin=m.get("xy_origin", "bottom_left"), rapid_rate=m.get("rapid_rate", 8000.0),
-        rotary=m.get("rotary", False), rotary_diameter=m.get("rotary_diameter", 100.0))
+        rotary=m.get("rotary", False), rotary_diameter=m.get("rotary_diameter", 100.0),
+        z_rapid_rate=_pos(m.get("z_rapid_rate"), 3000.0), accel=_pos(m.get("accel"), 200.0, 1.0),
+        corner_dev=_pos(m.get("corner_dev"), 0.05, 1e-4), time_scale=_pos(m.get("time_scale"), 1.0, 0.05))
     p.layers = [Layer(l["name"], l.get("color", "#1f77b4"), l.get("visible", True), l.get("locked", False),
-                      l["id"]) for l in d.get("layers", [])] or p.layers
+                      l["id"], [str(x) for x in l["sheets"]] if isinstance(l.get("sheets"), list) else None,
+                      l["sheet_group"].strip() if isinstance(l.get("sheet_group"), str) else "")
+                for l in d.get("layers", [])] or p.layers
     p.sheets = [Sheet(s["name"], s.get("width", 600.0), s.get("height", 400.0),
                       [vector_from_dict(v) for v in s.get("vectors", [])], s.get("thickness"), s["id"],
                       [[(float(x), float(y)) for x, y in poly] for poly in s["outline"]] if s.get("outline") else None,

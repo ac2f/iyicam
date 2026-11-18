@@ -18,6 +18,8 @@ QUICK: dict[str, Callable[[dict], dict]] = {
     "ping": ops.op_ping,
     "schema": ops.op_schema,
     "validate": ops.op_validate,
+    "new_project": ops.op_new_project,
+    "calibrate_time": ops.op_calibrate_time,
     "import": ops.op_import,
     "export": ops.op_export,
     "command": ops.op_command,

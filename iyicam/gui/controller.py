@@ -84,8 +84,8 @@ class Controller(CutControl, QObject):
     @property
     def layer(self):
         l = self.project.layer(self.layer_id)
-        if l is None:
-            l = self.project.layers[0]
+        if l is None or not l.applies(self.sheet):         # (a layer that is not on this sheet is not the current one)
+            l = next(iter(self.project.layers_for(self.sheet)), None) or self.project.layers[0]
             self.layer_id = l.id
         return l
 
@@ -113,10 +113,12 @@ class Controller(CutControl, QObject):
 
     def editable(self, obj: VectorObject) -> bool:
         layer = self.project.layer(obj.layer_id)
-        return layer is None or (layer.visible and not layer.locked)
+        return layer is None or (layer.visible and not layer.locked and layer.applies(self.sheet))
 
     # -- project lifecycle -----------------------------------------------------------------
     def _replace(self, project: Project) -> None:
+        self.cut_preview = None
+        self.focus_cut = None
         self.project = project
         self.sheet_id = project.sheets[0].id
         self.layer_id = project.layers[0].id
@@ -130,15 +132,25 @@ class Controller(CutControl, QObject):
         self.changed.emit()
         self.selection_changed.emit()
         self.toolpaths_changed.emit()
-        if project.toolpaths and (self.settings.auto_recalculate or self.settings.calculate_on_open):
+        kept = self._kept_results(project)
+        if kept is not None:                       # (the toolpaths as they were calculated and saved: not calculated again)
+            self.results, self.stale = kept, False
+            self.toolpaths_changed.emit()
+        elif project.toolpaths and (self.settings.auto_recalculate or self.settings.calculate_on_open):
             self.recalculate()
 
-    def new_project(self, width: float = 600.0, height: float = 400.0, thickness: float = 18.0) -> None:
-        p = Project()
-        p.sheets[0].width, p.sheets[0].height = width, height
-        p.material.thickness = thickness
+    def new_project(self, width: float = 600.0, height: float = 400.0, thickness: float = 18.0, template: str = "",
+                    values: dict | None = None) -> None:
+        """A new project: blank with this size, or started by the template (a plugin's way to start a project)."""
+        from ..core import presets
+        p = presets.create(width, height, thickness, template, values, self.registry)
         self._apply_material_defaults(p)
         self._replace(p)
+
+    def sheet_sizes(self) -> list[tuple[str, float, float]]:
+        """The sheet sizes on offer: the person's list, the built-in ones, and what plugins add."""
+        from ..core import presets
+        return presets.sizes(self.settings.sheet_presets, self.registry)
 
     MATERIAL_MEMORY = ("z_zero", "xy_origin", "safe_z", "clearance", "home_x", "home_y", "home_z", "rapid_rate")
 
@@ -167,11 +179,29 @@ class Controller(CutControl, QObject):
         self._replace(p)
         self.settings.add_recent(str(path))
 
+    @staticmethod
+    def _kept_results(project: Project) -> dict | None:
+        """The calculated toolpaths kept in the file the project came from, when they are of the project as it is."""
+        from ..cam import store
+        d = getattr(project, "calc_cache", None)
+        if not d or not project.toolpaths:
+            return None
+        try:
+            if not store.usable(project, d):
+                return None
+            return store.results_from_dict(d)
+        except (KeyError, TypeError, ValueError, IndexError):          # (a file of another version: calculated as usual)
+            return None
+
     def save_project(self, path: str | Path | None = None) -> Path:
         path = Path(path or self.project.path)
         if path.suffix.lower() != ".icam":
             path = path.with_suffix(".icam")
-        self.project.save(path)
+        calc = None
+        if self.results and not self.stale and self.project.toolpaths and not self._computing:
+            from ..cam import store           # (what is calculated is kept in the file, as it is)
+            calc = store.results_to_dict(self.project, self.results)
+        self.project.save(path, calc)
         self.registry.emit("project_saved", self.project)
         self.dirty = False
         self.settings.add_recent(str(path))
@@ -213,12 +243,23 @@ class Controller(CutControl, QObject):
     def checkpoint(self, label: str) -> None:
         self.undo_stack.checkpoint(self.project, label)
 
+    def _keep_revisions(self):
+        """The revision numbers of the G-code files are not part of what undo takes back: a number that was used is not used again."""
+        import copy
+        return copy.deepcopy(self.project.metadata.get("revisions"))
+
     def undo(self) -> None:
+        kept = self._keep_revisions()
         if self.undo_stack.undo(self.project):
+            if kept is not None:
+                self.project.metadata["revisions"] = kept
             self._after_undo()
 
     def redo(self) -> None:
+        kept = self._keep_revisions()
         if self.undo_stack.redo(self.project):
+            if kept is not None:
+                self.project.metadata["revisions"] = kept
             self._after_undo()
 
     def _after_undo(self) -> None:
@@ -255,6 +296,8 @@ class Controller(CutControl, QObject):
         if sid != self.sheet_id and self.project.sheet(sid) is not None:
             self.sheet_id = sid
             self.selection = []
+            self.clear_cut_preview()                    # (a preview is of the sheet it was made for)
+            self.set_focus_cut(None)
             self.sheet_changed.emit()
             self.selection_changed.emit()
             self.changed.emit()
@@ -418,10 +461,27 @@ class Controller(CutControl, QObject):
             self.project.toolpaths = [tdef if t.id == tdef.id else t for t in self.project.toolpaths]
         self.recalculate({tdef.id})
 
+    #: what the toolpath window edits (the rest of a toolpath: its order, group, whether it is on, is not touched by it)
+    EDITED_BY_WINDOW = ("name", "tool", "params", "selection", "sheet_ids", "sheet_group", "safe_z", "clearance")
+
+    def apply_toolpath_edit(self, edited: ToolpathDef) -> bool:
+        """The toolpath window was accepted: its fields are put on the toolpath as it is *now* (what changed meanwhile, like the
+        cut order or the group, stays). False when the toolpath is gone."""
+        cur = self.project.toolpath(edited.id)
+        if cur is None:
+            return False
+        with self.edit(f"Edit toolpath {edited.name}", geometry=False):
+            for f in self.EDITED_BY_WINDOW:
+                setattr(cur, f, getattr(edited, f))
+        self.recalculate({cur.id})
+        return True
+
     def remove_toolpaths(self, ids: set[str]) -> None:
         with self.edit("Delete toolpath", geometry=False):
             self.project.toolpaths = [t for t in self.project.toolpaths if t.id not in ids]
         self.results = {k: v for k, v in self.results.items() if k[0] not in ids}
+        if not self.project.toolpaths:
+            self.stale = False                           # (nothing is left that could be old)
         self.toolpaths_changed.emit()
 
     # -- groups of toolpaths -----------------------------------------------------------------------------
@@ -478,6 +538,7 @@ class Controller(CutControl, QObject):
         self.stale = bool(self.project.toolpaths)
         self.toolpaths_changed.emit()
         self.sheet_changed.emit()
+        self.calc_if_auto()
         return len(todo)
 
     def move_toolpath(self, tid: str, delta: int) -> None:
@@ -623,10 +684,12 @@ class Controller(CutControl, QObject):
         grouping = "depth" if on else "part"
         self.remember_cut_order(grouping=grouping)
         ids = set()
-        with self.edit("Cut order: inner pieces first" if on else "Cut order: part by part", geometry=False):
-            for t in self.project.toolpaths:
-                op = self.registry.operations.get(t.op)
-                if op is not None and issubclass(op, ProfileOp) and t.sequence.get("grouping", "depth") != grouping:
+        todo = [t for t in self.project.toolpaths
+                if (op := self.registry.operations.get(t.op)) is not None and issubclass(op, ProfileOp)
+                and t.sequence.get("grouping", "depth") != grouping]
+        if todo:                                          # (no undo step, and nothing made dirty, when nothing changes)
+            with self.edit("Cut order: inner pieces first" if on else "Cut order: part by part", geometry=False):
+                for t in todo:
                     t.sequence["grouping"] = grouping
                     ids.add(t.id)
         if ids:

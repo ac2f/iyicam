@@ -156,7 +156,7 @@ def test_renaming_a_toolpath_can_make_a_new_one_and_the_window_follows_the_selec
         gen.close()
 
 
-def test_a_project_that_is_opened_has_its_toolpaths_calculated_once(tmp_path, monkeypatch):
+def test_a_project_that_is_opened_has_its_toolpaths_calculated_once_when_the_file_has_none_kept(tmp_path, monkeypatch):
     pytest.importorskip("PySide6.QtWidgets")
     from gui_robot import rwin_gen
     from test_cutedit import parts
@@ -166,10 +166,13 @@ def test_a_project_that_is_opened_has_its_toolpaths_calculated_once(tmp_path, mo
         c, t, objs = parts(win, auto=False)
         c.recalculate()
         path = tmp_path / "p.icam"
+        c.stale = True                                   # (old toolpaths are not kept in the file)
         c.save_project(path)
         c.open_project(path)
-        assert c.results and not c.stale
+        assert c.results and not c.stale                 # (calculated once, as the setting says)
         c.settings.calculate_on_open = False
+        c.stale = True
+        c.save_project(path)
         c.open_project(path)
         assert not c.results and c.stale
     finally:

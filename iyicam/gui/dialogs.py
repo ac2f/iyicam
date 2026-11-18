@@ -138,7 +138,107 @@ class CommandDialog(RemembersSize, QDialog):
 # ---------------------------------------------------------------------------
 
 SHEET_PRESETS = [("2800 x 2100", 2800, 2100), ("3660 x 1830", 3660, 1830), ("2440 x 1220", 2440, 1220),
-                 ("2500 x 1250", 2500, 1250), ("3050 x 1220", 3050, 1220), ("1220 x 610", 1220, 610)]
+                 ("2500 x 1250", 2500, 1250), ("3050 x 1220", 3050, 1220), ("1220 x 610", 1220, 610)]   # (the built-in ones: see core/presets.py)
+
+
+class PresetsDialog(QDialog):
+    """The sheet sizes that are offered ready: add, change, remove, back to the built-in ones. They are kept for next time."""
+
+    def __init__(self, ctrl, parent=None):
+        super().__init__(parent)
+        from ..core import presets
+        self.ctrl = ctrl
+        self.setWindowTitle("Sheet sizes")
+        lay = QVBoxLayout(self)
+        lay.addWidget(QLabel("Name, width and height (millimetres). Plugins may add sizes of their own: they are not in this list."))
+        self.table = QTableWidget(0, 3)
+        self.table.setHorizontalHeaderLabels(["Name", "Width", "Height"])
+        self.table.horizontalHeader().setStretchLastSection(True)
+        lay.addWidget(self.table)
+        for name, w, h in (presets.clean(ctrl.settings.sheet_presets) or presets.BUILTIN):
+            self._row(name, w, h)
+        row = QHBoxLayout()
+        add = QPushButton("Add")
+        add.clicked.connect(lambda: self._row("New size", 1000.0, 1000.0))
+        rem = QPushButton("Remove")
+        rem.clicked.connect(lambda: self.table.removeRow(self.table.currentRow()) if self.table.currentRow() >= 0 else None)
+        back = QPushButton("Built-in sizes")
+        back.clicked.connect(self._builtin)
+        for b in (add, rem, back):
+            row.addWidget(b)
+        row.addStretch(1)
+        lay.addLayout(row)
+        lay.addWidget(buttons(self))
+
+    def _row(self, name: str, w: float, h: float) -> None:
+        r = self.table.rowCount()
+        self.table.insertRow(r)
+        self.table.setItem(r, 0, QTableWidgetItem(name))
+        self.table.setItem(r, 1, QTableWidgetItem(f"{w:g}"))
+        self.table.setItem(r, 2, QTableWidgetItem(f"{h:g}"))
+
+    def _builtin(self) -> None:
+        from ..core import presets
+        self.table.setRowCount(0)
+        for name, w, h in presets.BUILTIN:
+            self._row(name, w, h)
+
+    def sizes(self) -> list[list]:
+        from ..core import calc, presets
+        raw = []
+        for r in range(self.table.rowCount()):
+            cells = [(self.table.item(r, c).text() if self.table.item(r, c) else "") for c in range(3)]
+            raw.append([cells[0], calc.evaluate(cells[1]), calc.evaluate(cells[2])])    # (a sum is taken)
+        return [list(x) for x in presets.clean(raw)]
+
+    def accept(self) -> None:
+        self.ctrl.settings.sheet_presets = self.sizes()
+        self.ctrl.settings.save()
+        super().accept()
+
+
+class LayerScopeDialog(QDialog):
+    """Where a layer is: on every sheet, on the sheets ticked, and / or on the sheets of a group. Sheets that are not in the list
+    do not show the layer (nor its vectors)."""
+
+    def __init__(self, ctrl, layer, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"Layer: {layer.name}")
+        lay = QVBoxLayout(self)
+        self.every = QRadioButton("On every sheet")
+        self.some = QRadioButton("Only on the sheets ticked, and the sheets of the group:")
+        lay.addWidget(self.every)
+        lay.addWidget(self.some)
+        self.list = QListWidget()
+        want = set(layer.sheet_ids or [])
+        for s in ctrl.project.sheets:
+            it = QListWidgetItem(s.name + (f"   ▣ {s.group}" if s.group else ""))
+            it.setData(Qt.UserRole, s.id)
+            it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
+            it.setCheckState(Qt.Checked if s.id in want else Qt.Unchecked)
+            self.list.addItem(it)
+        lay.addWidget(self.list)
+        self.group = QComboBox()
+        self.group.addItem("(no group)", "")
+        for g in ctrl.sheet_groups():
+            self.group.addItem(g, g)
+        if layer.sheet_group and self.group.findData(layer.sheet_group) < 0:
+            self.group.addItem(layer.sheet_group, layer.sheet_group)
+        self.group.setCurrentIndex(max(0, self.group.findData(layer.sheet_group)))
+        lay.addWidget(self.group)
+        (self.every if layer.sheet_ids is None and not layer.sheet_group else self.some).setChecked(True)
+        for w in (self.list, self.group):
+            self.some.toggled.connect(w.setEnabled)
+        self.list.setEnabled(self.some.isChecked())
+        self.group.setEnabled(self.some.isChecked())
+        lay.addWidget(buttons(self))
+
+    def chosen(self) -> tuple[list[str] | None, str]:
+        if self.every.isChecked():
+            return None, ""
+        ids = [self.list.item(i).data(Qt.UserRole) for i in range(self.list.count())
+               if self.list.item(i).checkState() == Qt.Checked]
+        return ids, self.group.currentData() or ""
 
 
 class SheetDialog(QDialog):
@@ -158,7 +258,7 @@ class SheetDialog(QDialog):
         lay = QVBoxLayout(self)
         presets = QComboBox()
         presets.addItem("Preset sizes...")
-        for name, w, h in SHEET_PRESETS:
+        for name, w, h in ctrl.sheet_sizes():
             presets.addItem(name, (w, h))
         lay.addWidget(presets)
         self.form = ParamForm(params, None, u)
@@ -220,6 +320,15 @@ class MaterialDialog(RemembersSize, QDialog):
             Param("home_z", "Home Z (above surface)", "length", m.home[2], group="Home position"),
             Param("rapid_rate", "Machine rapid rate", "feed", m.rapid_rate, min=1.0, group="Machine",
                   help="Only used for machining time estimates"),
+            Param("z_rapid_rate", "Rapid rate of Z alone", "feed", m.z_rapid_rate, min=0.0, group="Machine",
+                  help="Time estimates: Z is often slower than X and Y (0: the same)"),
+            Param("accel", "Acceleration (mm/s²)", "float", m.accel, min=1.0, max=100000.0, decimals=0, group="Machine",
+                  help="Time estimates: how fast the machine speeds up and slows down. Calibrate from a real time finds it."),
+            Param("corner_dev", "Corner deviation", "length", m.corner_dev, min=0.0001, group="Machine",
+                  help="Time estimates: how far the machine may cut off a corner (sets the speed it keeps through corners)"),
+            Param("time_scale", "Time estimate correction", "float", m.time_scale, min=0.05, max=20.0, decimals=3, group="Machine",
+                  help="What the machine really took over what the estimate says (1: none). Calibrate from a real time sets it when "
+                       "the acceleration alone cannot."),
             Param("rotary", "Wrap around a rotary axis", "bool", m.rotary, group="Rotary",
                   help="The sheet is the unrolled cylinder: X along the axis, Y around it (written as A)"),
             Param("rotary_diameter", "Cylinder diameter", "length", m.rotary_diameter, min=1.0, group="Rotary",
@@ -228,8 +337,37 @@ class MaterialDialog(RemembersSize, QDialog):
         lay = QVBoxLayout(self)
         self.form = ParamForm(params, None, ctrl.units)
         lay.addWidget(scroll(self.form))
+        cal = QPushButton("Calibrate the time estimate from a real time...")
+        cal.setToolTip("Type how long the calculated toolpaths of this sheet really took: the acceleration of the machine is "
+                       "found from it, and the estimates after that come out near what the machine does")
+        cal.clicked.connect(self.calibrate)
+        lay.addWidget(cal)
         lay.addWidget(buttons(self))
-        self.keep_size(ctrl, "material", 420, 560)
+        self.keep_size(ctrl, "material", 420, 600)
+
+    def calibrate(self) -> None:
+        """Find the acceleration at which the toolpaths of this sheet take the time that was measured."""
+        from ..cam import timing
+        c = self.ctrl
+        tps = [tp for tp in c.sheet_toolpaths() if tp.moves]
+        if not tps:
+            QMessageBox.information(self, "Calibrate", "Calculate the toolpaths of this sheet first: the calibration is made on them.")
+            return
+        text, ok = QInputDialog.getText(self, "Calibrate", "How long did the toolpaths of this sheet really take?\n"
+                                        "(h:mm:ss or m:ss; a plain number is minutes)")
+        if not ok or not text.strip():
+            return
+        seconds = timing.parse_duration(text)
+        if seconds is None or seconds <= 0:
+            QMessageBox.warning(self, "Calibrate", f"'{text}' is not a time.")
+            return
+        v = self.form.values()
+        base = timing.Machine(v["rapid_rate"], v["z_rapid_rate"], v["accel"], v["corner_dev"], 1.0)
+        mc = timing.calibrate_all([tp.moves for tp in tps], seconds, base)
+        self.form.widgets["accel"].setValue(mc.accel)
+        self.form.widgets["time_scale"].setValue(mc.scale)
+        QMessageBox.information(self, "Calibrate", f"Acceleration {mc.accel:.0f} mm/s²" + (
+            f", correction x{mc.scale:.3f}" if abs(mc.scale - 1) > 1e-3 else "") + ".\nPress OK to keep it.")
 
     def accept(self) -> None:
         v = self.form.values()
@@ -241,6 +379,7 @@ class MaterialDialog(RemembersSize, QDialog):
             m = self.ctrl.project.material
             m.thickness, m.z_zero, m.xy_origin = v["thickness"], v["z_zero"], v["xy_origin"]
             m.safe_z, m.clearance, m.rapid_rate = v["safe_z"], v["clearance"], v["rapid_rate"]
+            m.z_rapid_rate, m.accel, m.corner_dev, m.time_scale = v["z_rapid_rate"], v["accel"], v["corner_dev"], v["time_scale"]
             m.home = (v["home_x"], v["home_y"], v["home_z"])
             self.ctrl.sheet.width, self.ctrl.sheet.height = v["width"], v["height"]
             m.rotary, m.rotary_diameter = v["rotary"], v["rotary_diameter"]
@@ -597,12 +736,16 @@ class ToolpathDialog(RemembersSize, QDialog):
         if self.tdef and self.tdef.selection.mode == "vectors" and not cur_ids:
             cur_ids = list(self.tdef.selection.vector_ids)
         self.vector_ids = cur_ids
+        self._open_sheet_id = ctrl.sheet_id               # (the sheet a new toolpath on "this sheet" means: where it was opened)
+        self._last_selection = list(ctrl.selection)
+        self._first_all_sheets = None
         self.rb_sel.setText(f"Selected vectors ({len(cur_ids)})")
         self.follow = QCheckBox("Follow the selection on the drawing while this window is open")
         self.follow.setChecked(self.tdef is None)
         self.follow.setToolTip("Select vectors on the drawing with this window open: they are the vectors of the toolpath")
         vl.addWidget(self.follow)
         ctrl.selection_changed.connect(self._follow_selection)
+        ctrl.project_replaced.connect(self._project_gone)
         self.finished.connect(self._let_go)
         (self.rb_layers if sel is not None and sel.mode == "layers" else self.rb_sel).setChecked(True)
         if not cur_ids and (sel is None or sel.mode != "layers"):
@@ -743,7 +886,12 @@ class ToolpathDialog(RemembersSize, QDialog):
         else:
             sel = Selection("vectors", list(self.vector_ids), [])
         group = self.group_box.currentData() or ""
-        sheets = None if group or self.all_sheets.isChecked() else [self.ctrl.sheet_id]
+        if group or self.all_sheets.isChecked():
+            sheets = None
+        elif self.tdef is not None and self.tdef.sheet_ids is not None and self._sheets_box_untouched():
+            sheets = list(self.tdef.sheet_ids)            # (a toolpath of some sheets stays on them: not moved to the sheet that is open)
+        else:
+            sheets = [self._open_sheet_id]
         params = {k: v for k, v in self.form.values().items()}
         safe_z, clearance = self.heights()
         if self.tdef:
@@ -756,6 +904,9 @@ class ToolpathDialog(RemembersSize, QDialog):
         return ToolpathDef(self.name.text(), self.op.id, self.tool_editor.tool(), params, sel, True, sheets,
                            safe_z=safe_z, clearance=clearance, sheet_group=group)
 
+    def _sheets_box_untouched(self) -> bool:
+        return self.all_sheets.isChecked() == (self.tdef is None or self.tdef.sheet_ids is None)
+
     def _name_edited(self, text: str) -> None:
         if self.tdef is not None and self.auto_new.isChecked() and text != self._first_name:
             self.keep_old.setChecked(True)
@@ -764,6 +915,9 @@ class ToolpathDialog(RemembersSize, QDialog):
         """The selection on the drawing changed while the window is open: the vectors of the toolpath follow it."""
         if not self.follow.isChecked() or not hasattr(self, "rb_sel"):
             return
+        if list(self.ctrl.selection) == self._last_selection:           # (an edit that changes nothing in the selection: nothing to follow)
+            return
+        self._last_selection = list(self.ctrl.selection)
         ids = [o.id for o in self.ctrl.selected_objects()]
         if ids:
             self.vector_ids = ids
@@ -771,10 +925,15 @@ class ToolpathDialog(RemembersSize, QDialog):
             self.rb_sel.setChecked(True)
 
     def _let_go(self, *_) -> None:
-        try:
-            self.ctrl.selection_changed.disconnect(self._follow_selection)
-        except (RuntimeError, TypeError):
-            pass
+        for sig, slot in ((self.ctrl.selection_changed, self._follow_selection), (self.ctrl.project_replaced, self._project_gone)):
+            try:
+                sig.disconnect(slot)
+            except (RuntimeError, TypeError):
+                pass
+
+    def _project_gone(self) -> None:
+        """The project of this window was replaced (a file opened in its place, its tab emptied): the window has nothing to work on."""
+        self.reject()
 
     def open_modeless(self, on_accept) -> None:
         """Show the window beside the drawing, not as a pop-up in front of it: the vectors can be selected, the drawing zoomed, ...
@@ -898,7 +1057,7 @@ class PlateDialog(QDialog):
         lay = QVBoxLayout(self)
         presets = QComboBox()
         presets.addItem("Preset sheet sizes...")
-        for name, w, h in SHEET_PRESETS:
+        for name, w, h in ctrl.sheet_sizes():
             presets.addItem(name, (w, h))
         lay.addWidget(presets)
         self.params = [p for p in params if p.name in ("quantity", "leftover", "shape")]   # the size follows the sheet
@@ -1198,7 +1357,7 @@ class NestingDialog(RemembersSize, QDialog):
         self.l3 = l3
         presets = QComboBox()
         presets.addItem("Preset sheet sizes...")
-        for name, w, h in SHEET_PRESETS:
+        for name, w, h in ctrl.sheet_sizes():
             presets.addItem(name, (w, h))
         l1.addWidget(presets)
         # everything is remembered but the sheet size, which is the current sheet's unless it is changed here
@@ -1709,9 +1868,9 @@ class ExportDialog(RemembersSize, QDialog):
 
     def _next_revision(self) -> int:
         r = self._revisions()
-        if self.rev_scope.currentData() == "group":
-            groups = {s.group for s in self.ctrl.project.sheets if s.group}
-            return max([r["groups"].get(g, 1) for g in groups] or [r.get("project", 1)])
+        sh = self.ctrl.sheet
+        if self.rev_scope.currentData() == "group" and sh.group:
+            return int(r["groups"].get(sh.group, r.get("project", 1)))
         return int(r.get("project", 1))
 
     def _pick_folder(self) -> None:
@@ -1784,24 +1943,36 @@ class ExportDialog(RemembersSize, QDialog):
         edit.insert("{" + name + "}")
         edit.setFocus()
 
-    def file_stem(self, index: int, sheet, tps) -> str | None:
-        """The name of the files of one sheet by the prefixes (``None``: the prefixes are not right: said in the box)."""
+    def _revision_for(self, sheet) -> int:
+        """The revision of the files of this sheet: with the revision of the sheet group, a sheet of a group has its group's number
+        (the box is the number of the sheet that is open, and what is typed in it is the one for that group)."""
+        r = self._revisions()
+        if self.rev_scope.currentData() == "group" and sheet.group and sheet.id != self.ctrl.sheet_id:
+            return int(r["groups"].get(sheet.group, r.get("project", 1)))
+        return self.revision.value()
+
+    def name_values(self, index: int, sheet, tps) -> dict:
+        """The value of every variable of the file name (and of the folder inside) for the files of one sheet."""
         from ..post import naming
         project = self.ctrl.project
         sheets = project.sheets if self.sheets.currentData() != "current" else [sheet]
         t0 = tps[0] if tps else None
         group = self.group or next(iter({t.group for t in project.toolpaths if t.id in self.chosen() and t.group}), "")
-        post = self.current_post()
         d0 = project.toolpath(t0.def_id) if t0 is not None else None
-        vals = naming.values(project.name, sheet.name, index, len(sheets), post.name, group, len(tps),
+        return naming.values(project.name, sheet.name, index, len(sheets), self.current_post().name, group, len(tps),
                              t0.tool.number if t0 else None, t0.tool.name if t0 else "", project.sheet_thickness(sheet),
                              sheet.width, sheet.height, tool_diameter=t0.tool.diameter if t0 else None,
                              toolpath_name=d0.name if d0 else "",
                              safe_z=d0.safe_z if d0 is not None and d0.safe_z is not None else project.material.safe_z,
                              cut_depth=d0.params.get("cut_depth") if d0 is not None else None, sheet_group=sheet.group,
-                             revision=self.revision.value())
+                             revision=self._revision_for(sheet))
+
+    def file_stem(self, index: int, sheet, tps) -> str | None:
+        """The name of the files of one sheet by the prefixes (``None``: the prefixes are not right: said in the box)."""
+        from ..post import naming
+        sheets = self.ctrl.project.sheets if self.sheets.currentData() != "current" else [sheet]
         parts, sep = naming.check(self.name_parts(), self.name_sep.text() or naming.DEFAULT_SEP)
-        name = naming.render(parts, vals, sep)
+        name = naming.render(parts, self.name_values(index, sheet, tps), sep)
         many = len(sheets) > 1
         return f"{name}_{index}" if many and not naming.uses(parts, "sheet_number", "sheet_name") else name
 
@@ -1927,17 +2098,14 @@ class ExportDialog(RemembersSize, QDialog):
             if not tps_here:
                 continue
             stem = self.file_stem(i, s, tps_here)
-            t0 = tps_here[0]
-            d0 = ctrl.project.toolpath(t0.def_id)
-            vals = naming.values(ctrl.project.name, s.name, i, len(sheets), post.name, self.group, len(tps_here), t0.tool.number,
-                                 t0.tool.name, ctrl.project.sheet_thickness(s), s.width, s.height, tool_diameter=t0.tool.diameter,
-                                 toolpath_name=d0.name if d0 else "", sheet_group=s.group, revision=self.revision.value())
+            vals = self.name_values(i, s, tps_here)
             sub = self.subfolder_name(vals)
             plan.append((i, s, tps_here, (base / sub if sub else base) / f"{stem}.{post.extension}"))
         if not plan:
             QMessageBox.information(self, "Save G-code", "There is nothing to save: no calculated toolpath on these sheets.")
             return
-        taken = [p for *_x, p in plan if p.exists()]
+        taken = [q for i, s, _t, p in plan for tile, _sh, _tp in self.jobs(s)
+                 for q in [p.with_name(p.stem + tile + p.suffix)] if q.exists()]            # (the files that will really be written)
         if taken and QMessageBox.question(self, "Save G-code", f"{len(taken)} file(s) are there already ({taken[0].name} ...). "
                                           "Replace them?", QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
             return
@@ -1954,15 +2122,15 @@ class ExportDialog(RemembersSize, QDialog):
         last = {"files": [p.name for p in written], "folder": str(written[0].parent) if written else folder,
                 "revision": used, "when": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")}
         r = self._revisions()
-        nxt = used + 1 if self.rev_auto.isChecked() else used        # (counting up: the next save is the next revision)
-        if self.rev_scope.currentData() == "group":
-            for g in {s.group for _i, s, _t, _p in plan if s.group}:
-                r["groups"][g] = nxt
-            if any(not s.group for _i, s, _t, _p in plan):
-                r["project"] = nxt
-        else:
-            r["project"] = nxt
+        up = 1 if self.rev_auto.isChecked() else 0                    # (counting up: the next save is the next revision)
+        for _i, s, _t, _p in plan:
+            rev = self._revision_for(s)
+            if self.rev_scope.currentData() == "group" and s.group:
+                r["groups"][s.group] = rev + up
+            else:
+                r["project"] = rev + up
         ctrl.dirty = True
+        ctrl.changed.emit()                                           # (the title and the Undo menu know)
         self._remember(last)
         self._show_last(last)
         self.revision.setValue(self._next_revision())
@@ -2587,11 +2755,13 @@ class PreferencesDialog(QDialog):
     def accept(self) -> None:
         v = self.form.values()
         s = self.ctrl.settings
+        window = self.parent()
         for k, val in v.items():
-            if k not in ("units", "theme"):
+            if k in ("show_directions", "show_cut_order", "show_route", "show_starts") and hasattr(window, "set_view"):
+                window.set_view(k, bool(val))              # (the View menu and the drawing follow)
+            elif k not in ("units", "theme"):
                 setattr(s, k, val)
         self.ctrl.set_units(v["units"])
-        window = self.parent()
         if hasattr(window, "sync_snap"):
             window.sync_snap()
         if hasattr(window, "set_theme"):

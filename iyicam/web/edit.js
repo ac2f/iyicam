@@ -48,7 +48,8 @@
     "ed.node.insert": "Düğüm ekle (çizgiye dokun)", "ed.node.del": "Düğümü sil", "ed.node.start": "Başlangıç buradan", "ed.node.break": "Düğümden ayır",
     "ed.node.close": "Kapat", "ed.node.line": "Çizgi yap", "ed.node.curve": "Eğri yap", "ed.node.pick": "Düğümleri görmek için tek bir vektör seç.",
     "ed.node.cant": "Bu düğüm silinemez.", "ed.startSet": "Başlangıç noktası ayarlandı.",
-    "lay.add": "Katman ekle", "lay.active": "Çizim katmanı", "lay.lock": "Kilitle", "lay.del": "Katmanı sil", "lay.name": "Katman",
+    "np.blank": "Boş proje", "np.start": "Şuradan başla", "np.sizes": "Hazır ebatlar…", "np.editsizes": "Ebatları düzenle", "np.addsize": "Ebat ekle", "np.builtin": "Hazır liste", "np.create": "Oluştur",
+    "lay.add": "Katman ekle", "lay.active": "Çizim katmanı", "lay.lock": "Kilitle", "lay.del": "Katmanı sil", "lay.name": "Katman", "lay.where": "Hangi tabakalarda", "lay.all": "her tabaka", "lay.sheet": "yalnız bu tabaka",
     "lay.notEmpty": "Katmanda vektör var; önce onları başka katmana taşı.", "lay.last": "Son katman silinemez.",
     "sheet.add": "Sayfa ekle", "sheet.del": "Sayfayı sil", "sheet.last": "Son sayfa silinemez.", "sheet.delask": "Bu sayfa ve vektörleri silinsin mi?",
     "proj.new": "＋ Boş proje", "proj.newname": "Yeni proje", "proj.sheetthk": "Kalınlık (bu sayfa)",
@@ -133,7 +134,8 @@
     "ed.node.insert": "Insert a node (tap on the line)", "ed.node.del": "Delete the node", "ed.node.start": "Start here", "ed.node.break": "Break at the node",
     "ed.node.close": "Close", "ed.node.line": "Make a line", "ed.node.curve": "Make a curve", "ed.node.pick": "Select one vector to see its nodes.",
     "ed.node.cant": "This node cannot be deleted.", "ed.startSet": "Start point set.",
-    "lay.add": "Add a layer", "lay.active": "Drawing layer", "lay.lock": "Lock", "lay.del": "Delete the layer", "lay.name": "Layer",
+    "np.blank": "Blank (an empty project)", "np.start": "Start from", "np.sizes": "Ready sizes…", "np.editsizes": "Edit sizes", "np.addsize": "Add a size", "np.builtin": "Built-in list", "np.create": "Create",
+    "lay.add": "Add a layer", "lay.active": "Drawing layer", "lay.lock": "Lock", "lay.del": "Delete the layer", "lay.name": "Layer", "lay.where": "On which sheets", "lay.all": "every sheet", "lay.sheet": "this sheet only",
     "lay.notEmpty": "The layer has vectors; move them to another layer first.", "lay.last": "The last layer cannot be deleted.",
     "sheet.add": "Add a sheet", "sheet.del": "Delete the sheet", "sheet.last": "The last sheet cannot be deleted.", "sheet.delask": "Delete this sheet and its vectors?",
     "proj.new": "＋ Empty project", "proj.newname": "New project", "proj.sheetthk": "Thickness (this sheet)",
@@ -1223,7 +1225,8 @@
       const p = S.project, here = new Map(), all = new Map(), act = activeLayer().id;
       for (const v of sheet().vectors) here.set(v.layer, (here.get(v.layer) || 0) + 1);
       for (const s of p.sheets) for (const v of s.vectors) all.set(v.layer, (all.get(v.layer) || 0) + 1);
-      el.replaceChildren(...p.layers.map((l, i) => {
+      const shown = p.layers.filter(l => B.layerApplies(l, sheet()));          // (a layer of another sheet or group is not listed)
+      el.replaceChildren(...shown.map((l, i) => {
         const vis = h("button", { class: "small tgl" + (l.visible ? " on" : ""), title: t("lay.vis"), "aria-label": t("lay.vis"), "aria-pressed": l.visible ? "true" : "false" }, l.visible ? "👁" : "🚫");
         vis.onclick = () => { l.visible = !l.visible; if (!l.visible) for (const id of [...E.sel]) { const v = sheet().vectors.find(q => q.id === id); if (v && v.layer === l.id) E.sel.delete(id); } layerChanged(true); };
         const name = h("input", { type: "text", value: l.name, "aria-label": t("lay.name") });
@@ -1244,9 +1247,20 @@
         const down = h("button", { class: "small", title: t("lay.down"), "aria-label": t("lay.down"), disabled: i === p.layers.length - 1, onclick: () => moveLayer(l, 1) }, "↓");
         const on = h("input", { type: "radio", name: "activelayer", checked: l.id === act, title: t("lay.active"), "aria-label": t("lay.active") });
         on.onchange = () => { E.layer = l.id; };
+        // where the layer is: every sheet, this sheet only, or the sheets of a group
+        const groups = [...new Set(p.sheets.map(x => x.group).filter(Boolean))];
+        const where = h("select", { class: "ed", title: t("lay.where"), "aria-label": t("lay.where") }, h("option", { value: "" }, t("lay.all")), h("option", { value: "sheet" }, t("lay.sheet")),
+          groups.map(g => h("option", { value: "group:" + g }, "▣ " + g)));
+        where.value = l.sheet_group ? "group:" + l.sheet_group : Array.isArray(l.sheets) ? "sheet" : "";
+        where.onchange = () => {
+          remember();
+          delete l.sheets; delete l.sheet_group;
+          if (where.value === "sheet") l.sheets = [sheet().id]; else if (where.value.startsWith("group:")) l.sheet_group = where.value.slice(6);
+          layerChanged(true);
+        };
         return h("div", { class: "lay", "data-layer": l.id },
           h("div", { class: "l1" }, on, color, h("div", { class: "grow" }, name), h("span", { class: "badge", title: t("proj.vectors", all.get(l.id) || 0) }, here.get(l.id) || 0)),
-          h("div", { class: "l2" }, vis, lock, h("span", { class: "grow" }), pick, up, down, del));
+          h("div", { class: "l2" }, vis, lock, where, h("span", { class: "grow" }), pick, up, down, del));
       }));
     }
     const view = { el, build };
@@ -1282,11 +1296,56 @@
     name.addEventListener("change", () => { if (name.value.trim()) { remember(); sheet().name = name.value.trim(); B.persist(); } });
     return h("div", { class: "row", style: "margin-top:10px" }, h("div", { class: "grow" }, name), add, del);
   }
-  async function newProject() {
-    const r = await api("validate", { project: { format: "iyicam-project", version: 1, name: t("proj.newname") } });
-    S.project = r.project; S.sheetId = S.project.sheets[0].id; S.views = {}; S.report = null; S.results = S.gcode = S.sim = null;
-    E.undo = []; E.redo = []; E.sel = new Set(); B.setFile(null);
-    S.tab = "draw"; B.changed();
+  /** the New Project window: blank, or a way a plugin brought; the ready sheet sizes (kept in this browser, they can be changed) */
+  const BUILTIN_SIZES = () => (S.schema.new_project && S.schema.new_project.presets) || [["2800 x 2100", 2800, 2100]];
+  function mySizes() {
+    try { const v = JSON.parse(B.store.get("iyicam.sizes") || "null"); if (Array.isArray(v) && v.length) return v; } catch { /* the page works without */ }
+    return BUILTIN_SIZES();
+  }
+  function newProject() {
+    const info = S.schema.new_project || { presets: [], templates: [{ id: "", label: t("np.blank"), params: [], description: "" }] };
+    const st = { template: "", values: {}, width: 1220, height: 2440, thickness: 18 };
+    const body = h("div"), extra = h("div"), sizes = h("select", {}), tpl = h("select", {}, info.templates.map(x => h("option", { value: x.id }, x.label)));
+    const fillSizes = () => { sizes.replaceChildren(h("option", { value: "" }, t("np.sizes")), ...mySizes().map(([n, w, hh]) => h("option", { value: JSON.stringify([w, hh]) }, n))); };
+    const num = (label, key) => h("label", { class: "f" }, h("span", {}, label), B.numberInput(st[key], v => { st[key] = v; }, { min: 0.01 }));
+    const dims = h("div");
+    const drawDims = () => dims.replaceChildren(h("div", { class: "grid2" }, num(t("nest.w"), "width"), num(t("nest.h"), "height")), num(t("proj.thickness"), "thickness"));
+    sizes.onchange = () => { if (sizes.value) { const [w, hh] = JSON.parse(sizes.value); st.width = w; st.height = hh; drawDims(); } };
+    tpl.onchange = () => {
+      st.template = tpl.value; st.values = {};
+      const x = info.templates.find(q => q.id === tpl.value);
+      extra.replaceChildren(x && x.description ? h("div", { class: "muted small" }, x.description) : null, x && x.params.length ? B.paramsForm(x.params, st.values, S.schema.tools) : null);
+    };
+    const edit = () => {                              // the list of sizes: name, width, height; add, remove, back to the built-in ones
+      const rows = mySizes().map(r => r.slice()), box = h("div");
+      const draw = () => box.replaceChildren(...rows.map((r, i) => h("div", { class: "row", style: "margin:4px 0" },
+        h("input", { type: "text", value: r[0], class: "grow", oninput: e => { r[0] = e.target.value; } }),
+        B.calcInput({ value: r[1], style: "width:84px", oninput: e => { r[1] = e.target.valueAsNumber; } }),
+        B.calcInput({ value: r[2], style: "width:84px", oninput: e => { r[2] = e.target.valueAsNumber; } }),
+        h("button", { class: "small", onclick: () => { rows.splice(i, 1); draw(); } }, "✕"))));
+      draw();
+      let c2;
+      c2 = B.openSheet(t("np.editsizes"), h("div", {}, box,
+        h("div", { class: "row" }, h("button", { class: "small", onclick: () => { rows.push(["", 1000, 1000]); draw(); } }, "＋ " + t("np.addsize")),
+          h("button", { class: "small", onclick: () => { rows.splice(0, rows.length, ...BUILTIN_SIZES().map(x => x.slice())); draw(); } }, t("np.builtin"))),
+        h("div", { class: "row", style: "margin-top:12px" }, h("button", { class: "primary grow", onclick: () => {
+          const ok = rows.filter(r => r[0] && r[1] > 0 && r[2] > 0);
+          B.store.set("iyicam.sizes", JSON.stringify(ok)); c2(); fillSizes();
+        } }, t("paths.save")), h("button", { onclick: () => c2() }, t("ed.cancel")))));
+    };
+    fillSizes(); drawDims();
+    let close;
+    const create = () => B.guarded(async () => {
+      const r = await api("new_project", { width: st.width, height: st.height, thickness: st.thickness, template: st.template, values: st.values, name: t("proj.newname") });
+      close();
+      S.project = r.project; S.sheetId = S.project.sheets[0].id; S.views = {}; S.report = null; S.results = S.gcode = S.sim = null;
+      E.undo = []; E.redo = []; E.sel = new Set(); B.setFile(null);
+      S.tab = "draw"; B.changed();
+    });
+    body.append(h("label", { class: "f" }, h("span", {}, t("np.start")), tpl), extra,
+      h("div", { class: "row" }, h("div", { class: "grow" }, sizes), h("button", { class: "small", onclick: edit }, "✎ " + t("np.editsizes"))), dims,
+      h("div", { class: "row", style: "margin-top:14px" }, h("button", { class: "primary grow", onclick: create }, t("np.create")), h("button", { onclick: () => close() }, t("ed.cancel"))));
+    close = B.openSheet(t("proj.new"), body);
   }
 
   B.editor = { stage, layersCard, sheetTools, newProject, undo, redo, openCommands, nestDialog, openLayers, selectLayer, moveLayer, mods, state: E, clear: () => { E.undo = []; E.redo = []; E.sel = new Set(); E.node = null; } };

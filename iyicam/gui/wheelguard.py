@@ -43,7 +43,9 @@ def _calc_methods(base):
         v = calc.evaluate(strip(self, text))
         if v is None:
             return base.valueFromText(self, text)
-        return v if base is _DoubleSpinBox else int(round(v))
+        if base is _DoubleSpinBox:
+            return v
+        return int(round(max(self.minimum(), min(self.maximum(), v))))        # (a sum that is too big is the biggest number)
 
     return validate, valueFromText
 

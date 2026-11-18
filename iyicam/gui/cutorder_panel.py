@@ -642,6 +642,13 @@ class CutOrderPanel(DocPanel):
         """A setting was chosen: it waits for Apply (or a Preview); no calculation is made for it."""
         if self._loading or not self.tid:
             return
+        shown = {**self.cfg(), **(self._pending.get(self.tid) or {})}
+        # a box that was left without a change (or one that rounds the number: inches) stages nothing
+        changes = {k: v for k, v in changes.items()
+                   if not (isinstance(v, (int, float)) and isinstance(shown.get(k), (int, float)) and abs(v - shown[k]) < 1e-3)
+                   and shown.get(k) != v}
+        if not changes:
+            return
         self.ctrl.clear_cut_preview()
         if self.live.isChecked():                   # (the person asked for every choice to be applied at once)
             self.ctrl.set_sequence(self.tid, **changes)

@@ -174,9 +174,10 @@ class Canvas(QWidget):
     def visible_objects(self) -> list[VectorObject]:
         proj = self.ctrl.project
         out = []
-        for o in self.ctrl.sheet.vectors:
+        sheet = self.ctrl.sheet
+        for o in sheet.vectors:
             l = proj.layer(o.layer_id)
-            if l is None or l.visible:
+            if l is None or (l.visible and l.applies(sheet)):
                 out.append(o)
         return out
 
@@ -344,7 +345,7 @@ class Canvas(QWidget):
         proj = self.ctrl.project
         for o in self.ctrl.sheet.vectors:
             layer = proj.layer(o.layer_id)
-            if layer is not None and not layer.visible:
+            if layer is not None and (not layer.visible or not layer.applies(sh)):
                 continue
             path = self.obj_path(o)
             color = theme.adapt(QColor(layer.color if layer else "#000000"))
@@ -558,7 +559,7 @@ class Canvas(QWidget):
             for tp in ctrl.sheet_toolpaths() + list(ctrl.backplot):
                 feed, rapid, drills = toolpath_paths(tp)
                 color = "#8e44ad" if tp.op == "gcode" else TP_COLORS[idx.get(tp.def_id, 0) % len(TP_COLORS)]
-                st = tp.stats()
+                st = tp.stats(timed=False)
                 width = tp.tool.radius_at_depth(-st.zmin) * 2 if tp.tool.is_tapered else tp.tool.diameter
                 self._tp_cache.append((feed, rapid, drills, color, width))
         for feed, rapid, drills, color, width in self._tp_cache:

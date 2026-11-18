@@ -168,18 +168,23 @@ class Toolpath:
             pos = (m.x, m.y, m.z)
         return out
 
-    def stats(self, rapid_rate: float = 8000.0, start: tuple[float, float, float] | None = None) -> PathStats:
-        """Lengths, time and extent of the moves. The result is kept (the panels ask for it at every refresh, and
-        a big toolpath has millions of moves); it is made again when the moves or the rapid rate change."""
-        key = (rapid_rate, start, len(self.moves), id(self.moves[-1]) if self.moves else 0)
+    def stats(self, rapid_rate=8000.0, start: tuple[float, float, float] | None = None, timed: bool = True) -> PathStats:
+        """Lengths, time and extent of the moves. ``rapid_rate`` is a number (mm/min) or a ``timing.Machine`` (acceleration, corners,
+        the calibration of the machine: the time is that of a machine, not length over feed). The result is kept (the panels ask
+        for it at every refresh, and a big toolpath has millions of moves); it is made again when the moves or the machine
+        change."""
+        key = (rapid_rate, start, timed, len(self.moves), id(self.moves[-1]) if self.moves else 0)
         hit = self._stats_cache.get("stats")
         if hit is not None and hit[0] == key:
             return copy.copy(hit[1])
-        st = self._stats(rapid_rate, start)
+        st = self._stats(rapid_rate, start, timed)
         self._stats_cache["stats"] = (key, st)
         return copy.copy(st)
 
-    def _stats(self, rapid_rate: float, start) -> PathStats:
+    def _stats(self, rapid_rate, start, timed: bool = True) -> PathStats:
+        from .timing import Machine, duration
+        mc = Machine.of(rapid_rate)
+        rapid_rate = mc.rapid_rate
         st = PathStats()
         pos = start
         for m in self.moves:
@@ -194,6 +199,7 @@ class Toolpath:
                     pos = _acc(st, pos, s, rapid_rate)
                 continue
             pos = _acc(st, pos, m, rapid_rate)
+        st.time_s = duration(self.moves, mc, start) if timed else 0.0     # (the lengths are counted above, the time is the machine's)
         return st
 
 

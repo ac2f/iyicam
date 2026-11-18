@@ -80,6 +80,27 @@ class PluginAPI:
         self._track("commands", cmd.id)
         return cmd
 
+    # -- the New Project window ---------------------------------------------------------
+    def add_new_project_template(self, template_id: str, label: str, build: Callable, params: list[Param] | None = None,
+                                 description: str = "") -> None:
+        """A way to start a project, offered in the New Project window (desktop and page): ``build(project, values)`` changes
+        the new, blank project (sheets, layers, material, toolpaths, ...); the ``params`` are asked for in the window and given
+        as ``values`` (a dict). The plugin decides what the window asks and what the project starts with."""
+        from ..core.registry import NewProjectTemplate
+        self.registry.new_project_templates[template_id] = NewProjectTemplate(
+            template_id, label, build, list(params or []), self.source, description)
+        self._track("new_project_templates", template_id)
+
+    def add_sheet_preset(self, name: str, width: float, height: float) -> None:
+        """A sheet size in the lists of sizes (New Project, Sheet properties, nesting plates)."""
+        self.registry.sheet_presets[name] = (name, float(width), float(height))
+        self._track("sheet_presets", name)
+
+    def remove_sheet_preset(self, name: str) -> None:
+        """Take a size out of the lists (a built-in one too: it is hidden while the plugin is on)."""
+        self.registry.sheet_presets[name] = (name, 0.0, 0.0)           # (zero size: the name is hidden)
+        self._track("sheet_presets", name)
+
     # -- post-processors ---------------------------------------------------------------
     def add_postprocessor(self, post: PostProcessor | dict | str | Path) -> PostProcessor:
         """Register a :class:`PostProcessor`, a definition dict or a ``.toml`` file."""

@@ -85,7 +85,7 @@ def safety_warnings(project: Project, sheet: Sheet, toolpaths: list[Toolpath],
     out = []
     thick = project.sheet_thickness(sheet)
     for tp in toolpaths:
-        st = tp.stats()
+        st = tp.stats(timed=False)
         if not st.feed_length:
             continue
         below = -st.zmin - thick

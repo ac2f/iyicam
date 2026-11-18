@@ -206,7 +206,56 @@ def op_schema(_payload=None) -> dict:
                                                "smart_starts": True})},
             "naming": {"variables": __import__("iyicam.post.naming", fromlist=["x"]).VARIABLES,
                        "default_parts": ["{project_name}"], "default_sep": "_"},
-            "plugin_errors": list(PLUGIN_ERRORS)}
+            "plugin_errors": list(PLUGIN_ERRORS), "new_project": _new_project_info()}
+
+
+def _new_project_info() -> dict:
+    from ..core import presets
+    return {"presets": [[n, w, h] for n, w, h in presets.sizes(None, REGISTRY)],
+            "templates": [{"id": t["id"], "label": t["label"], "description": t["description"],
+                           "params": [param_to_dict(p) for p in t["params"]]} for t in presets.templates(REGISTRY)]}
+
+
+def op_new_project(payload: dict) -> dict:
+    """A new project: blank with a size (``width``, ``height``, ``thickness``), or started by a template (``template`` and its
+    ``values``): the ways to start are in ``schema.new_project`` (Blank, and what plugins brought)."""
+    ensure_ready()
+    from ..core import presets
+    w, h, th = _num(payload, "width", 600.0, 1.0, 1e6), _num(payload, "height", 400.0, 1.0, 1e6), _num(payload, "thickness", 18.0, 0.01, 1e4)
+    tid = str(payload.get("template") or "")
+    values = payload.get("values") if isinstance(payload.get("values"), dict) else {}
+    if tid and tid not in REGISTRY.new_project_templates:
+        raise ServiceError("bad_request", f"there is no way to start a project called {tid!r}", field="template",
+                           known=sorted(REGISTRY.new_project_templates))
+    try:
+        p = presets.create(w, h, th, tid, values, REGISTRY)
+    except Exception as exc:                          # (a plugin's template that fails: said, nothing is made)
+        raise ServiceError("template_failed", f"{type(exc).__name__}: {exc}", template=tid) from exc
+    p.name = str(payload.get("name") or "") or p.name
+    return {"project": p.to_dict()}
+
+
+def op_calibrate_time(payload: dict) -> dict:
+    """The acceleration (and correction) at which the calculated toolpaths of a sheet take the time that was measured
+    (``seconds``). The project is as it is: the toolpaths of the last calculation are used (calculated now if there is none)."""
+    ensure_ready()
+    from ..cam import timing
+    project = load_project(payload.get("project"))
+    seconds = _num(payload, "seconds", 0.0, 0.0, 1e7)
+    if seconds <= 0:
+        raise ServiceError("bad_request", "'seconds' must be the measured time, more than 0", field="seconds")
+    res = _calculated_get(project)
+    if res is None:
+        res, _ = calculate(project)
+    sheet = _sheet_of(project, payload.get("sheet")) if payload.get("sheet") else project.sheets[0]
+    tps = [tp for tp in sheet_toolpaths(project, res, sheet) if tp.moves]
+    if not tps:
+        raise ServiceError("nothing_to_time", "there are no calculated toolpaths on this sheet")
+    mc = timing.calibrate_all([tp.moves for tp in tps], seconds, project.material.machine())
+    before = sum(tp.stats(project.material.machine()).time_s for tp in tps)
+    after = sum(tp.stats(mc).time_s for tp in tps)
+    return {"accel": round(mc.accel, 1), "time_scale": round(mc.scale, 4), "estimate_before": round(before, 1),
+            "estimate_after": round(after, 1), "measured": seconds}
 
 
 def op_validate(payload: dict) -> dict:
@@ -436,7 +485,7 @@ def _only_sheets(project: Project, ids) -> None:
 def _stats_of(project: Project, tps) -> PathStats:
     st = PathStats()
     for tp in tps:
-        st = st.merge(tp.stats(project.material.rapid_rate))
+        st = st.merge(tp.stats(project.material.machine()))
     return st
 
 

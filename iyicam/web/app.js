@@ -36,6 +36,10 @@ const TXT = {
     "tool.number": "Takım no",
     "tp.keepnew": "Aslını koru: bunu yeni takım yolu olarak kaydet", "tp.autonew": "İsmi değiştirmek bunu kendiliğinden yapsın", "tp.pick": "Vektörleri çizimde seç",
     "tp.picked": "{0} vektör seçili", "tp.use": "Bunları kullan",
+    "tm.title": "Süre tahmini", "tm.hint": "Makine hızlanma ile köşelerde yavaşlar; tahmin bunu hesaba katar. Gerçek bir süreden kalibre edilebilir.",
+    "tm.accel": "Hızlanma (mm/s²)", "tm.zrapid": "Yalnız Z hızlı hızı (mm/dk)", "tm.corner": "Köşe sapması (mm)", "tm.scale": "Tahmin düzeltmesi",
+    "tm.cal": "Gerçek süreden kalibre et", "tm.ask": "Bu tabakanın takım yolları gerçekte ne kadar sürdü? (s:dd:ss ya da d:ss; düz sayı = dakika)",
+    "tm.bad": "“{0}” bir süre değil.", "tm.done": "Hızlanma {0} mm/s², düzeltme x{1}.",
     "more.show": "▸ Daha fazla seçenek ({0})", "more.fewer": "▾ Daha az seçenek",
     "rev.label": "Revizyon", "rev.project": "projenin revizyonu", "rev.group": "tabaka grubunun revizyonu (her grup kendi sayar)", "rev.auto": "kayıttan sonra artır",
     "out.reused": "Hesaplanmış takım yolları olduğu gibi kaydedildi (yeniden hesaplanmadı).",
@@ -104,6 +108,10 @@ const TXT = {
     "tool.number": "Tool number",
     "tp.keepnew": "Keep the original: save this as a new toolpath", "tp.autonew": "Changing the name does this by itself", "tp.pick": "Pick the vectors on the drawing",
     "tp.picked": "{0} vector(s) selected", "tp.use": "Use them",
+    "tm.title": "Time estimate", "tm.hint": "A machine speeds up and slows down for corners: the estimate counts it. It can be calibrated from a real time.",
+    "tm.accel": "Acceleration (mm/s²)", "tm.zrapid": "Rapid rate of Z alone (mm/min)", "tm.corner": "Corner deviation (mm)", "tm.scale": "Estimate correction",
+    "tm.cal": "Calibrate from a real time", "tm.ask": "How long did the toolpaths of this sheet really take? (h:mm:ss or m:ss; a plain number is minutes)",
+    "tm.bad": "“{0}” is not a time.", "tm.done": "Acceleration {0} mm/s², correction x{1}.",
     "more.show": "▸ More options ({0})", "more.fewer": "▾ Fewer options",
     "rev.label": "Revision", "rev.project": "of the project", "rev.group": "of the sheet group (each group counts for itself)", "rev.auto": "count up after saving",
     "out.reused": "The toolpaths were saved as they were calculated (not calculated again).",
@@ -349,6 +357,8 @@ const S = { schema: null, project: null, tab: "project", sheetId: null, results:
             rev: 0 };             // counts the changes of the project: what is drawn from it is made again when it moves on
 
 const layerMap = p => new Map(p.layers.map(l => [l.id, l]));
+/** whether a layer is on a sheet: a layer of one sheet or of one group of sheets is not shown on the others */
+const layerApplies = (l, sheet) => !l || !sheet || ((!Array.isArray(l.sheets) && !l.sheet_group) || (Array.isArray(l.sheets) && l.sheets.includes(sheet.id)) || (!!l.sheet_group && sheet.group === l.sheet_group));
 const sheetThickness = (p, s) => (s && s.thickness != null ? s.thickness : p.material.thickness);
 function activeSheet() {
   const p = S.project;
@@ -571,7 +581,7 @@ function drawScene(cv, sheet, view, extra) {
   // the vectors: their paths are made once (with the curves as curves) and only stroked at every frame
   ctx.lineWidth = 1.6 * px; ctx.lineJoin = "round";
   const layers = layerMap(p);
-  for (const [col, g] of lodGroups(sheet.vectors, view, w, hgt, v => { const l = layers.get(v.layer); return l && !l.visible ? null : (l && l.color) || "#1f77b4"; })) {
+  for (const [col, g] of lodGroups(sheet.vectors, view, w, hgt, v => { const l = layers.get(v.layer); return l && (!l.visible || !layerApplies(l, sheet)) ? null : (l && l.color) || "#1f77b4"; })) {
     ctx.strokeStyle = col; ctx.stroke(g.lines); ctx.fillStyle = col; ctx.fill(g.dots);
   }
   // the toolpaths (the preview tab draws them itself while it plays or compares: ``S.pv.custom``)
@@ -1129,6 +1139,22 @@ function sheetGroupInput(s) {
   return inp;
 }
 
+/** the time estimate of a machine: asks how long the toolpaths of this sheet really took and finds the acceleration of the machine */
+async function calibrateTime() {
+  const text = prompt(t("tm.ask"));
+  if (!text) return;
+  const parts = text.trim().replace(",", ".").split(":").map(Number);
+  const sec = parts.length > 1 ? parts.reduce((a, x) => a * 60 + x, 0) : parts[0] * 60;
+  if (!(sec > 0) || parts.some(x => !(x >= 0))) return toast(t("tm.bad", text), "warn");
+  const r = await runJob("compute", { project: S.project, preview: true });
+  applyPatch(r.patch); S.results = r;
+  const out = await api("calibrate_time", { project: S.project, seconds: sec, sheet: S.sheetId });
+  const m = S.project.material;
+  m.accel = out.accel; m.time_scale = out.time_scale; touch();
+  toast(t("tm.done", out.accel, out.time_scale), "ok");
+  render();
+}
+
 function viewProject() {
   const p = S.project, ext = S.schema.importers.flatMap(i => i.extensions.map(x => "." + x)).join(",");
   const pick = h("input", { type: "file", accept: ext, hidden: true, onchange: e => openFile(e.target) });
@@ -1184,6 +1210,13 @@ function viewProject() {
     h("div", { class: "grid2" }, ["X", "Y", "Z"].map((a, i) => h("label", { class: "f" }, h("span", {}, "home " + a),
       numberInput((m.home || [0, 0, 20])[i], v => { m.home = (m.home || [0, 0, 20]).slice(); m.home[i] = v; touch(); }))),
       h("label", { class: "f" }, h("span", {}, t("proj.rapid")), numberInput(m.rapid_rate ?? 8000, v => { m.rapid_rate = v; touch(); }))),
+    h("div", { class: "group-h" }, t("tm.title")), h("div", { class: "muted small" }, t("tm.hint")),
+    h("div", { class: "grid2" },
+      h("label", { class: "f" }, h("span", {}, t("tm.accel")), numberInput(m.accel ?? 200, v => { m.accel = v; touch(); }, { min: 1 })),
+      h("label", { class: "f" }, h("span", {}, t("tm.zrapid")), numberInput(m.z_rapid_rate ?? 3000, v => { m.z_rapid_rate = v; touch(); }, { min: 0 })),
+      h("label", { class: "f" }, h("span", {}, t("tm.corner")), numberInput(m.corner_dev ?? 0.05, v => { m.corner_dev = v; touch(); }, { min: 0.0001 })),
+      h("label", { class: "f" }, h("span", {}, t("tm.scale")), numberInput(m.time_scale ?? 1, v => { m.time_scale = v; touch(); }, { min: 0.05 }))),
+    h("div", { class: "row", style: "margin-top:8px" }, h("button", { class: "small", onclick: () => guarded(() => calibrateTime()) }, "⏱ " + t("tm.cal"))),
     h("div", { class: "grid2" },
       (() => { const cb = h("input", { type: "checkbox", checked: !!m.rotary }); cb.onchange = () => { m.rotary = cb.checked; touch(); }; return h("label", { class: "chk" }, cb, t("proj.rotary")); })(),
       h("label", { class: "f" }, h("span", {}, t("proj.rotdia")), numberInput(m.rotary_diameter ?? 100, v => { m.rotary_diameter = v; touch(); })))));
@@ -1579,7 +1612,7 @@ async function start() {
 }
 
 // what edit.js (the drawing tools) needs of this file; it adds ``editor`` to it
-window.IyiPage = { S, h, $, t, TXT, api, calc, calcInput, runJob, toast, fail, openSheet, paramsForm, numberInput, fmt, store, guarded, render, touch,
+window.IyiPage = { S, h, $, t, TXT, api, calc, calcInput, layerApplies, runJob, toast, fail, openSheet, paramsForm, numberInput, fmt, store, guarded, render, touch,
                    persist, changed, activeSheet, layerMap, flatOf, drawScene, fitView, setFile, editor: null, post: null,
                    sceneSegs, lodGroups, lang: () => lang, jobs: null, jobApply: {}, JobDeferred, deviceInfo, setBusy, ApiError,
                    lostConnection, wakePoll, recompute, EXTRA_TABS, SCENE_HOOKS, applyPatch, drawStage };

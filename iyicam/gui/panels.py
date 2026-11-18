@@ -51,7 +51,7 @@ class DocPanel(QWidget):
 
 
 class LayersPanel(DocPanel):
-    signals = ("changed",)
+    signals = ("changed", "sheet_changed")
 
     def __init__(self, ctrl, parent=None):
         super().__init__(parent)
@@ -93,8 +93,8 @@ class LayersPanel(DocPanel):
         counts: dict[str, int] = {}
         for v in self.ctrl.sheet.vectors:
             counts[v.layer_id] = counts.get(v.layer_id, 0) + 1
-        for l in self.ctrl.project.layers:
-            it = QTreeWidgetItem([f"{l.name} ({counts.get(l.id, 0)})", "", ""])
+        for l in self.ctrl.project.layers_for(self.ctrl.sheet):          # (a layer of another sheet or group is not shown)
+            it = QTreeWidgetItem([f"{l.name} ({counts.get(l.id, 0)})" + (" ▣" if l.sheet_ids is not None or l.sheet_group else ""), "", ""])
             it.setData(0, Qt.UserRole, l.id)
             it.setIcon(0, swatch(l.color))
             it.setCheckState(1, Qt.Checked if l.visible else Qt.Unchecked)
@@ -142,6 +142,7 @@ class LayersPanel(DocPanel):
         m = QMenu(self)
         m.addAction("Rename...", self.rename)
         m.addAction("Colour...", self.color)
+        m.addAction("Appears on...", self.scope)
         m.addAction("Select vectors", self.select_layer)
         m.addAction("Move selection here", self.move_selection)
         m.addSeparator()
@@ -154,6 +155,18 @@ class LayersPanel(DocPanel):
             with self.ctrl.edit("Add layer", geometry=False):
                 l = self.ctrl.project.add_layer(name)
             self.ctrl.set_layer(l.id)
+
+    def scope(self) -> None:
+        """Which sheets the layer is on: every sheet, some sheets, or the sheets of a group."""
+        layer = self.ctrl.project.layer(self._lid())
+        if layer is None:
+            return
+        from .dialogs import LayerScopeDialog
+        dlg = LayerScopeDialog(self.ctrl, layer, self)
+        if dlg.exec():
+            ids, group = dlg.chosen()
+            with self.ctrl.edit("Layer sheets", geometry=False):
+                layer.sheet_ids, layer.sheet_group = ids, group
 
     def rename(self) -> None:
         layer = self.ctrl.project.layer(self._lid())
@@ -422,7 +435,7 @@ class ToolpathsPanel(DocPanel):
         self.tree.clear()
         total = PathStats()
         problems = 0
-        rate = self.ctrl.project.material.rapid_rate
+        rate = self.ctrl.project.material.machine()
         for t in self.ctrl.project.toolpaths:
             res = [r for r in self.ctrl.results_for(t) if r.toolpaths or r.error or r.warnings]
             here = self.ctrl.results.get((t.id, self.ctrl.sheet_id))

@@ -8,8 +8,9 @@ from pathlib import Path
 
 from PySide6.QtCore import QByteArray, QRectF, QSize, Qt, QUrl
 from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QGuiApplication, QImage, QKeySequence
-from PySide6.QtWidgets import (QApplication, QDialog, QDockWidget, QLabel, QMainWindow, QMenu,
-                               QMessageBox, QProgressDialog, QTabWidget, QToolBar, QToolButton, QVBoxLayout)
+from PySide6.QtWidgets import (QApplication, QDialog, QDockWidget, QHBoxLayout, QLabel, QMainWindow, QMenu,
+                               QMessageBox, QProgressDialog, QPushButton, QTabWidget, QToolBar, QToolButton, QVBoxLayout)
+from .wheelguard import QComboBox
 
 from .. import __version__
 from ..cam.moves import PathStats, format_time
@@ -904,22 +905,85 @@ class MainWindow(QMainWindow):
 
     # -- file ---------------------------------------------------------------------------------------
     def new_project(self) -> None:
-        """A new project in a new tab (in the open one when that has never been used)."""
+        """A new project in a new tab (in the open one when that has never been used). The window offers the ready sheet sizes (which
+        can be edited), and the ways to start: blank, or a template that a plugin brought (with the settings it asks for)."""
+        from ..core import presets
+        from .dialogs import PresetsDialog
+        s = self.ctrl.settings
         dlg = QDialog(self)
         dlg.setWindowTitle("New Project")
         lay = QVBoxLayout(dlg)
+        start = QComboBox()
+        for t in presets.templates(self.ctrl.registry):
+            start.addItem(t["label"], t["id"])
+        lay.addWidget(QLabel("Start from"))
+        lay.addWidget(start)
+        desc = QLabel()
+        desc.setWordWrap(True)
+        desc.setEnabled(False)
+        lay.addWidget(desc)
+        row = QHBoxLayout()
+        size = QComboBox()
+        edit = QPushButton("Edit sizes...")
+        row.addWidget(size, 1)
+        row.addWidget(edit)
+        lay.addLayout(row)
         params = [Param("width", "Width (X)", "length", 600.0, min=1.0),
                   Param("height", "Height (Y)", "length", 400.0, min=1.0),
                   Param("thickness", "Thickness", "length", 18.0, min=0.01)]
-        s = self.ctrl.settings
         form = ParamForm(params, s.recall("new_project", params), self.ctrl.units)
         lay.addWidget(form)
+        extra_holder = QVBoxLayout()
+        lay.addLayout(extra_holder)
+        state: dict = {"extra": None}
+
+        def fill_sizes() -> None:
+            size.blockSignals(True)
+            size.clear()
+            size.addItem("Ready sizes...", None)
+            for name, w, h in self.ctrl.sheet_sizes():
+                size.addItem(name, (w, h))
+            size.blockSignals(False)
+
+        def use_size(i: int) -> None:
+            wh = size.itemData(i)
+            if wh:
+                form.widgets["width"].setValue(self.ctrl.units.to_display(wh[0]))
+                form.widgets["height"].setValue(self.ctrl.units.to_display(wh[1]))
+
+        def sizes_edit() -> None:
+            if PresetsDialog(self.ctrl, dlg).exec():
+                fill_sizes()
+
+        def template_changed(*_) -> None:
+            t = next((x for x in presets.templates(self.ctrl.registry) if x["id"] == start.currentData()), None)
+            desc.setText(t["description"] if t else "")
+            if state["extra"] is not None:
+                extra_holder.removeWidget(state["extra"])
+                state["extra"].deleteLater()
+                state["extra"] = None
+            if t and t["params"]:
+                state["extra"] = ParamForm(t["params"], s.recall("new_project:" + t["id"], t["params"]), self.ctrl.units)
+                extra_holder.addWidget(state["extra"])
+        fill_sizes()
+        size.activated.connect(use_size)
+        edit.clicked.connect(sizes_edit)
+        start.currentIndexChanged.connect(template_changed)
+        template_changed()
         lay.addWidget(buttons(dlg, "Create"))
         if dlg.exec():
             v = form.values()
             s.remember("new_project", v, params)
+            tid = start.currentData() or ""
+            extra = state["extra"].values() if state["extra"] is not None else {}
+            if tid and state["extra"] is not None:
+                s.remember("new_project:" + tid, extra, state["extra"].params)
             target = self.ctrl if self.ctrl.pristine else self._new_tab()
-            target.new_project(v["width"], v["height"], v["thickness"])
+            try:
+                target.new_project(v["width"], v["height"], v["thickness"], tid, extra)
+            except Exception as exc:                      # (a template of a plugin that fails: said, nothing half made)
+                QMessageBox.warning(self, "New Project", f"{type(exc).__name__}: {exc}")
+                return
             self._name_new(target)
 
     def open_project(self, path: str | None = None) -> None:
@@ -1248,35 +1312,47 @@ class MainWindow(QMainWindow):
     def new_toolpath(self, op_id: str, sheet_group: str = "") -> None:
         if not isinstance(sheet_group, str):             # (a menu passes its own "checked")
             sheet_group = ""
-        dlg = ToolpathDialog(self.ctrl, op_id, None, self, sheet_group=sheet_group)
+        ctrl = self.ctrl                                  # (the project the window was opened for: not the tab that is open later)
+        dlg = ToolpathDialog(ctrl, op_id, None, self, sheet_group=sheet_group)
 
         def made() -> None:
             t = dlg.toolpath()  # once: every call makes a new definition with a new id
-            self.ctrl.add_toolpath(t)
-            self._report(t.id)
+            if t.selection.mode == "vectors":              # (vectors that are gone meanwhile are not asked for)
+                live = {o.id for s in ctrl.project.sheets for o in s.vectors}
+                t.selection.vector_ids = [i for i in t.selection.vector_ids if i in live]
+                if not t.selection.vector_ids:
+                    QMessageBox.information(self, "Toolpath", "The vectors of this toolpath are gone: select vectors and try again.")
+                    return
+            ctrl.add_toolpath(t)
+            self._report_for(ctrl, t.id)
         dlg.open_modeless(made)
 
     def edit_toolpath(self, tid: str) -> None:
-        t = self.ctrl.project.toolpath(tid)
+        ctrl = self.ctrl
+        t = ctrl.project.toolpath(tid)
         if t is None:
             return
-        if t.op not in self.ctrl.registry.operations:
+        if t.op not in ctrl.registry.operations:
             QMessageBox.warning(self, "Toolpath", f"The toolpath type '{t.op}' is not available (missing plugin?).")
             return
-        dlg = ToolpathDialog(self.ctrl, t.op, t, self)
+        dlg = ToolpathDialog(ctrl, t.op, t, self)
 
         def edited() -> None:
             new = dlg.toolpath()
             if dlg.keep_old.isChecked():                  # the name was changed and the original stays: a new toolpath
-                from ..core.document import new_id
                 new.id = new_id()
                 new.sequence = {k: v for k, v in new.sequence.items() if k != "order"}
-                self.ctrl.add_toolpath(new)
-                self._report(new.id)
+                ctrl.add_toolpath(new)
+                self._report_for(ctrl, new.id)
+            elif ctrl.apply_toolpath_edit(new):
+                self._report_for(ctrl, tid)
             else:
-                self.ctrl.replace_toolpath(new)
-                self._report(tid)
+                QMessageBox.information(self, "Toolpath", "This toolpath was deleted while its window was open.")
         dlg.open_modeless(edited)
+
+    def _report_for(self, ctrl, tid: str) -> None:
+        if ctrl is self.ctrl:
+            self._report(tid)
 
     def _report(self, tid: str) -> None:
         t = self.ctrl.project.toolpath(tid)
@@ -1421,7 +1497,7 @@ class MainWindow(QMainWindow):
         self.canvas.update()
         st = PathStats()
         for tp in tps:
-            st = st.merge(tp.stats(c.project.material.rapid_rate))
+            st = st.merge(tp.stats(c.project.material.machine()))
         self.statusBar().showMessage(f"Simulation done (resolution {hm.res:.2f} mm). Estimated machining time "
                                      f"{format_time(st.time_s)}", 8000)
 
@@ -1449,7 +1525,7 @@ class MainWindow(QMainWindow):
         c.toolpaths_changed.emit()
         st = PathStats()
         for tp in c.backplot:
-            st = st.merge(tp.stats(m.rapid_rate))
+            st = st.merge(tp.stats(m.machine()))
         self.statusBar().showMessage(f"{Path(path).name}: {len(c.backplot)} tool(s), cut length "
                                      f"{c.units.fmt(st.feed_length)}, estimated {format_time(st.time_s)}", 10000)
         return c.backplot
@@ -1617,7 +1693,7 @@ def job_report_html(ctrl) -> str:
                    "<th>Depth</th><th>Cut length</th><th>Time</th></tr>")
         total = PathStats()
         for i, tp in enumerate(tps, 1):
-            st = tp.stats(m.rapid_rate)
+            st = tp.stats(m.machine())
             total = total.merge(st)
             t = tp.tool
             out.append(f"<tr><td>{i}</td><td>{e(tp.name)}</td><td>T{t.number} {e(t.describe())}</td>"

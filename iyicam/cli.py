@@ -98,7 +98,7 @@ def cmd_info(a) -> int:
     for i, s in enumerate(p.sheets, 1):
         st = PathStats()
         for tp in sheet_toolpaths(p, res, s):
-            st = st.merge(tp.stats(p.material.rapid_rate))
+            st = st.merge(tp.stats(p.material.machine()))
         print(f"  sheet {i} '{s.name}' {s.width:g} x {s.height:g}: {len(s.vectors)} vectors, "
               f"machining {format_time(st.time_s)}")
     for (tid, sid), r in res.items():

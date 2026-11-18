@@ -255,7 +255,7 @@ class PostProcessor:
         self._pending: Rapid | None = None
         stats = PathStats()
         for tp in toolpaths:
-            stats = stats.merge(tp.stats(job.project.material.rapid_rate))
+            stats = stats.merge(tp.stats(job.project.material.machine()))
         base = self.job_vars(job, toolpaths, stats)
         self.block("header", base)
         if self._inverse:
@@ -344,7 +344,7 @@ class PostProcessor:
         if self.options["max_spindle"]:
             rpm = min(rpm, self.options["max_spindle"])
         coolant = {"mist": "M7", "flood": "M8"}.get(t.coolant, "")
-        st = tp.stats(job.project.material.rapid_rate)
+        st = tp.stats(job.project.material.machine())
         return {
             "tool_number": t.number, "tool_name": t.name, "tool_type": t.type,
             "tool_diameter": self.fmt(t.diameter * self._k), "tool_angle": self.fmt(t.angle, 1, coord=False),
