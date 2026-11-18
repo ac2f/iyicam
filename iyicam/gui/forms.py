@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from PySide6.QtCore import Signal
-from PySide6.QtGui import QDoubleValidator, QFont
+from PySide6.QtCore import QRegularExpression, Signal
+from PySide6.QtGui import QFont, QRegularExpressionValidator
 from PySide6.QtWidgets import (QCheckBox, QPushButton, QFormLayout, QGroupBox, QHBoxLayout, QLineEdit, QPlainTextEdit,
                                 QVBoxLayout, QWidget)
 from .wheelguard import QComboBox, QDoubleSpinBox, QFontComboBox, QSpinBox
@@ -21,7 +21,7 @@ class OptionalNumber(QLineEdit):
 
     def __init__(self, value: float | None, suffix: str = "", parent=None):
         super().__init__(parent)
-        self.setValidator(QDoubleValidator())
+        self.setValidator(QRegularExpressionValidator(QRegularExpression(r"[0-9+\-*/^().,eE× ÷:x−·]*")))   # (sums are taken)
         self.setPlaceholderText("auto")
         self.suffix = suffix
         self.set_value(value)
@@ -30,13 +30,8 @@ class OptionalNumber(QLineEdit):
         self.setText("" if v is None else f"{v:g}")
 
     def value(self) -> float | None:
-        t = self.text().strip().replace(",", ".")
-        if not t:
-            return None
-        try:
-            return float(t)
-        except ValueError:
-            return None
+        from ..core import calc
+        return calc.evaluate(self.text())
 
 
 class ParamForm(QWidget):

@@ -640,13 +640,54 @@ document.addEventListener("wheel", e => {
   if (el && el.tagName === "INPUT" && el.type === "number" && e.target === el) el.blur();
 }, { passive: true });
 
+/** The value of what was typed in a number box: a number or a sum (``12+3,5``, ``(100-8)/2``; a comma is a decimal point
+ *  like the dot). Numbers, ``+ - * / ^`` and brackets only: nothing is run. NaN when it is not one. */
+function calc(text) {
+  if (typeof text !== "string") return NaN;
+  const s = text.replace(/,/g, ".").replace(/[−]/g, "-").replace(/[×·x]/g, "*").replace(/[÷:]/g, "/").replace(/\s+/g, "");
+  if (!s) return NaN;
+  const toks = s.match(/\d+\.?\d*(?:[eE][+-]?\d+)?|\.\d+(?:[eE][+-]?\d+)?|[-+*/^()]|./g) || [];
+  let i = 0;
+  const peek = () => toks[i], take = () => toks[i++];
+  const bad = () => { throw new Error("calc"); };
+  function expr() { let v = term(); while (peek() === "+" || peek() === "-") v = take() === "+" ? v + term() : v - term(); return v; }
+  function term() { let v = power(); while (peek() === "*" || peek() === "/") { if (take() === "*") v *= power(); else { const d = power(); if (d === 0) bad(); v /= d; } } return v; }
+  function power() { const v = unary(); if (peek() === "^") { take(); const e = power(); if (Math.abs(e) > 64) bad(); return v ** e; } return v; }
+  function unary() { if (peek() === "-") { take(); return -unary(); } if (peek() === "+") { take(); return unary(); } return atom(); }
+  function atom() {
+    const t = take();
+    if (t === undefined) bad();
+    if (t === "(") { const v = expr(); if (take() !== ")") bad(); return v; }
+    if (!/^[\d.]/.test(t)) bad();
+    const v = Number(t); if (!Number.isFinite(v)) bad();
+    return v;
+  }
+  try { const v = expr(); return i === toks.length && Number.isFinite(v) ? v : NaN; } catch { return NaN; }
+}
+const isSum = text => !/^\s*[-+]?\s*(\d+[.,]?\d*|[.,]\d+)([eE][+-]?\d+)?\s*$/.test(text) && Number.isFinite(calc(text));
+
+/** A number box that takes sums. ``valueAsNumber`` gives the worked-out value (NaN when it is not a number), so the code that
+ *  reads number boxes does not change; the sum is replaced by its value when the box is left or Enter is pressed. */
+function calcInput(attrs = {}) {
+  const el = h("input", { ...attrs, type: "text", autocomplete: "off", autocapitalize: "off", spellcheck: "false" });
+  Object.defineProperty(el, "valueAsNumber", { get() { return calc(el.value); }, configurable: true });
+  const settle = () => { if (isSum(el.value)) { el.value = String(+calc(el.value).toFixed(6)); el.dispatchEvent(new Event("input")); } };
+  el.addEventListener("blur", settle);
+  el.addEventListener("keydown", e => { if (e.key === "Enter") settle(); });
+  return el;
+}
+
 function numberInput(value, onSet, p = {}) {
-  // (the "decimal" keypad of a phone has no minus sign, so it is asked for only where a number cannot be negative)
-  const el = h("input", { type: "number", step: p.kind === "int" ? "1" : "any", value: value ?? "" });
+  // (the "decimal" keypad of a phone has no minus sign or operators, so it is asked for only where a number cannot be negative)
+  const el = calcInput({ value: value ?? "" });
   if (p.min != null && p.min >= 0) el.setAttribute("inputmode", p.kind === "int" ? "numeric" : "decimal");
-  if (p.min != null) el.min = p.min;
-  if (p.max != null) el.max = p.max;
-  el.addEventListener("input", () => { if (Number.isFinite(el.valueAsNumber)) onSet(el.valueAsNumber); });
+  el.addEventListener("input", () => {
+    let v = el.valueAsNumber;
+    if (!Number.isFinite(v)) return;
+    if (p.min != null && v < p.min) v = p.min;
+    if (p.max != null && v > p.max) v = p.max;
+    onSet(p.kind === "int" ? Math.round(v) : v);
+  });
   return el;
 }
 
@@ -1048,7 +1089,7 @@ function viewProject() {
   const addToggle = h("input", { type: "checkbox", id: "addto", checked: true });
   out.push(h("div", { class: "card" }, h("h2", {}, t("open.title")),
     h("div", { class: "muted small" }, t("open.hint")),
-    h("label", { class: "f" }, h("span", {}, t("open.thickness")), h("input", { type: "number", id: "thk", inputmode: "decimal", step: "any", value: p ? p.material.thickness : 18 })),
+    h("label", { class: "f" }, h("span", {}, t("open.thickness")), calcInput({ id: "thk", value: p ? p.material.thickness : 18 })),
     p ? h("label", { class: "chk" }, addToggle, t("open.add")) : null,
     h("div", { class: "row", style: "margin-top:12px" },
       h("button", { class: "primary grow", onclick: () => { pick.onchange = e => openFile(e.target, !addToggle.checked); pick.click(); } }, "📂 " + t("open.pick")),
@@ -1121,7 +1162,7 @@ function viewProject() {
 
 /** the thickness of one sheet when it is not the material's (empty: the material's) */
 function thicknessOverride(s) {
-  const el = h("input", { type: "number", inputmode: "decimal", step: "any", value: s.thickness ?? "", placeholder: fmt(S.project.material.thickness, 2) });
+  const el = calcInput({ value: s.thickness ?? "", placeholder: fmt(S.project.material.thickness, 2) });
   el.addEventListener("input", () => { s.thickness = Number.isFinite(el.valueAsNumber) ? el.valueAsNumber : null; touch(); });
   return el;
 }
@@ -1432,7 +1473,7 @@ async function start() {
 }
 
 // what edit.js (the drawing tools) needs of this file; it adds ``editor`` to it
-window.IyiPage = { S, h, $, t, TXT, api, runJob, toast, fail, openSheet, paramsForm, numberInput, fmt, store, guarded, render, touch,
+window.IyiPage = { S, h, $, t, TXT, api, calc, calcInput, runJob, toast, fail, openSheet, paramsForm, numberInput, fmt, store, guarded, render, touch,
                    persist, changed, activeSheet, layerMap, flatOf, drawScene, fitView, setFile, editor: null, post: null,
                    sceneSegs, lodGroups, lang: () => lang, jobs: null, jobApply: {}, JobDeferred, deviceInfo, setBusy, ApiError,
                    lostConnection, wakePoll, recompute, EXTRA_TABS, SCENE_HOOKS, applyPatch, drawStage };

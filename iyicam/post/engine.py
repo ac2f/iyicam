@@ -49,6 +49,7 @@ DEFAULT_OPTIONS: dict[str, Any] = {
     "modal_motion": True,
     "modal_feed": True,
     "rapid_z_first": True,       # split diagonal rapids so the tool never dives sideways
+    "start_from_home": True,     # the first rapid of a file travels at the home Z (the header went there), then goes down
     "line_numbers": False,
     "line_number_start": 10,
     "line_number_step": 10,
@@ -197,6 +198,7 @@ class PostProcessor:
         thick = job.project.sheet_thickness(job.sheet)
         self._oz = thick if m.z_zero == "bottom" else 0.0
         self._k = 1.0 / 25.4 if self.options["units"] == "inch" else 1.0
+        self._home_z = m.home[2]
         self._rotary = m.rotary and m.rotary_diameter > 0
         self._circ = math.pi * m.rotary_diameter
         self._yl = self.options["rotary_letter"] if self._rotary else "Y"
@@ -428,6 +430,12 @@ class PostProcessor:
 
     def rapid(self, m: Rapid, tv: dict) -> None:
         p = self._pos
+        if p is None and self.options["start_from_home"] and self.options["rapid_z_first"] and m.z < self._home_z - 1e-9:
+            # the first move of the file: the tool is where the header left it, at the home Z (a job that goes home first and then
+            # starts): it travels over at that height and goes down last, it does not dive to the safe Z on the way
+            self._rapid_line(m.x, m.y, self._home_z, tv)
+            self._rapid_line(m.x, m.y, m.z, tv)
+            return
         if p is not None and self.options["rapid_z_first"]:
             moves_xy = abs(p[0] - m.x) > 1e-9 or abs(p[1] - m.y) > 1e-9
             if moves_xy and m.z > p[2] + 1e-9:

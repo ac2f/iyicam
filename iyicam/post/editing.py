@@ -136,6 +136,11 @@ OPTIONS: list[dict] = [
     _o("rapid_z_first", "lines", "bool", "Rapid: lift first, go down last", "Hızlı harekette: önce kaldır, en son in",
        "A rapid that changes Z and X Y is split so the tool never dives sideways into the material.",
        "Hem Z'yi hem X Y'yi değiştiren hızlı hareket bölünür; kesici malzemeye yandan dalmaz."),
+    _o("start_from_home", "lines", "bool", "First move: travel at the home Z, go down last",
+       "İlk hareket: ev Z'sinde git, en son in",
+       "The first rapid of a file goes over at the home Z (where the start of the file left the tool) and only then down "
+       "to the safe Z, instead of diving to it on the way.",
+       "Dosyanın ilk hızlı hareketi ev Z'sinde gider (dosya başının bıraktığı yükseklik), güvenli Z'ye yolda değil en son iner."),
     _o("line_numbers", "lines", "bool", "Number the lines (N10 N20 ...)", "Satırları numarala (N10 N20 ...)",
        "Some controllers need them to restart in the middle.", "Bazı kontrolcüler ortadan devam etmek için ister."),
     _o("line_number_start", "lines", "int", "First line number", "İlk satır numarası", "", "", lo=0, hi=99999),

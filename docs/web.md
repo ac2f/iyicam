@@ -526,3 +526,9 @@ being worked on, the button that started it pulses and shows a tick when it is d
 toolpaths and of the post editor are behind **More options** (the start and the end of the file, and the tool change,
 are the blocks that are in sight). The engine lists them as `advanced` (parameters) and `common` (post options and
 blocks) in `schema` and `posts`.
+
+## Sums in number boxes
+
+Every number box of the page and of the desktop program takes a sum: `12+3,5`, `(100-8)/2`, `2*7.5`. A comma is a decimal
+point like the dot. Numbers, `+ - * / ^` and brackets are understood (nothing is run); the sum is replaced by its value when
+the box is left or Enter is pressed, and a half-written sum keeps the value that was there.

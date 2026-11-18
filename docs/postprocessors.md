@@ -196,3 +196,10 @@ window a name typed over the proposed one in the file dialog is used as it is, a
 
 The order of the blocks in a file is always: start of the file, first tool / tool change, start of a toolpath, its
 moves, end of a toolpath (and so on for every toolpath), end of the file.
+
+## The first move of a file
+
+A job that goes to the home Z at the start of the file (a line like `G0 Z{home_z}` in the *Start of the file* block) and then
+starts: the first rapid of the file now travels over at the home Z (when that is higher than the toolpath's safe Z) and goes
+down to the safe Z last, instead of diving to it on the way. The option *First move: travel at the home Z, go down last*
+(`start_from_home`, on by default, with *Rapid: lift first, go down last* on) switches it off.

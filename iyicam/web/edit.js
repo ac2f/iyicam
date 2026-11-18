@@ -744,7 +744,7 @@
       if (!bb) return null;
       const [rx, ry] = refPoint(bb, E.ref);
       const refBtn = btn(REFS.find(([id]) => id === E.ref)[1], t("ed.ref") + " · " + t("ref." + E.ref), pickRef, false, sh_("ref"));
-      const field = (label, v) => h("input", { type: "number", step: "any", class: "coordin", value: +v.toFixed(3), "aria-label": label, enterkeyhint: "go" });
+      const field = (label, v) => B.calcInput({ class: "coordin", value: +v.toFixed(3), "aria-label": label, enterkeyhint: "go" });
       const X = field("X", rx), Y = field("Y", ry);
       const go = () => {
         const nx = X.valueAsNumber, ny = Y.valueAsNumber;
@@ -753,7 +753,7 @@
         if (applyMap(shiftMap(nx - rx, ny - ry), 0)) toast(t("ed.moved", fmt(nx, 2), fmt(ny, 2)), "ok");
       };
       for (const el of [X, Y]) el.addEventListener("keydown", ev => { if (ev.key === "Enter") { ev.preventDefault(); go(); } });
-      const stepIn = h("input", { type: "number", step: "any", min: "0", class: "coordin step", value: E.step, "aria-label": t("ed.step"), title: t("ed.step") });
+      const stepIn = B.calcInput({ class: "coordin step", value: E.step, "aria-label": t("ed.step"), title: t("ed.step") });
       stepIn.addEventListener("input", () => { if (stepIn.valueAsNumber > 0) { E.step = stepIn.valueAsNumber; B.store.set("iyicam.step", String(E.step)); } });
       const nudge = (icon, dx, dy) => btn(icon, t("ed.nudge", fmt(E.step, 3)), () => {
         const k = (mods(null).shift ? 10 : 1) * E.step;           // (Shift: ten times as far)
@@ -917,8 +917,8 @@
       if (!sel.length) { close(); return; }
       const bb = G.bbox(sel), w = bb.x1 - bb.x0, hh = bb.y1 - bb.y0, [rx, ry] = refPoint(bb, st.ref);
       const refGrid = h("div", { class: "refgrid", role: "radiogroup", "aria-label": t("tf.ref") }, REFS.map(([id, ic]) => h("button", { class: "ed" + (st.ref === id ? " on" : ""), title: t("tf.ref"), "aria-label": id, onclick: () => { st.ref = id; E.ref = id; B.store.set("iyicam.ref", id); build(); } }, ic)));
-      const X = h("input", { type: "number", step: "any", value: +rx.toFixed(4) }), Y = h("input", { type: "number", step: "any", value: +ry.toFixed(4) });      // (no "decimal" keypad: it has no minus sign on some phones)
-      const W = h("input", { type: "number", step: "any", inputmode: "decimal", value: +w.toFixed(4) }), H = h("input", { type: "number", step: "any", inputmode: "decimal", value: +hh.toFixed(4) });
+      const X = B.calcInput({ value: +rx.toFixed(4) }), Y = B.calcInput({ value: +ry.toFixed(4) });      // (no "decimal" keypad: it has no minus sign on some phones)
+      const W = B.calcInput({ value: +w.toFixed(4) }), H = B.calcInput({ value: +hh.toFixed(4) });
       W.addEventListener("input", () => { if (st.prop && w > 1e-9 && Number.isFinite(W.valueAsNumber)) H.value = +(W.valueAsNumber * hh / w).toFixed(4); });
       H.addEventListener("input", () => { if (st.prop && hh > 1e-9 && Number.isFinite(H.valueAsNumber)) W.value = +(H.valueAsNumber * w / hh).toFixed(4); });
       const prop = h("input", { type: "checkbox", checked: st.prop }); prop.onchange = () => { st.prop = prop.checked; };
