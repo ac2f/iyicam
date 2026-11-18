@@ -148,6 +148,8 @@ class SheetDialog(QDialog):
         self.setWindowTitle("Sheet")
         u = ctrl.units
         params = [Param("name", "Name", "str", sheet.name),
+                  Param("group", "Group", "str", sheet.group, help="Sheets of one group are nested onto together and can "
+                                                                    "have toolpaths of their own"),
                   Param("width", "Width (X)", "length", sheet.width, min=1.0),
                   Param("height", "Height (Y)", "length", sheet.height, min=1.0),
                   Param("own_thickness", "Own thickness", "bool", sheet.thickness is not None),
@@ -179,6 +181,9 @@ class SheetDialog(QDialog):
         with self.ctrl.edit("Sheet properties"):
             s = self.sheet
             s.name, s.width, s.height = v["name"], v["width"], v["height"]
+            if (v["group"] or "").strip() != s.group:
+                s.group = (v["group"] or "").strip()
+                self.ctrl.stale = bool(self.ctrl.project.toolpaths)
             s.thickness = v["thickness"] if v["own_thickness"] else None
             if self.plain.isChecked():
                 s.outline = None
@@ -510,7 +515,7 @@ class ToolDatabaseDialog(RemembersSize, QDialog):
 # ---------------------------------------------------------------------------
 
 class ToolpathDialog(RemembersSize, QDialog):
-    def __init__(self, ctrl, op_id: str, tdef: ToolpathDef | None = None, parent=None):
+    def __init__(self, ctrl, op_id: str, tdef: ToolpathDef | None = None, parent=None, sheet_group: str = ""):
         super().__init__(parent)
         self.ctrl = ctrl
         self.op = ctrl.registry.operations[op_id]
@@ -567,6 +572,19 @@ class ToolpathDialog(RemembersSize, QDialog):
         self.all_sheets.setChecked(self.tdef is None and mem.get("all_sheets", True) is not False
                                    or self.tdef is not None and self.tdef.sheet_ids is None)
         vl.addWidget(self.all_sheets)
+        self.group_box = QComboBox()
+        self.group_box.addItem("(not by group)", "")
+        for g in ctrl.sheet_groups():
+            self.group_box.addItem(f"Only on the sheets of the group: {g}", g)
+        want = sheet_group or (self.tdef.sheet_group if self.tdef else "")
+        if want and self.group_box.findData(want) < 0:
+            self.group_box.addItem(f"Only on the sheets of the group: {want}", want)
+        self.group_box.setCurrentIndex(max(0, self.group_box.findData(want)))
+        self.group_box.setToolTip("The toolpath is calculated on the sheets of one group of sheets only (and on those that are "
+                                  "put in the group later)")
+        self.group_box.currentIndexChanged.connect(lambda *_: self.all_sheets.setEnabled(not self.group_box.currentData()))
+        self.all_sheets.setEnabled(not self.group_box.currentData())
+        vl.addWidget(self.group_box)
         cur_ids = [o.id for o in ctrl.selected_objects()]
         if self.tdef and self.tdef.selection.mode == "vectors" and not cur_ids:
             cur_ids = list(self.tdef.selection.vector_ids)
@@ -710,17 +728,19 @@ class ToolpathDialog(RemembersSize, QDialog):
             sel = Selection("layers", [], layers)
         else:
             sel = Selection("vectors", list(self.vector_ids), [])
-        sheets = None if self.all_sheets.isChecked() else [self.ctrl.sheet_id]
+        group = self.group_box.currentData() or ""
+        sheets = None if group or self.all_sheets.isChecked() else [self.ctrl.sheet_id]
         params = {k: v for k, v in self.form.values().items()}
         safe_z, clearance = self.heights()
         if self.tdef:
             t = self.tdef
             t.name, t.tool, t.params, t.selection, t.sheet_ids = self.name.text(), self.tool_editor.tool(), \
                 params, sel, sheets
+            t.sheet_group = group
             t.safe_z, t.clearance = safe_z, clearance
             return t
         return ToolpathDef(self.name.text(), self.op.id, self.tool_editor.tool(), params, sel, True, sheets,
-                           safe_z=safe_z, clearance=clearance)
+                           safe_z=safe_z, clearance=clearance, sheet_group=group)
 
     def accept(self) -> None:
         if self.rb_sel.isChecked() and not self.vector_ids:
@@ -1054,8 +1074,9 @@ class NestingDialog(RemembersSize, QDialog):
                   help="Usually the cutter diameter plus a little clearance"),
             Param("target", "Place on", "choice", "current",
                   choices=[("current", "Current sheet first (around what stays on it), then the stock"),
-                           ("all", "All sheets first (around what stays on them), then the stock"),
-                           ("new", "The stock and new sheets only")],
+                           ("all", "All sheets first (around what stays on them), then the stock")]
+                  + [(f"group:{g}", f"The sheets of the group '{g}' first (around what stays on them), then the stock")
+                     for g in ctrl.sheet_groups()] + [("new", "The stock and new sheets only")],
                   group="Sheets"),
             Param("new_sheets", "Use reserve (new) sheets when the plates are full", "bool", True, group="Sheets"),
             Param("use_up", "Take the plates used out of the stock", "bool", True, group="Sheets",
@@ -1388,7 +1409,8 @@ class NestingDialog(RemembersSize, QDialog):
         table = self.stock_table
         stock = [table.item(r) for r in range(len(table.items)) if table.used(r)]
         target = v["target"]
-        use_sheets = [ctrl.sheet] if target == "current" else list(ctrl.project.sheets) if target == "all" else []
+        use_sheets = ([ctrl.sheet] if target == "current" else list(ctrl.project.sheets) if target == "all"
+                      else ctrl.sheets_in(target[6:]) if target.startswith("group:") else [])
         # the rules are kept with the project, and stay when the nesting is undone
         ctrl.project.metadata["nesting"] = {"part_rules": part_rules, "layer_rules": layer_rules,
                                             "quantities": {k: n for k, n in quantities.items() if n != 1}}

@@ -795,11 +795,15 @@ def op_nest(payload: dict, ctl: JobControl | None = None) -> dict:
                            allowed=list(STOCK_ORDERS))
     st.stock_order = order
     place_on = str(s.get("place_on") or "new")    # new: the plates and sheets above; current / all: the free area of sheets first
-    if place_on not in ("new", "current", "all"):
-        raise ServiceError("bad_request", "'place_on' must be one of: new, current, all", field="place_on")
+    if place_on not in ("new", "current", "all", "group"):
+        raise ServiceError("bad_request", "'place_on' must be one of: new, current, all, group", field="place_on")
     sheet_id = str(payload.get("sheet") or "")
+    group = str(s.get("group") or payload.get("group") or "")
+    if place_on == "group" and not any(x.group == group for x in p.sheets):
+        raise ServiceError("unknown_group", "there is no such group of sheets", group=group)
     on_sheets = ([next((x for x in p.sheets if x.id == sheet_id), p.sheets[0])] if place_on == "current"
-                 else list(p.sheets) if place_on == "all" else [])
+                 else list(p.sheets) if place_on == "all" else [x for x in p.sheets if x.group == group]
+                 if place_on == "group" else [])
     plates = bool(stock) or no_new or bool(on_sheets)
     qty = int(_num(s, "quantity", 1, 1, 10000))
     quantities = {o.id: qty for o in objs}

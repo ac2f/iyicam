@@ -203,3 +203,18 @@ A job that goes to the home Z at the start of the file (a line like `G0 Z{home_z
 starts: the first rapid of the file now travels over at the home Z (when that is higher than the toolpath's safe Z) and goes
 down to the safe Z last, instead of diving to it on the way. The option *First move: travel at the home Z, go down last*
 (`start_from_home`, on by default, with *Rapid: lift first, go down last* on) switches it off.
+
+## Sums in the blocks (a post that follows the job)
+
+Inside the braces of a block a sum of variables and numbers is worked out: `G0 Y{sheet_height + 50}` ends 50 mm above the
+sheet (whatever its length is), `G0 X{sheet_width/2}` goes to the middle, `{(home_x + 10) * 2}`. Numbers, variables, `+ - * / ^` and
+brackets are understood; the answer is written like a coordinate (the decimals of the post). The numbers are in the units of
+the file, as the variables are (in an inch post write `{sheet_height + 50/25.4}`). A sum that cannot be read is refused when the
+post is saved, and a name that is not a variable (or has no number, like `{X}`) is warned about.
+
+## Groups of sheets
+
+Sheets can be put in groups (the *Group* of the sheet's properties, or the right-click menu of the Sheets panel; the page: the
+*Sheet group* field of a sheet on the Project tab). A group is nested onto together (*Place on: the sheets of the group*, `place_on:
+"group"` with `group` in the engine) and a toolpath can be made for a group only (*Only on the sheets of the group* in its dialog,
+`sheet_group` in the project): it is calculated on the sheets of the group, also on those put in it later.

@@ -456,6 +456,30 @@ class Controller(CutControl, QObject):
                 t.enabled = (t.id in ids) == enabled
         self.toolpaths_changed.emit()
 
+    # -- groups of sheets --------------------------------------------------------------------------------
+    def sheet_groups(self) -> list[str]:
+        """The names of the groups of sheets, in the order their first sheet comes."""
+        return list(dict.fromkeys(s.group for s in self.project.sheets if s.group))
+
+    def sheets_in(self, name: str) -> list[Sheet]:
+        return [s for s in self.project.sheets if s.group == name]
+
+    def set_sheet_group(self, ids, name: str) -> int:
+        """Put the sheets in the group ``name`` ("" takes them out of their group). How many changed. A toolpath of a group that
+        is left without a sheet calculates nothing until sheets are put in it again."""
+        name = (name or "").strip()
+        ids = set(ids)
+        todo = [s for s in self.project.sheets if s.id in ids and s.group != name]
+        if not todo:
+            return 0
+        with self.edit("Group sheets" if name else "Ungroup sheets", geometry=False):
+            for s in todo:
+                s.group = name
+        self.stale = bool(self.project.toolpaths)
+        self.toolpaths_changed.emit()
+        self.sheet_changed.emit()
+        return len(todo)
+
     def move_toolpath(self, tid: str, delta: int) -> None:
         tps = self.project.toolpaths
         i = next((k for k, t in enumerate(tps) if t.id == tid), None)

@@ -226,8 +226,11 @@ class SheetsPanel(DocPanel):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(2, 2, 2, 2)
         self.list = QListWidget()
+        self.list.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.list.currentRowChanged.connect(self._row_changed)
         self.list.itemDoubleClicked.connect(lambda *_: self.properties())
+        self.list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.list.customContextMenuRequested.connect(self._menu)
         lay.addWidget(self.list)
         row = QHBoxLayout()
         for text, tip, slot in (("+", "Add sheet", self.add), ("⧉", "Duplicate sheet", self.duplicate),
@@ -247,7 +250,7 @@ class SheetsPanel(DocPanel):
             t = self.ctrl.project.sheet_thickness(s)
             shape = "  (shape)" if s.outline else ""
             it = QListWidgetItem(f"{s.name}  —  {u.fmt(s.width)} x {u.fmt(s.height)} x {u.fmt(t)}{shape}  "
-                                 f"[{len(s.vectors)}]")
+                                 f"[{len(s.vectors)}]" + (f"   ▣ {s.group}" if s.group else ""))
             it.setData(Qt.UserRole, s.id)
             self.list.addItem(it)
             if s.id == self.ctrl.sheet_id:
@@ -257,6 +260,55 @@ class SheetsPanel(DocPanel):
     def _row_changed(self, row: int) -> None:
         if not self._updating and row >= 0:
             self.ctrl.set_sheet(self.list.item(row).data(Qt.UserRole))
+
+    def selected_ids(self) -> list[str]:
+        return [it.data(Qt.UserRole) for it in self.list.selectedItems()] or [self.ctrl.sheet_id]
+
+    def _menu(self, pos) -> None:
+        m = QMenu(self)
+        g = m.addMenu("Group")
+        g.addAction("New group from the selected...", self.new_group)
+        for name in self.ctrl.sheet_groups():
+            sub = g.addMenu(name)
+            sub.addAction("Put the selected in it", lambda n=name: self.ctrl.set_sheet_group(self.selected_ids(), n))
+            sub.addAction("Select its sheets", lambda n=name: self._select_group(n))
+            sub.addAction("Rename...", lambda n=name: self.rename_group(n))
+            sub.addAction("Nest onto this group...", lambda n=name: self.nest_on(n))
+            sub.addAction("New toolpath for this group", lambda n=name: self.toolpath_for(n))
+        g.addSeparator()
+        g.addAction("Take the selected out of their group", lambda: self.ctrl.set_sheet_group(self.selected_ids(), ""))
+        m.addAction("Properties...", self.properties)
+        menus.show_menu(m, self.list.mapToGlobal(pos))
+
+    def new_group(self) -> None:
+        name, ok = QInputDialog.getText(self, "Group of sheets", "Name of the group:")
+        if ok and name.strip():
+            self.ctrl.set_sheet_group(self.selected_ids(), name)
+
+    def rename_group(self, old: str) -> None:
+        name, ok = QInputDialog.getText(self, "Group of sheets", "New name:", text=old)
+        if ok and name.strip():
+            ids = [s.id for s in self.ctrl.sheets_in(old)]
+            self.ctrl.set_sheet_group(ids, name)
+            for t in self.ctrl.project.toolpaths:          # (the toolpaths of the group follow its name)
+                if t.sheet_group == old:
+                    t.sheet_group = name.strip()
+            self.ctrl.toolpaths_changed.emit()
+
+    def _select_group(self, name: str) -> None:
+        ids = {s.id for s in self.ctrl.sheets_in(name)}
+        for i in range(self.list.count()):
+            self.list.item(i).setSelected(self.list.item(i).data(Qt.UserRole) in ids)
+
+    def nest_on(self, name: str) -> None:
+        win = self.window()
+        if hasattr(win, "nest"):
+            win.nest(group=name)
+
+    def toolpath_for(self, name: str) -> None:
+        win = self.window()
+        if hasattr(win, "new_toolpath"):
+            win.new_toolpath("profile", sheet_group=name)
 
     def add(self) -> None:
         with self.ctrl.edit("Add sheet", geometry=False):

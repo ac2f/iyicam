@@ -7,18 +7,29 @@ import math
 import re
 
 _TOKEN = re.compile(r"\s*(\d+\.?\d*(?:[eE][+-]?\d+)?|\.\d+(?:[eE][+-]?\d+)?|[-+*/^()×÷x:])")
+_TOKEN_NAMES = re.compile(r"\s*(\d+\.?\d*(?:[eE][+-]?\d+)?|\.\d+(?:[eE][+-]?\d+)?|[A-Za-z_][A-Za-z0-9_]*|[-+*/^()×÷])")
 
 
-def evaluate(text: str) -> float | None:
-    """The value of ``text``, or ``None`` when it is not a number or a sum."""
+def identifiers(text: str) -> list[str]:
+    """The names a sum with names uses."""
+    return re.findall(r"(?<![\w.])[A-Za-z_][A-Za-z0-9_]*", text)
+
+
+def evaluate(text: str, names: dict | None = None) -> float | None:
+    """The value of ``text``, or ``None`` when it is not a number or a sum. With ``names`` (a dict of numbers) the sum may
+    use them: ``sheet_height + 50`` (a name that is not in the dict makes it ``None``); a comma is not a decimal point
+    then."""
     if not isinstance(text, str):
         return None
-    s = text.strip().replace(",", ".").replace("−", "-").replace("·", "*")
+    s = text.strip().replace("−", "-").replace("·", "*")
+    if names is None:
+        s = s.replace(",", ".")
     if not s:
         return None
+    token = _TOKEN if names is None else _TOKEN_NAMES
     toks, i = [], 0
     while i < len(s):
-        m = _TOKEN.match(s, i)
+        m = token.match(s, i)
         if not m:
             return None
         t = m.group(1)
@@ -84,8 +95,12 @@ def evaluate(text: str) -> float | None:
                 raise ValueError
             take()
             return v
-        if t in "+-*/^)":
+        if t in ("+", "-", "*", "/", "^", ")"):
             raise ValueError
+        if names is not None and re.match(r"[A-Za-z_]", t):
+            if t not in names:
+                raise ValueError
+            return float(names[t])
         return float(t)
 
     try:

@@ -73,6 +73,7 @@
     "nest.reserveqty": "En çok kaç rezerve tabaka (0 = gerektiği kadar)", "nest.noreserve": "Rezerve plaka yok: sığmayanları yalnız bildir",
     "nest.order": "Plakaların kullanım sırası", "nest.o.listed": "Yazıldığı sırayla", "nest.o.best": "En uygun sıra (ebatların sırasını dener, en az malzemeyi seçer)", "nest.o.largest": "Büyükten küçüğe",
     "nest.onsheet": "Önce bu tabakanın boş alanını kullan (üzerinde kalanların çevresine)",
+    "nest.ongroup": "Şu tabaka grubunun boş alanına diz", "nest.nogroup": "(grup kullanma)",
     "nest.leftover.none": "Bu tabakada saklamaya değer artık yok.", "nest.leftover.added": "{0} artık plaka eklendi.",
     "e.command_failed": "Komut uygulanamadı.", "e.nothing_to_nest": "Yerleştirilecek vektör yok.",
     "paths.bylayers": "Katmanlar", "paths.byvectors": "Seçili vektörler ({0})", "paths.novec": "Önce çizimde vektör seç.",
@@ -157,6 +158,7 @@
     "nest.reserveqty": "Reserve sheets at most (0 = as many as needed)", "nest.noreserve": "No reserve plate: only report what does not fit",
     "nest.order": "Order of the plates", "nest.o.listed": "As listed", "nest.o.best": "Best order (tries the orders of the sizes, keeps the one using the least material)", "nest.o.largest": "Largest first",
     "nest.onsheet": "Use the free area of this sheet first (around what stays on it)",
+    "nest.ongroup": "Nest onto the free area of the sheets of this group", "nest.nogroup": "(no group)",
     "nest.leftover.none": "Nothing worth keeping is left on this sheet.", "nest.leftover.added": "{0} leftover plate(s) added.",
     "e.command_failed": "The command could not be applied.", "e.nothing_to_nest": "There is nothing to nest.",
     "paths.bylayers": "Layers", "paths.byvectors": "Selected vectors ({0})", "paths.novec": "Select vectors on the drawing first.",
@@ -1082,6 +1084,7 @@
       o.reserve = s.noReserve ? false : { width: s.width, height: s.height, quantity: s.reserveQty || 0 };
     }
     if (s.onSheet) o.place_on = "current";
+    if (s.onGroup) { o.place_on = "group"; o.group = s.onGroup; }
     return o;
   }
   function nestDialog() {
@@ -1132,6 +1135,11 @@
     const orderBox = pick(t("nest.order"), "order", [["listed", t("nest.o.listed")], ["best", t("nest.o.best")], ["largest", t("nest.o.largest")]]);
     const noRes = h("input", { type: "checkbox", checked: !!s.noReserve }); noRes.onchange = () => { s.noReserve = noRes.checked; };
     const onSheet = h("input", { type: "checkbox", checked: !!s.onSheet }); onSheet.onchange = () => { s.onSheet = onSheet.checked; };
+    const sgroups = [...new Set(S.project.sheets.map(x => x.group).filter(Boolean))];       // (the sheets of a group are nested onto together)
+    const onGroupSel = h("select", {}, h("option", { value: "" }, t("nest.nogroup")), sgroups.map(g => h("option", { value: g }, "▣ " + g)));
+    onGroupSel.value = sgroups.includes(s.onGroup) ? s.onGroup : "";
+    onGroupSel.onchange = () => { s.onGroup = onGroupSel.value; };
+    const onGroupBox = sgroups.length ? h("label", { class: "f" }, h("span", {}, t("nest.ongroup")), onGroupSel) : h("div");
     let close;
     const run = () => B.guarded(async () => {
       B.store.set("iyicam.nest", JSON.stringify(s));
@@ -1160,7 +1168,7 @@
       h("div", { class: "group-h" }, t("nest.reserve")), h("div", { class: "hint" }, t("nest.reserve.hint")),
       h("div", { class: "grid2" }, num(t("nest.w"), "width"), num(t("nest.h"), "height")),
       h("div", { class: "grid2" }, num(t("nest.reserveqty"), "reserveQty", { kind: "int", min: 0 })),
-      h("label", { class: "chk" }, noRes, t("nest.noreserve")), h("label", { class: "chk" }, onSheet, t("nest.onsheet")),
+      h("label", { class: "chk" }, noRes, t("nest.noreserve")), h("label", { class: "chk" }, onSheet, t("nest.onsheet")), onGroupBox,
       h("div", { class: "group-h" }, t("nest.how")),
       h("div", { class: "grid2" }, num(t("nest.margin"), "margin"), num(t("nest.spacing"), "spacing")),
       h("div", { class: "grid2" }, num(t("nest.rot"), "rotation"), num(t("nest.copies"), "copies", { kind: "int", min: 1 })),

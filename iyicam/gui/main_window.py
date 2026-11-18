@@ -1245,8 +1245,10 @@ class MainWindow(QMainWindow):
             self.ctrl.add_vectors(objs, "Paste")
 
     # -- toolpaths ----------------------------------------------------------------------------------
-    def new_toolpath(self, op_id: str) -> None:
-        dlg = ToolpathDialog(self.ctrl, op_id, None, self)
+    def new_toolpath(self, op_id: str, sheet_group: str = "") -> None:
+        if not isinstance(sheet_group, str):             # (a menu passes its own "checked")
+            sheet_group = ""
+        dlg = ToolpathDialog(self.ctrl, op_id, None, self, sheet_group=sheet_group)
         if dlg.exec():
             t = dlg.toolpath()  # once: every call makes a new definition with a new id
             self.ctrl.add_toolpath(t)
@@ -1438,7 +1440,9 @@ class MainWindow(QMainWindow):
         self.sim_action.setChecked(False)
         self.canvas.update()
 
-    def nest(self) -> None:
+    def nest(self, group: str | None = None) -> None:
+        if not isinstance(group, str):                   # (a menu passes its own "checked")
+            group = None
         c = self.ctrl
         pool = [o for o in (c.selected_objects() or list(c.sheet.vectors)) if c.editable(o)]  # locked layers stay put
         if not pool:
@@ -1457,6 +1461,10 @@ class MainWindow(QMainWindow):
                 with c.edit("Delete duplicates"):
                     c.project.remove_vectors(extra)
         dlg = NestingDialog(c, self)
+        if group:
+            w = dlg.form.widgets.get("target") if hasattr(dlg, "form") else None
+            if w is not None and w.findData(f"group:{group}") >= 0:
+                w.setCurrentIndex(w.findData(f"group:{group}"))
         if dlg.exec():
             out = dlg.run()
             if out is None:  # cancelled: nothing changed

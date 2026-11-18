@@ -388,7 +388,16 @@ def check_blocks(blocks: dict) -> tuple[dict, list[str]]:
             raise PostEditError(f"block {name} is too long")
         for f in placeholders(text):
             if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", f):
-                raise PostEditError(f"block {name}: {{{f}}} is not a name of a variable (only {{name}} is allowed)")
+                # a sum of variables and numbers: {sheet_height + 50}
+                from ..core import calc
+                names = calc.identifiers(f)
+                if not names or calc.evaluate(f, {n: 1.0 for n in names}) is None:
+                    raise PostEditError(f"block {name}: {{{f}}} is not a name of a variable or a sum of them "
+                                        "(numbers, variables, + - * / ^ and brackets)")
+                for n in names:
+                    if n not in KNOWN_NAMES or n in WORD_NAMES or n in ("text", "dwell"):
+                        warn.append(f"block {name}: {{{f}}} uses {n}, which has no number in it")
+                continue
             if f not in KNOWN_NAMES:
                 warn.append(f"block {name}: there is no variable {{{f}}}")
         out[name] = text

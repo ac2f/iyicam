@@ -93,6 +93,7 @@ class Sheet:
     # outlines of the material (outer boundaries and holes) when the plate is not a full rectangle
     # (a leftover); the sheet size is then the bounding box of the outline
     outline: list[list[Pt]] | None = None
+    group: str = ""     # the sheets of one group are nested onto together and can have toolpaths of their own ("" = none)
 
     def region(self) -> list[list[Pt]]:
         """Outlines of the material: the outline of a leftover, else the rectangle."""
@@ -146,6 +147,7 @@ class ToolpathDef:
     clearance: float | None = None   # None = the project's safe Z / rapid-down clearance
     group: str = ""                  # the name of the group of toolpaths this one is in ("" = none): a group is saved,
                                      # switched on and off, and sent to the machine as one
+    sheet_group: str = ""            # calculated only on the sheets of this group of sheets ("" = see ``sheet_ids``)
 
 
 class Project:
@@ -341,7 +343,8 @@ def toolpath_to_dict(t: ToolpathDef) -> dict:
             "params": _jsonable(t.params), "enabled": t.enabled, "sheets": t.sheet_ids,
             "selection": {"mode": t.selection.mode, "vectors": list(t.selection.vector_ids),
                           "layers": list(t.selection.layer_ids)}, "sequence": _jsonable(t.sequence),
-            "safe_z": t.safe_z, "clearance": t.clearance, **({"group": t.group} if t.group else {})}
+            "safe_z": t.safe_z, "clearance": t.clearance, **({"group": t.group} if t.group else {}),
+            **({"sheet_group": t.sheet_group} if t.sheet_group else {})}
 
 
 def _jsonable(v):
@@ -371,7 +374,8 @@ def toolpath_from_dict(d: dict) -> ToolpathDef:
                                  list(sel.get("layers", []))),
                        d.get("enabled", True), d.get("sheets"), d["id"], dict(d.get("sequence") or {}),
                        _height(d.get("safe_z")), _height(d.get("clearance")),
-                       d["group"].strip() if isinstance(d.get("group"), str) else "")
+                       d["group"].strip() if isinstance(d.get("group"), str) else "",
+                       d["sheet_group"].strip() if isinstance(d.get("sheet_group"), str) else "")
 
 
 def _height(v):
@@ -390,7 +394,8 @@ def project_to_dict(p: Project) -> dict:
                     "locked": l.locked} for l in p.layers],
         "sheets": [{"id": s.id, "name": s.name, "width": s.width, "height": s.height,
                     "thickness": s.thickness, "vectors": [vector_to_dict(v) for v in s.vectors],
-                    "outline": [[[x, y] for x, y in poly] for poly in s.outline] if s.outline else None}
+                    "outline": [[[x, y] for x, y in poly] for poly in s.outline] if s.outline else None,
+                    **({"group": s.group} if s.group else {})}
                    for s in p.sheets],
         "stock": [it.to_dict() for it in p.stock],
         "toolpaths": [toolpath_to_dict(t) for t in p.toolpaths],
@@ -413,7 +418,8 @@ def project_from_dict(d: dict) -> Project:
                       l["id"]) for l in d.get("layers", [])] or p.layers
     p.sheets = [Sheet(s["name"], s.get("width", 600.0), s.get("height", 400.0),
                       [vector_from_dict(v) for v in s.get("vectors", [])], s.get("thickness"), s["id"],
-                      [[(float(x), float(y)) for x, y in poly] for poly in s["outline"]] if s.get("outline") else None)
+                      [[(float(x), float(y)) for x, y in poly] for poly in s["outline"]] if s.get("outline") else None,
+                      s["group"].strip() if isinstance(s.get("group"), str) else "")
                 for s in d.get("sheets", [])] or p.sheets
     p.stock = [StockItem.from_dict(x) for x in d.get("stock", [])]
     p.toolpaths = [toolpath_from_dict(t) for t in d.get("toolpaths", [])]

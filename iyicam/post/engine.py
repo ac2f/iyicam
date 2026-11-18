@@ -364,9 +364,30 @@ class PostProcessor:
             tpl = "\n".join(l for l in tpl.split("\n") if not self._is_comment(l.strip()))
         if self._rotary:  # Y positions are angles on a wrapped job
             tpl = re.sub(r"Y(?=\{(?:home_y|ymin|ymax)\})", self._yl, tpl)
+        tpl = self._sums(tpl, variables)
         text = string.Formatter().vformat(tpl, (), _Vars(variables))
         for ln in text.split("\n"):
             self.emit(ln)
+
+    _SUM = re.compile(r"\{([^{}!:]*[-+*/^()][^{}!:]*)\}")
+
+    def _sums(self, tpl: str, variables: dict) -> str:
+        """``{sheet_height + 50}``: a sum of variables and numbers is worked out and written like a coordinate (the decimals
+        and the units of the post); it is in the units of the file, as the variables are."""
+        if "{" not in tpl or not self._SUM.search(tpl):
+            return tpl
+        from ..core import calc
+        nums = {}
+        for k, v in variables.items():
+            try:
+                nums[k] = float(str(v).replace(",", "."))
+            except ValueError:
+                pass
+
+        def put(m):
+            v = calc.evaluate(m.group(1), nums)
+            return self.fmt(v) if v is not None else "0"
+        return self._SUM.sub(put, tpl)
 
     def emit(self, line: str) -> None:
         ln = re.sub(r"[ \t]+", " ", line).strip()

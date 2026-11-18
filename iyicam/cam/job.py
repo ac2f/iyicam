@@ -30,6 +30,9 @@ class ComputeCancelled(BaseException):
 
 
 def sheets_for(project: Project, tdef: ToolpathDef) -> list[Sheet]:
+    """The sheets a toolpath is calculated on: the ones listed, else the sheets of its sheet group, else every sheet."""
+    if tdef.sheet_ids is None and tdef.sheet_group:
+        return [s for s in project.sheets if s.group == tdef.sheet_group]
     if tdef.sheet_ids is None:
         return list(project.sheets)
     wanted = set(tdef.sheet_ids)

@@ -37,6 +37,7 @@ const TXT = {
     "more.show": "▸ Daha fazla seçenek ({0})", "more.fewer": "▾ Daha az seçenek",
     "name.title": "Dosya adı", "name.hint": "Her ön ek ayrı yazılır, aralarına ayraç konur. {değişken} yazılan yere değeri gelir; düğmeler ekler.",
     "name.add": "＋ Ön ek ekle", "name.sep": "Ayraç", "name.files": "Dosyalar: {0}", "name.remove": "Bu ön eki kaldır",
+    "sg.label": "Tabaka grubu", "sg.none": "(grupsuz)", "sg.only": "Yalnız şu tabaka grubunda hesapla", "sg.all": "(her tabaka)",
     "grp.label": "Grup", "grp.none": "(grupsuz)", "grp.new": "Yeni grup adı", "grp.hint": "Aynı gruptaki takım yolları birlikte açılır/kapanır ve tek dosyada kaydedilebilir.",
     "grp.which": "Dosyaya girecek takım yolları", "grp.all": "Hepsi", "grp.noneSel": "Hiçbiri", "grp.onlyGroup": "Yalnız grup: {0}", "grp.pickOne": "En az bir takım yolu seç.",
     "grp.save": "Seçilenleri tek dosyada üret", "grp.count": "{0} / {1} seçili",
@@ -100,6 +101,7 @@ const TXT = {
     "more.show": "▸ More options ({0})", "more.fewer": "▾ Fewer options",
     "name.title": "File name", "name.hint": "Every prefix is written on its own, the separator goes between them. Where {variable} is written its value is put in; the buttons add them.",
     "name.add": "＋ Add a prefix", "name.sep": "Separator", "name.files": "Files: {0}", "name.remove": "Remove this prefix",
+    "sg.label": "Sheet group", "sg.none": "(no group)", "sg.only": "Calculate only on the sheets of this group", "sg.all": "(every sheet)",
     "grp.label": "Group", "grp.none": "(no group)", "grp.new": "New group name", "grp.hint": "Toolpaths of one group are switched on and off together and can be saved in one file.",
     "grp.which": "Toolpaths in the file", "grp.all": "All", "grp.noneSel": "None", "grp.onlyGroup": "Only group: {0}", "grp.pickOne": "Choose at least one toolpath.",
     "grp.save": "Write the chosen ones as one file", "grp.count": "{0} of {1} chosen",
@@ -785,6 +787,11 @@ function editToolpath(existing) {
   const modeSel = h("select", {}, h("option", { value: "layers" }, t("paths.bylayers")), h("option", { value: "vectors" }, t("paths.byvectors", vecIds.length)));
   modeSel.value = mode;
   const opBox = h("div"), toolBox = h("div"), name = h("input", { type: "text", value: tp.name });
+  const sgroups = [...new Set(p.sheets.map(x => x.group).filter(Boolean))];
+  const sgSel = h("select", {}, h("option", { value: "" }, t("sg.all")), sgroups.map(g => h("option", { value: g }, "▣ " + g)));
+  if (tp.sheet_group && !sgroups.includes(tp.sheet_group)) sgSel.append(h("option", { value: tp.sheet_group }, "▣ " + tp.sheet_group));
+  sgSel.value = tp.sheet_group || "";
+  const sheetGroupBox = sgroups.length || tp.sheet_group ? h("label", { class: "f" }, h("span", {}, t("sg.only")), sgSel) : h("div");
   const groupList = h("datalist", { id: "grp-names" }, [...new Set(p.toolpaths.map(x => x.group).filter(Boolean))].map(g => h("option", { value: g })));
   const groupIn = h("input", { type: "text", value: tp.group || "", placeholder: t("grp.none"), list: "grp-names" });
   const opSel = h("select", {}, ops.map(o => h("option", { value: o.id }, o.label)));
@@ -842,6 +849,7 @@ function editToolpath(existing) {
     h("label", { class: "f" }, h("span", {}, t("paths.op")), opSel),
     h("label", { class: "f" }, h("span", {}, t("paths.name")), name),
     h("label", { class: "f" }, h("span", {}, t("grp.label")), groupIn, groupList), h("div", { class: "muted small" }, t("grp.hint")),
+    sheetGroupBox,
     h("div", { class: "group-h" }, t("paths.layers")), modeSel, layerBox,
     toolBox, opBox, seqDet);
   buildOp();
@@ -850,6 +858,7 @@ function editToolpath(existing) {
     if (mode === "vectors" ? !vecIds.length : !chosen.size) return toast(mode === "vectors" ? t("paths.novec") : t("paths.nolayer"), "warn");
     tp.name = name.value.trim() || opOf().label;
     tp.group = groupIn.value.trim();
+    if (sgSel.value) { tp.sheet_group = sgSel.value; tp.sheets = null; } else delete tp.sheet_group;
     tp.op = opSel.value;
     tp.selection = mode === "vectors" ? { mode: "vectors", vectors: vecIds, layers: [] }
       : { mode: "layers", vectors: [], layers: p.layers.filter(l => chosen.has(l.id)).map(l => l.id) };
@@ -1082,6 +1091,18 @@ async function saveToComputer(files) {
   toast(t("files.saved", r.written.length, r.folder), "ok");
 }
 
+/** the group of a sheet: sheets of one group are nested onto together and a toolpath can be made for the group only */
+function sheetGroupInput(s) {
+  const names = [...new Set(S.project.sheets.map(x => x.group).filter(Boolean))];
+  const id = "sg-names";
+  const list = document.getElementById(id) || h("datalist", { id });
+  list.replaceChildren(...names.map(g => h("option", { value: g })));
+  if (!list.isConnected) document.body.append(list);
+  const inp = h("input", { type: "text", value: s.group || "", placeholder: t("sg.none"), list: id });
+  inp.onchange = () => { const g = inp.value.trim(); if (g) s.group = g; else delete s.group; touch(); render(); };
+  return inp;
+}
+
 function viewProject() {
   const p = S.project, ext = S.schema.importers.flatMap(i => i.extensions.map(x => "." + x)).join(",");
   const pick = h("input", { type: "file", accept: ext, hidden: true, onchange: e => openFile(e.target) });
@@ -1115,7 +1136,8 @@ function viewProject() {
     const w = numberInput(s.width, v => { s.width = v; touch(); }), hh = numberInput(s.height, v => { s.height = v; touch(); });
     return h("div", { class: "item", style: "flex-wrap:wrap" },
       h("button", { class: "small" + (on ? " primary" : ""), onclick: () => { S.sheetId = s.id; render(); } }, on ? "✓" : "○"),
-      h("div", { class: "grow" }, h("b", {}, s.name), h("div", { class: "muted small" }, t("proj.vectors", s.vectors.length))),
+      h("div", { class: "grow" }, h("b", {}, s.name), s.group ? h("span", { class: "muted small" }, "  ▣ " + s.group) : null, h("div", { class: "muted small" }, t("proj.vectors", s.vectors.length))),
+      h("label", { class: "f", style: "width:100%" }, h("span", {}, t("sg.label")), sheetGroupInput(s)),
       h("div", { class: "grid2", style: "width:100%" },
         h("label", { class: "f" }, h("span", {}, t("proj.width")), w), h("label", { class: "f" }, h("span", {}, t("proj.height")), hh),
         h("label", { class: "f" }, h("span", {}, t("proj.sheetthk")), thicknessOverride(s))));

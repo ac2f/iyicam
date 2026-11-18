@@ -376,7 +376,7 @@ class BlocksEditor(QWidget):
             row.addWidget(w, 1)
         row.addWidget(self.reset_btn)
         right.addLayout(row)
-        hint = QLabel("Where {name} is written the program puts its value, for example {safe_z}.\nOrder in the file: start of the file → first tool / tool change → start of a toolpath → its moves → end of a toolpath → ... → end of the file.")
+        hint = QLabel("Where {name} is written the program puts its value, for example {safe_z}. A sum works too: {sheet_height + 50}, {sheet_width/2}.\nOrder in the file: start of the file → first tool / tool change → start of a toolpath → its moves → end of a toolpath → ... → end of the file.")
         hint.setWordWrap(True)
         hint.setEnabled(False)
         right.addWidget(hint)
