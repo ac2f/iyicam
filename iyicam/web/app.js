@@ -36,6 +36,11 @@ const TXT = {
     "tool.number": "Takım no",
     "tp.keepnew": "Aslını koru: bunu yeni takım yolu olarak kaydet", "tp.autonew": "İsmi değiştirmek bunu kendiliğinden yapsın", "tp.pick": "Vektörleri çizimde seç",
     "tp.picked": "{0} vektör seçili", "tp.use": "Bunları kullan",
+    "pre.label": "Ön profil", "pre.none": "(ön profil yok)", "pre.apply": "Uygula", "pre.save": "Ön profil olarak kaydet", "pre.delete": "Sil",
+    "pre.delask": "“{0}” ön profili silinsin mi?", "pre.name": "Ön profilin adı", "pre.sum": "ya da bir toplam", "pre.saved": "“{0}” kaydedildi.",
+    "pre.hint": "Ön profilin neleri tutacağını işaretle. Bir sayı yerine işin bir toplamı yazılabilir: {0} (ör. material_thickness + 0.2). Ad da süslü parantezle bunları alır: Kesim {material_thickness} mm.",
+    "sh.up": "Tabakayı yukarı al", "sh.down": "Tabakayı aşağı al",
+    "tm.corners": "Köşeler", "tm.cAsIs": "Makine nasıl ayarlıysa (tahmin köşelerde yavaşlar)", "tm.cBlend": "Yavaşlamadan geç (G64, ArtCAM gibi)", "tm.cExact": "Her köşede dur (G61)",
     "tm.title": "Süre tahmini", "tm.hint": "Makine hızlanma ile köşelerde yavaşlar; tahmin bunu hesaba katar. Gerçek bir süreden kalibre edilebilir.",
     "tm.accel": "Hızlanma (mm/s²)", "tm.zrapid": "Yalnız Z hızlı hızı (mm/dk)", "tm.corner": "Köşe sapması (mm)", "tm.scale": "Tahmin düzeltmesi",
     "tm.cal": "Gerçek süreden kalibre et", "tm.ask": "Bu tabakanın takım yolları gerçekte ne kadar sürdü? (s:dd:ss ya da d:ss; düz sayı = dakika)",
@@ -108,6 +113,11 @@ const TXT = {
     "tool.number": "Tool number",
     "tp.keepnew": "Keep the original: save this as a new toolpath", "tp.autonew": "Changing the name does this by itself", "tp.pick": "Pick the vectors on the drawing",
     "tp.picked": "{0} vector(s) selected", "tp.use": "Use them",
+    "pre.label": "Preset", "pre.none": "(no preset)", "pre.apply": "Apply", "pre.save": "Save as preset", "pre.delete": "Delete",
+    "pre.delask": "Delete the preset “{0}”?", "pre.name": "Name of the preset", "pre.sum": "or a sum", "pre.saved": "“{0}” is saved.",
+    "pre.hint": "Tick what the preset keeps. A number can be a sum of the job instead: {0} (e.g. material_thickness + 0.2). The name can have them in braces: Cut {material_thickness} mm.",
+    "sh.up": "Move the sheet up", "sh.down": "Move the sheet down",
+    "tm.corners": "Corners", "tm.cAsIs": "As the machine is set (the estimate slows for corners)", "tm.cBlend": "Straight through without slowing (G64, like ArtCAM)", "tm.cExact": "A stop at every corner (G61)",
     "tm.title": "Time estimate", "tm.hint": "A machine speeds up and slows down for corners: the estimate counts it. It can be calibrated from a real time.",
     "tm.accel": "Acceleration (mm/s²)", "tm.zrapid": "Rapid rate of Z alone (mm/min)", "tm.corner": "Corner deviation (mm)", "tm.scale": "Estimate correction",
     "tm.cal": "Calibrate from a real time", "tm.ask": "How long did the toolpaths of this sheet really take? (h:mm:ss or m:ss; a plain number is minutes)",
@@ -819,6 +829,7 @@ function editToolpath(existing, draft) {
   const modeSel = h("select", {}, h("option", { value: "layers" }, t("paths.bylayers")), h("option", { value: "vectors" }, t("paths.byvectors", vecIds.length)));
   modeSel.value = mode;
   const opBox = h("div"), toolBox = h("div"), name = h("input", { type: "text", value: tp.name });
+  const presetHolder = h("div");                       // (the presets row is made below, once the fields it reads exist)
   if (draft && draft.chosen) { chosen.clear(); draft.chosen.forEach(x => chosen.add(x)); }
   // a name that is changed can make a new toolpath (the original stays): asked for here, and remembered
   const keepNew = h("input", { type: "checkbox" }), autoNew = h("input", { type: "checkbox", checked: store.get("iyicam.renameNew") === "1" });
@@ -887,6 +898,7 @@ function editToolpath(existing, draft) {
   const body = h("div", {},
     h("label", { class: "f" }, h("span", {}, t("paths.op")), opSel),
     h("label", { class: "f" }, h("span", {}, t("paths.name")), name),
+    presetHolder,
     h("label", { class: "f" }, h("span", {}, t("grp.label")), groupIn, groupList), h("div", { class: "muted small" }, t("grp.hint")),
     sheetGroupBox, existing ? h("div", {}, h("label", { class: "chk" }, keepNew, t("tp.keepnew")), h("label", { class: "chk" }, autoNew, t("tp.autonew"))) : null,
     h("div", { class: "group-h" }, t("paths.layers")), modeSel, layerBox, h("div", { class: "row" }, h("button", { class: "small", onclick: pickOnDrawing }, "👆 " + t("tp.pick"))),
@@ -910,6 +922,51 @@ function editToolpath(existing, draft) {
     }
     close(); changed();
   };
+  // presets: what a toolpath is set to, kept under a name (on the engine, shared with the desktop program)
+  function current() {
+    const c = JSON.parse(JSON.stringify(tp));
+    c.name = name.value; c.group = groupIn.value.trim(); c.op = opSel.value;
+    if (sgSel.value) c.sheet_group = sgSel.value; else delete c.sheet_group;
+    return c;
+  }
+  const presetSel = h("select", {}, h("option", { value: "" }, t("pre.none")));
+  const fillPresets = list => presetSel.replaceChildren(h("option", { value: "" }, t("pre.none")), ...list.map(x => h("option", { value: x.id }, x.name + (x.op && x.op !== opSel.value ? `  [${x.op}]` : ""))));
+  api("tp_presets", {}).then(r => fillPresets(r.presets)).catch(() => { /* (a hub without its agent: no presets) */ });
+  const presetRow = h("div", {}, h("label", { class: "f" }, h("span", {}, t("pre.label")), presetSel),
+    h("div", { class: "row" },
+      h("button", { class: "small", onclick: () => guarded(async () => {
+        if (!presetSel.value) return;
+        const r = await api("tp_preset_apply", { project: p, toolpath: current(), id: presetSel.value, sheet: S.sheetId });
+        for (const n of r.notes || []) toast(n, "warn");
+        const d = { tp: { ...r.toolpath, id: tp.id }, existing, mode, vecIds: vecIds.slice(), chosen: [...chosen], firstName, keepNew: keepNew.checked };
+        close(); editToolpath(existing, d);
+      }) }, t("pre.apply")),
+      h("button", { class: "small", onclick: () => guarded(() => savePreset()) }, t("pre.save")),
+      h("button", { class: "small danger", onclick: () => guarded(async () => {
+        if (!presetSel.value || !confirm(t("pre.delask", presetSel.selectedOptions[0].textContent))) return;
+        fillPresets((await api("tp_preset_delete", { id: presetSel.value })).presets);
+      }) }, t("pre.delete"))));
+  presetHolder.append(presetRow);
+  async function savePreset() {
+    const info = await api("tp_presets", { project: p, toolpath: current() });
+    const vars = info.variables.map(v => v.name).join(", ");
+    const nameIn = h("input", { type: "text", value: name.value });
+    const rows = info.fields.map(f => {
+      const keep = h("input", { type: "checkbox", checked: f.key === "name" || f.key === "tool" || f.key.startsWith("params.") });
+      const expr = f.number ? h("input", { type: "text", placeholder: t("pre.sum"), spellcheck: "false", autocapitalize: "off", style: "width:150px" }) : null;
+      const shown = f.value && typeof f.value === "object" ? (f.value.name || "") : (f.value ?? "");
+      return { f, keep, expr, el: h("div", { class: "row", style: "margin:3px 0" }, h("label", { class: "chk grow" }, keep, f.label + "  ", h("span", { class: "muted small" }, String(shown))), expr) };
+    });
+    let c2;
+    c2 = openSheet(t("pre.save"), h("div", {}, h("label", { class: "f" }, h("span", {}, t("pre.name")), nameIn),
+      h("div", { class: "muted small" }, t("pre.hint", vars)), rows.map(r => r.el),
+      h("div", { class: "row", style: "margin-top:12px" }, h("button", { class: "primary grow", onclick: () => guarded(async () => {
+        const fields = {};
+        for (const r of rows) if (r.keep.checked) fields[r.f.key] = r.expr && r.expr.value.trim() ? { expr: r.expr.value.trim() } : { value: r.f.value };
+        const out = await api("tp_preset_save", { preset: { name: nameIn.value, op: opSel.value, fields } });
+        fillPresets(out.presets); presetSel.value = out.saved.id; c2(); toast(t("pre.saved", out.saved.name), "ok");
+      }) }, t("paths.save")), h("button", { onclick: () => c2() }, t("ed.cancel")))));
+  }
   // pick the vectors on the drawing: the window closes, the drawing is shown with a bar that says how many are selected, and the
   // window comes back with them (what was typed stays)
   function pickOnDrawing() {
@@ -1180,6 +1237,14 @@ async function calibrateTime() {
   render();
 }
 
+/** the order of the sheets is the order of their files and their numbers: it can be changed */
+function moveSheet(s, d) {
+  const list = S.project.sheets, i = list.indexOf(s), j = i + d;
+  if (j < 0 || j >= list.length) return;
+  list.splice(i, 1); list.splice(j, 0, s);
+  changed();
+}
+
 function viewProject() {
   const p = S.project, ext = S.schema.importers.flatMap(i => i.extensions.map(x => "." + x)).join(",");
   const pick = h("input", { type: "file", accept: ext, hidden: true, onchange: e => openFile(e.target) });
@@ -1213,6 +1278,8 @@ function viewProject() {
     const w = numberInput(s.width, v => { s.width = v; touch(); }), hh = numberInput(s.height, v => { s.height = v; touch(); });
     return h("div", { class: "item", style: "flex-wrap:wrap" },
       h("button", { class: "small" + (on ? " primary" : ""), onclick: () => { S.sheetId = s.id; render(); } }, on ? "✓" : "○"),
+      h("button", { class: "small", title: t("sh.up"), "aria-label": t("sh.up"), disabled: p.sheets[0] === s, onclick: () => moveSheet(s, -1) }, "↑"),
+      h("button", { class: "small", title: t("sh.down"), "aria-label": t("sh.down"), disabled: p.sheets[p.sheets.length - 1] === s, onclick: () => moveSheet(s, 1) }, "↓"),
       h("div", { class: "grow" }, h("b", {}, s.name), s.group ? h("span", { class: "muted small" }, "  ▣ " + s.group) : null, h("div", { class: "muted small" }, t("proj.vectors", s.vectors.length))),
       h("label", { class: "f", style: "width:100%" }, h("span", {}, t("sg.label")), sheetGroupInput(s)),
       h("div", { class: "grid2", style: "width:100%" },
@@ -1236,6 +1303,11 @@ function viewProject() {
       numberInput((m.home || [0, 0, 20])[i], v => { m.home = (m.home || [0, 0, 20]).slice(); m.home[i] = v; touch(); }))),
       h("label", { class: "f" }, h("span", {}, t("proj.rapid")), numberInput(m.rapid_rate ?? 8000, v => { m.rapid_rate = v; touch(); }))),
     h("div", { class: "group-h" }, t("tm.title")), h("div", { class: "muted small" }, t("tm.hint")),
+    (() => {
+      const sel = h("select", {}, h("option", { value: "" }, t("tm.cAsIs")), h("option", { value: "blend" }, t("tm.cBlend")), h("option", { value: "exact" }, t("tm.cExact")));
+      sel.value = m.corner_mode || ""; sel.onchange = () => { if (sel.value) m.corner_mode = sel.value; else delete m.corner_mode; touch(); };
+      return h("label", { class: "f" }, h("span", {}, t("tm.corners")), sel);
+    })(),
     h("div", { class: "grid2" },
       h("label", { class: "f" }, h("span", {}, t("tm.accel")), numberInput(m.accel ?? 200, v => { m.accel = v; touch(); }, { min: 1 })),
       h("label", { class: "f" }, h("span", {}, t("tm.zrapid")), numberInput(m.z_rapid_rate ?? 3000, v => { m.z_rapid_rate = v; touch(); }, { min: 0 })),

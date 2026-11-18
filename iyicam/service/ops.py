@@ -33,7 +33,7 @@ from ..core.geom import dist
 from ..core.params import resolve
 from ..core.registry import REGISTRY
 from ..core.stock import StockItem
-from ..core.tooling import ToolLibrary
+from ..core.tooling import Tool, ToolLibrary
 from ..formats.cdr import CdrError
 from ..formats.report import ImportReport, run_importer
 from ..plugins.manager import PluginManager
@@ -238,6 +238,66 @@ def op_new_project(payload: dict) -> dict:
         raise ServiceError("template_failed", f"{type(exc).__name__}: {exc}", template=tid) from exc
     p.name = str(payload.get("name") or "") or p.name
     return {"project": p.to_dict()}
+
+
+# -- presets of toolpaths -----------------------------------------------------------------------------------------
+def _tp_of(project: Project, d) -> "object":
+    from ..core.document import toolpath_from_dict
+    if not isinstance(d, dict):
+        raise ServiceError("bad_request", "'toolpath' must be a toolpath object", field="toolpath")
+    try:
+        return toolpath_from_dict({"id": "preset", "name": "", "op": "profile", "tool": Tool().to_dict(), **d})
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ServiceError("bad_request", f"the toolpath cannot be read: {exc}", field="toolpath") from exc
+
+
+def op_tp_presets(payload: dict) -> dict:
+    """The presets of toolpaths, the variables their sums may use, and (with ``toolpath``) what a preset can keep of that one."""
+    ensure_ready()
+    from ..cam import tp_presets
+    out = {"presets": tp_presets.load(), "variables": [{"name": n, "text": {"en": en, "tr": tr}} for n, en, tr in tp_presets.VARIABLES]}
+    if payload.get("toolpath") is not None:
+        project = load_project(payload.get("project")) if payload.get("project") else Project()
+        t = _tp_of(project, payload.get("toolpath"))
+        op = REGISTRY.operations.get(t.op)
+        out["fields"] = tp_presets.fields(t, op.params() if op else [])
+    return out
+
+
+def op_tp_preset_save(payload: dict) -> dict:
+    ensure_ready()
+    from ..cam import tp_presets
+    try:
+        kept = tp_presets.save(payload.get("preset"))
+    except tp_presets.PresetError as exc:
+        raise ServiceError("bad_request", str(exc), field="preset") from exc
+    return {"saved": kept, "presets": tp_presets.load()}
+
+
+def op_tp_preset_delete(payload: dict) -> dict:
+    ensure_ready()
+    from ..cam import tp_presets
+    if not tp_presets.delete(str(payload.get("id") or "")):
+        raise ServiceError("not_found", "there is no such preset", id=str(payload.get("id")))
+    return {"presets": tp_presets.load()}
+
+
+def op_tp_preset_apply(payload: dict) -> dict:
+    """A toolpath with a preset put on it: the sums of the preset worked out with this project and sheet."""
+    ensure_ready()
+    from ..cam import tp_presets
+    from ..core.document import toolpath_to_dict
+    project = load_project(payload.get("project"))
+    pre = next((p for p in tp_presets.load() if p.get("id") == payload.get("id")), None)
+    if pre is None:
+        raise ServiceError("not_found", "there is no such preset", id=str(payload.get("id")))
+    t = _tp_of(project, payload.get("toolpath"))
+    if pre.get("op") and not payload.get("toolpath", {}).get("op"):
+        t.op = pre["op"]
+    sheet = _sheet_of(project, payload.get("sheet")) if payload.get("sheet") else project.sheets[0]
+    op = REGISTRY.operations.get(t.op)
+    notes = tp_presets.apply(pre, t, project, sheet, op.params() if op else [])
+    return {"toolpath": jsonable(toolpath_to_dict(t)), "notes": notes}
 
 
 def op_calibrate_time(payload: dict) -> dict:

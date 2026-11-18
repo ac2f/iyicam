@@ -31,6 +31,8 @@ class Machine:
     accel: float = DEFAULT_ACCEL             # mm/s2
     corner_dev: float = DEFAULT_CORNER_DEV   # mm: how far a corner may be cut off, which sets the speed through it
     scale: float = 1.0                       # what the machine really did over what the model says
+    corners: str = "slow"                    # slow: as the planner of the machine does | blend: through every corner without slowing
+                                             # (G64, "constant velocity", the way ArtCAM counts) | stop: a stop at every corner (G61)
 
     @classmethod
     def of(cls, v) -> "Machine":
@@ -133,7 +135,12 @@ def _plan(segs, stops, mc: Machine) -> float:
             vj[i] = 0.0
             continue
         dot = s0[5] * s1[2] + s0[6] * s1[3] + s0[7] * s1[4]
-        vj[i] = min(vmax[i - 1], vmax[i], _corner_speed(dot, a, mc.corner_dev))
+        if mc.corners == "stop":
+            vj[i] = 0.0
+        elif mc.corners == "blend":                     # (no slowing for a corner; a turn back on itself still stops)
+            vj[i] = 0.0 if dot < -0.99 else min(vmax[i - 1], vmax[i])
+        else:
+            vj[i] = min(vmax[i - 1], vmax[i], _corner_speed(dot, a, mc.corner_dev))
     # the planner: the speed at a junction may not be more than what braking (backwards) or accelerating (forwards) over the
     # segment next to it allows
     for i in range(n - 1, 0, -1):
@@ -165,20 +172,20 @@ def calibrate_all(jobs, real_seconds: float, machine=DEFAULT_RAPID, start=None) 
         return mc
 
     def t(acc: float) -> float:
-        m1 = Machine(mc.rapid_rate, mc.z_rapid_rate, acc, mc.corner_dev, 1.0)
+        m1 = Machine(mc.rapid_rate, mc.z_rapid_rate, acc, mc.corner_dev, 1.0, mc.corners)
         return sum(_plan(sg, st, m1) for sg, st in planned)
     lo, hi = 20.0, 200000.0
     if real_seconds <= t(hi):                         # (quicker than the machine that never slows: the rest is the scale)
-        return Machine(mc.rapid_rate, mc.z_rapid_rate, hi, mc.corner_dev, real_seconds / t(hi))
+        return Machine(mc.rapid_rate, mc.z_rapid_rate, hi, mc.corner_dev, real_seconds / t(hi), mc.corners)
     if real_seconds >= t(lo):
-        return Machine(mc.rapid_rate, mc.z_rapid_rate, lo, mc.corner_dev, real_seconds / t(lo))
+        return Machine(mc.rapid_rate, mc.z_rapid_rate, lo, mc.corner_dev, real_seconds / t(lo), mc.corners)
     for _ in range(60):                               # (t falls as the acceleration grows: bisection on its logarithm)
         mid = math.sqrt(lo * hi)
         if t(mid) > real_seconds:
             lo = mid
         else:
             hi = mid
-    return Machine(mc.rapid_rate, mc.z_rapid_rate, math.sqrt(lo * hi), mc.corner_dev, 1.0)
+    return Machine(mc.rapid_rate, mc.z_rapid_rate, math.sqrt(lo * hi), mc.corner_dev, 1.0, mc.corners)
 
 
 def parse_duration(text: str) -> float | None:

@@ -198,6 +198,11 @@ BLOCKS: list[dict] = [
        "Bir kez, en başta.", "job"),
     _b("footer", "program", "End of the file", "Dosyanın sonu", "Once, at the very end (spindle off, home, M30).",
        "Bir kez, en sonda (iş mili kapat, ev konumu, M30).", "job"),
+    _b("path_mode", "program", "Corners of the path", "Yolun köşeleri",
+       "After the start of the file, when Material Setup says how the machine takes corners ({path_code}: G64 straight through, "
+       "G61 a stop at each).",
+       "Dosyanın başından sonra, Malzeme ayarı makinenin köşeleri nasıl alacağını söylediğinde ({path_code}: G64 durmadan, G61 her "
+       "köşede durarak).", "job"),
     _b("first_tool_change", "tools", "First tool", "İlk takım",
        "Before the first toolpath (when empty, the tool change block is used).",
        "İlk takım yolundan önce (boşsa takım değiştirme bloğu kullanılır)."),
@@ -240,6 +245,7 @@ _V = [
     ("sheet_name", "job", "Name of the sheet", "Sacın adı"), ("post_name", "job", "Name of this post", "Bu postun adı"),
     ("date", "job", "Date", "Tarih"), ("time", "job", "Time", "Saat"),
     ("units", "job", "mm or inch", "mm ya da inch"), ("unit_code", "job", "G21 or G20", "G21 ya da G20"),
+    ("path_code", "job", "G64 (corners without slowing), G61 (a stop at every corner) or nothing", "G64 (köşelerde yavaşlamadan), G61 (her köşede durarak) ya da boş"),
     ("program_number", "job", "Program number (for O words)", "Program numarası (O kelimesi için)"),
     ("material_thickness", "job", "Thickness of the material", "Malzeme kalınlığı"),
     ("sheet_width", "job", "Width of the sheet", "Sac genişliği"), ("sheet_height", "job", "Height of the sheet", "Sac yüksekliği"),

@@ -541,3 +541,20 @@ the drawing* closes the window, shows the drawing with a bar (how many are selec
 them. When a toolpath that exists is edited, *Keep the original: save this as a new toolpath* saves a new one; *Changing the
 name does this by itself* makes a changed name do it. A project that is opened has its toolpaths calculated once (Preferences:
 *Calculate the toolpaths of a project when it is opened*), so they are on the sheets.
+
+## Corners, presets of toolpaths, the order of the sheets
+
+**Corners** (Material Setup on the desktop, the Project tab on the page): *as the machine is set* (nothing is written; the time
+estimate slows down for corners), *straight through without slowing* (G64 is written after the start of the file, the way
+ArtCAM's jobs run, and the estimate does not slow for corners) or *a stop at every corner* (G61). A post that writes G64 or G61
+in its own start of the file is not given a second one; the block *Corners of the path* (`{path_code}`) can be changed in the
+post editor (for example `G64 P0.05`).
+
+**Presets of toolpaths**: in the toolpath window, *Save as preset* lists everything the toolpath is set to (name, tool, every
+setting, heights, group, cut order); tick what the preset keeps. A number can be kept as a sum of the job instead of a value:
+`material_thickness + 0.2`, `tool_diameter * 0.4` (variables: material_thickness, sheet_width, sheet_height, safe_z, clearance,
+tool_diameter, tool_radius); the name can have them in braces (`Cut {material_thickness} mm`). *Apply* puts a preset on the
+window: what it keeps changes, the rest stays. The presets are kept in `toolpath_presets.json` in the user folder, the same for
+the desktop program and the page (engine operations `tp_presets`, `tp_preset_save`, `tp_preset_delete`, `tp_preset_apply`).
+
+**The order of the sheets** is changed with ▲ ▼ on the Sheets panel (desktop) and ↑ ↓ on the Project tab (page).

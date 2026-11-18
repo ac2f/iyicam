@@ -241,6 +241,55 @@ class LayerScopeDialog(QDialog):
         return ids, self.group.currentData() or ""
 
 
+class PresetSaveDialog(QDialog):
+    """What a preset keeps: every field of the toolpath with a tick (kept or not) and, for a number, a sum instead of the value
+    (``material_thickness + 0.2``): it is worked out when the preset is put on a toolpath, so it follows the job."""
+
+    def __init__(self, fields: list[dict], name: str = "", parent=None):
+        super().__init__(parent)
+        from ..cam import tp_presets
+        self.setWindowTitle("Save as preset")
+        self.fields = fields
+        lay = QVBoxLayout(self)
+        form = QFormLayout()
+        self.name = QLineEdit(name)
+        form.addRow("Name of the preset", self.name)
+        lay.addLayout(form)
+        lay.addWidget(QLabel("Tick what the preset keeps. A number can be a sum of the job instead: "
+                             + ", ".join(v[0] for v in tp_presets.VARIABLES) + "  (e.g. material_thickness + 0.2). "
+                             "The name can have them in braces: Cut {material_thickness} mm."))
+        self.table = QTableWidget(len(fields), 3)
+        self.table.setHorizontalHeaderLabels(["Keep", "Value", "Or a sum"])
+        self.table.setVerticalHeaderLabels([f["label"] for f in fields])
+        self.table.horizontalHeader().setStretchLastSection(True)
+        default_on = {"name", "tool"}
+        for r, f in enumerate(fields):
+            it = QTableWidgetItem()
+            it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
+            it.setCheckState(Qt.Checked if f["key"] in default_on or f["key"].startswith("params.") else Qt.Unchecked)
+            self.table.setItem(r, 0, it)
+            shown = f["value"].get("name", "tool") if isinstance(f["value"], dict) else ("" if f["value"] is None else str(f["value"]))
+            v = QTableWidgetItem(shown)
+            v.setFlags(v.flags() & ~Qt.ItemIsEditable)
+            self.table.setItem(r, 1, v)
+            e = QTableWidgetItem("")
+            if not f["number"]:
+                e.setFlags(e.flags() & ~Qt.ItemIsEditable)
+            self.table.setItem(r, 2, e)
+        lay.addWidget(self.table, 1)
+        lay.addWidget(buttons(self))
+        self.resize(560, 560)
+
+    def chosen(self) -> dict:
+        out = {}
+        for r, f in enumerate(self.fields):
+            if self.table.item(r, 0).checkState() != Qt.Checked:
+                continue
+            expr = self.table.item(r, 2).text().strip()
+            out[f["key"]] = {"expr": expr} if expr and f["number"] else {"value": f["value"]}
+        return out
+
+
 class SheetDialog(QDialog):
     def __init__(self, ctrl, sheet, parent=None):
         super().__init__(parent)
@@ -320,6 +369,11 @@ class MaterialDialog(RemembersSize, QDialog):
             Param("home_z", "Home Z (above surface)", "length", m.home[2], group="Home position"),
             Param("rapid_rate", "Machine rapid rate", "feed", m.rapid_rate, min=1.0, group="Machine",
                   help="Only used for machining time estimates"),
+            Param("corner_mode", "Corners", "choice", m.corner_mode,
+                  choices=[("", "As the machine is set (the estimate slows down for corners)"),
+                           ("blend", "Straight through without slowing (G64, like ArtCAM)"),
+                           ("exact", "A stop at every corner (G61)")], group="Machine",
+                  help="Written into the G-code after the start of the file (G64 / G61), and the time estimate follows it"),
             Param("z_rapid_rate", "Rapid rate of Z alone", "feed", m.z_rapid_rate, min=0.0, group="Machine",
                   help="Time estimates: Z is often slower than X and Y (0: the same)"),
             Param("accel", "Acceleration (mm/s²)", "float", m.accel, min=1.0, max=100000.0, decimals=0, group="Machine",
@@ -362,7 +416,8 @@ class MaterialDialog(RemembersSize, QDialog):
             QMessageBox.warning(self, "Calibrate", f"'{text}' is not a time.")
             return
         v = self.form.values()
-        base = timing.Machine(v["rapid_rate"], v["z_rapid_rate"], v["accel"], v["corner_dev"], 1.0)
+        base = timing.Machine(v["rapid_rate"], v["z_rapid_rate"], v["accel"], v["corner_dev"], 1.0,
+                              {"blend": "blend", "exact": "stop"}.get(v["corner_mode"] or "", "slow"))
         mc = timing.calibrate_all([tp.moves for tp in tps], seconds, base)
         self.form.widgets["accel"].setValue(mc.accel)
         self.form.widgets["time_scale"].setValue(mc.scale)
@@ -380,6 +435,7 @@ class MaterialDialog(RemembersSize, QDialog):
             m.thickness, m.z_zero, m.xy_origin = v["thickness"], v["z_zero"], v["xy_origin"]
             m.safe_z, m.clearance, m.rapid_rate = v["safe_z"], v["clearance"], v["rapid_rate"]
             m.z_rapid_rate, m.accel, m.corner_dev, m.time_scale = v["z_rapid_rate"], v["accel"], v["corner_dev"], v["time_scale"]
+            m.corner_mode = v["corner_mode"] or ""
             m.home = (v["home_x"], v["home_y"], v["home_z"])
             self.ctrl.sheet.width, self.ctrl.sheet.height = v["width"], v["height"]
             m.rotary, m.rotary_diameter = v["rotary"], v["rotary_diameter"]
@@ -669,6 +725,24 @@ class ToolpathDialog(RemembersSize, QDialog):
         n = sum(1 for t in ctrl.project.toolpaths if t.op == op_id) + 1
         self.name = QLineEdit(self.tdef.name if self.tdef else f"{self.op.label.split(' (')[0]} {n}")
         top.addRow("Name", self.name)
+        prow = QHBoxLayout()
+        self.preset_box = QComboBox()
+        self.preset_box.setToolTip("Presets of toolpaths: what a toolpath was set to, kept under a name")
+        self._fill_presets()
+        apply_b = QPushButton("Apply")
+        apply_b.setToolTip("Put the preset on this toolpath (its sums are worked out with this material and sheet)")
+        apply_b.clicked.connect(self.apply_preset)
+        save_b = QPushButton("Save as preset...")
+        save_b.setToolTip("Keep what this toolpath is set to under a name: you choose what is kept, and which numbers follow the job")
+        save_b.clicked.connect(self.save_preset)
+        del_b = QPushButton("Delete")
+        del_b.clicked.connect(self.delete_preset)
+        prow.addWidget(self.preset_box, 1)
+        for b in (apply_b, save_b, del_b):
+            prow.addWidget(b)
+        top.addRow("Preset", prow)
+        self._sequence_extra: dict = {}
+        self._group_extra: str | None = None
         self.keep_old = QCheckBox("Keep the original: save this as a new toolpath")
         self.auto_new = QCheckBox("Changing the name does this by itself")
         self.auto_new.setChecked(bool(ctrl.settings.rename_makes_new))
@@ -900,9 +974,84 @@ class ToolpathDialog(RemembersSize, QDialog):
                 params, sel, sheets
             t.sheet_group = group
             t.safe_z, t.clearance = safe_z, clearance
-            return t
-        return ToolpathDef(self.name.text(), self.op.id, self.tool_editor.tool(), params, sel, True, sheets,
-                           safe_z=safe_z, clearance=clearance, sheet_group=group)
+        else:
+            t = ToolpathDef(self.name.text(), self.op.id, self.tool_editor.tool(), params, sel, True, sheets,
+                            safe_z=safe_z, clearance=clearance, sheet_group=group)
+        t.sequence.update(self._sequence_extra)             # (what a preset set of the cut order)
+        if self._group_extra is not None:
+            t.group = self._group_extra
+        return t
+
+    # -- presets -------------------------------------------------------------------------------------------------------
+    def _fill_presets(self) -> None:
+        from ..cam import tp_presets
+        self.preset_box.clear()
+        self.preset_box.addItem("(no preset)", None)
+        for p in tp_presets.load():
+            mark = "" if not p.get("op") or p["op"] == self.op.id else f"   [{p['op']}]"
+            self.preset_box.addItem(p["name"] + mark, p["id"])
+
+    def apply_preset(self) -> None:
+        """Put the chosen preset on the window: the fields it keeps change, the others stay as they are."""
+        from ..cam import tp_presets
+        pid = self.preset_box.currentData()
+        pre = next((p for p in tp_presets.load() if p.get("id") == pid), None)
+        if pre is None:
+            return
+        t = copy.deepcopy(self.toolpath())
+        notes = tp_presets.apply(pre, t, self.ctrl.project, self.ctrl.sheet, self.op.params())
+        if pre.get("op") and pre["op"] != self.op.id:
+            notes.insert(0, f"the preset is of a {pre['op']} toolpath: only what this one has was put")
+        self.name.setText(t.name)
+        if "tool" in pre.get("fields", {}):
+            self.tool_editor.set_tool(t.tool)
+            self.tool_editor.form.changed.connect(self._update_tool_label)
+            self._update_tool_label()
+        self.form.set_values(t.params)
+        flds = pre.get("fields", {})
+        if "safe_z" in flds or "clearance" in flds:
+            own = t.safe_z is not None or t.clearance is not None
+            self.own_heights.setChecked(own)
+            u = self.ctrl.units
+            if t.safe_z is not None:
+                self.safe_z.setValue(u.to_display(t.safe_z))
+            if t.clearance is not None:
+                self.clearance.setValue(u.to_display(t.clearance))
+        if "sheet_group" in flds:
+            i = self.group_box.findData(t.sheet_group)
+            if i < 0 and t.sheet_group:
+                self.group_box.addItem(f"Only on the sheets of the group: {t.sheet_group}", t.sheet_group)
+                i = self.group_box.count() - 1
+            self.group_box.setCurrentIndex(max(0, i))
+        self._sequence_extra = {k[9:]: v["value"] for k, v in flds.items() if k.startswith("sequence.") and "value" in v}
+        self._sequence_extra.update({k: v for k, v in t.sequence.items() if f"sequence.{k}" in flds})
+        if "group" in flds:
+            self._group_extra = t.group
+        if notes:
+            QMessageBox.information(self, "Preset", "\n".join(notes))
+
+    def save_preset(self) -> None:
+        from ..cam import tp_presets
+        t = copy.deepcopy(self.toolpath())
+        dlg = PresetSaveDialog(tp_presets.fields(t, self.op.params()), self.preset_box.currentText()
+                               if self.preset_box.currentData() else t.name, self)
+        if not dlg.exec():
+            return
+        try:
+            tp_presets.save({"name": dlg.name.text(), "op": self.op.id, "fields": dlg.chosen()})
+        except tp_presets.PresetError as exc:
+            QMessageBox.warning(self, "Preset", str(exc))
+            return
+        self._fill_presets()
+        self.preset_box.setCurrentIndex(max(0, self.preset_box.findText(dlg.name.text().strip(), Qt.MatchStartsWith)))
+
+    def delete_preset(self) -> None:
+        from ..cam import tp_presets
+        pid = self.preset_box.currentData()
+        if pid and QMessageBox.question(self, "Preset", f"Delete the preset '{self.preset_box.currentText()}'?",
+                                        QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
+            tp_presets.delete(pid)
+            self._fill_presets()
 
     def _sheets_box_untouched(self) -> bool:
         return self.all_sheets.isChecked() == (self.tdef is None or self.tdef.sheet_ids is None)

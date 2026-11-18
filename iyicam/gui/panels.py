@@ -247,7 +247,8 @@ class SheetsPanel(DocPanel):
         lay.addWidget(self.list)
         row = QHBoxLayout()
         for text, tip, slot in (("+", "Add sheet", self.add), ("⧉", "Duplicate sheet", self.duplicate),
-                                ("−", "Delete sheet", self.delete), ("⚙", "Sheet properties", self.properties)):
+                                ("−", "Delete sheet", self.delete), ("▲", "Move the sheet up", lambda: self.move(-1)),
+                                ("▼", "Move the sheet down", lambda: self.move(1)), ("⚙", "Sheet properties", self.properties)):
             row.addWidget(small_button(text, tip, slot))
         row.addStretch(1)
         lay.addLayout(row)
@@ -276,6 +277,9 @@ class SheetsPanel(DocPanel):
 
     def selected_ids(self) -> list[str]:
         return [it.data(Qt.UserRole) for it in self.list.selectedItems()] or [self.ctrl.sheet_id]
+
+    def move(self, delta: int) -> None:
+        self.ctrl.move_sheet(self.ctrl.sheet_id, delta)
 
     def _menu(self, pos) -> None:
         m = QMenu(self)

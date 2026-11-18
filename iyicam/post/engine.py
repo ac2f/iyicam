@@ -72,6 +72,7 @@ DEFAULT_BLOCKS: dict[str, str] = {
     "first_tool_change": "",
     "tool_change": "M5\nT{tool_number} M6\nS{spindle_speed} {spindle_dir_code}",
     "toolpath_start": "({toolpath_name})",
+    "path_mode": "{path_code}",
     "toolpath_end": "",
     "rapid": "{G} {X} {Y} {Z}",
     "linear": "{G} {X} {Y} {Z} {F}",
@@ -269,6 +270,8 @@ class PostProcessor:
             stats = stats.merge(tp.stats(job.project.material.machine()))
         base = self.job_vars(job, toolpaths, stats)
         self.block("header", base)
+        if base.get("path_code") and not re.search(r"\bG6[14]\b", self.blocks.get("header", ""), re.I):
+            self.block("path_mode", base)              # (how the machine takes corners: G64 straight through, G61 a stop at each)
         if self._inverse:
             self.block("inverse_time_on", base)
         prev_tool = None
@@ -331,6 +334,7 @@ class PostProcessor:
             "file_name": job.file_name, "project_name": job.project.name, "sheet_name": job.sheet.name,
             "date": now.strftime("%Y-%m-%d"), "time": now.strftime("%H:%M"),
             "units": "inch" if inch else "mm", "unit_code": "G20" if inch else "G21",
+            "path_code": {"blend": "G64", "exact": "G61"}.get(getattr(m, "corner_mode", ""), ""),
             "program_number": job.program_number, "post_name": self.name,
             "material_thickness": self.fmt(job.project.sheet_thickness(job.sheet) * self._k),
             "sheet_width": self.fmt(job.sheet.width * self._k), "sheet_height": self.fmt(job.sheet.height * self._k),

@@ -196,6 +196,50 @@ class ParamForm(QWidget):
             return tuple(u.from_display(s.value()) for s in w._spins)
         return w.text()
 
+    def set_values(self, values: dict) -> None:
+        """Show these values (a preset put on the form); names that are not in the form are kept for ``values()``."""
+        u = self.units
+        for name, v in values.items():
+            w = self.widgets.get(name)
+            p = next((q for q in self.params if q.name == name), None)
+            if w is None or p is None:
+                self._values[name] = v
+                continue
+            conv = p.kind in ("length", "feed")
+            w.blockSignals(True)
+            try:
+                if isinstance(w, OptionalNumber):
+                    w.set_value(None if v is None else (u.to_display(v) if conv else v))
+                elif isinstance(w, QDoubleSpinBox) and v is not None:
+                    w.setValue(u.to_display(float(v)) if conv else float(v))
+                elif isinstance(w, QSpinBox) and v is not None:
+                    w.setValue(int(v))
+                elif isinstance(w, QCheckBox):
+                    w.setChecked(bool(v))
+                elif isinstance(w, QFontComboBox):
+                    w.setCurrentFont(QFont(str(v)))
+                elif isinstance(w, QComboBox):
+                    if p.kind == "tool":
+                        tid = getattr(v, "id", None)
+                        i = w.findData(tid)
+                        if i < 0 and v is not None:
+                            w.addItem(v.describe() + " (preset)", v.id)
+                            self._project_tool = v
+                            i = w.count() - 1
+                        w.setCurrentIndex(max(0, i))
+                    else:
+                        w.setCurrentIndex(max(0, w.findData(v)))
+                elif isinstance(w, QPlainTextEdit):
+                    w.setPlainText(str(v or ""))
+                elif hasattr(w, "_spins") and v is not None:
+                    for sp, val in zip(w._spins, v):
+                        sp.setValue(u.to_display(val))
+                elif isinstance(w, QLineEdit):
+                    w.setText(str(v or ""))
+            finally:
+                w.blockSignals(False)
+        self._emit()
+
     def values(self) -> dict:
         out = dict(self._values)
         for p in self.params:

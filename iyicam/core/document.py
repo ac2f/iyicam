@@ -92,11 +92,15 @@ class MaterialSetup:
     accel: float = 200.0           # mm/s2: how fast the machine speeds up and slows down (the estimate of the time follows it)
     corner_dev: float = 0.05       # mm: how far the machine may cut off a corner (the speed through corners follows it)
     time_scale: float = 1.0        # what the machine really did over what the estimate says (set by the calibration)
+    corner_mode: str = ""          # how the machine takes corners: "" as it is set (nothing written; the estimate slows for corners) |
+                                   # "blend": straight through without slowing (G64 written after the header, like ArtCAM) |
+                                   # "exact": a stop at every corner (G61)
 
     def machine(self):
         """What the time estimate needs to know of the machine (cam/timing.py)."""
         from ..cam.timing import Machine
-        return Machine(self.rapid_rate, self.z_rapid_rate, self.accel, self.corner_dev, self.time_scale)
+        return Machine(self.rapid_rate, self.z_rapid_rate, self.accel, self.corner_dev, self.time_scale,
+                       {"blend": "blend", "exact": "stop"}.get(self.corner_mode, "slow"))
     rotary: bool = False           # sheets are wrapped around a rotary axis: Y becomes the angle
     rotary_diameter: float = 100.0  # cylinder diameter at the material surface
 
@@ -431,7 +435,8 @@ def project_to_dict(p: Project) -> dict:
         "material": {"thickness": m.thickness, "z_zero": m.z_zero, "safe_z": m.safe_z,
                      "clearance": m.clearance, "home": list(m.home), "xy_origin": m.xy_origin,
                      "rapid_rate": m.rapid_rate, "rotary": m.rotary, "rotary_diameter": m.rotary_diameter,
-                     "z_rapid_rate": m.z_rapid_rate, "accel": m.accel, "corner_dev": m.corner_dev, "time_scale": m.time_scale},
+                     "z_rapid_rate": m.z_rapid_rate, "accel": m.accel, "corner_dev": m.corner_dev, "time_scale": m.time_scale,
+                     **({"corner_mode": m.corner_mode} if m.corner_mode else {})},
         "layers": [{"id": l.id, "name": l.name, "color": l.color, "visible": l.visible,
                     "locked": l.locked, **({"sheets": list(l.sheet_ids)} if l.sheet_ids is not None else {}),
                     **({"sheet_group": l.sheet_group} if l.sheet_group else {})} for l in p.layers],
@@ -458,7 +463,8 @@ def project_from_dict(d: dict) -> Project:
         xy_origin=m.get("xy_origin", "bottom_left"), rapid_rate=m.get("rapid_rate", 8000.0),
         rotary=m.get("rotary", False), rotary_diameter=m.get("rotary_diameter", 100.0),
         z_rapid_rate=_pos(m.get("z_rapid_rate"), 3000.0), accel=_pos(m.get("accel"), 200.0, 1.0),
-        corner_dev=_pos(m.get("corner_dev"), 0.05, 1e-4), time_scale=_pos(m.get("time_scale"), 1.0, 0.05))
+        corner_dev=_pos(m.get("corner_dev"), 0.05, 1e-4), time_scale=_pos(m.get("time_scale"), 1.0, 0.05),
+        corner_mode=m.get("corner_mode") if m.get("corner_mode") in ("blend", "exact") else "")
     p.layers = [Layer(l["name"], l.get("color", "#1f77b4"), l.get("visible", True), l.get("locked", False),
                       l["id"], [str(x) for x in l["sheets"]] if isinstance(l.get("sheets"), list) else None,
                       l["sheet_group"].strip() if isinstance(l.get("sheet_group"), str) else "")

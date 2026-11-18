@@ -516,6 +516,17 @@ class Controller(CutControl, QObject):
                 t.enabled = (t.id in ids) == enabled
         self.toolpaths_changed.emit()
 
+    def move_sheet(self, sid: str, delta: int) -> bool:
+        """Move a sheet up (-1) or down (1) in the list: the order of the sheets is the order of their files and of their numbers."""
+        sh = self.project.sheets
+        i = next((k for k, s in enumerate(sh) if s.id == sid), None)
+        if i is None or not 0 <= i + delta < len(sh):
+            return False
+        with self.edit("Reorder sheets", geometry=False):
+            sh[i], sh[i + delta] = sh[i + delta], sh[i]
+        self.sheet_changed.emit()
+        return True
+
     # -- groups of sheets --------------------------------------------------------------------------------
     def sheet_groups(self) -> list[str]:
         """The names of the groups of sheets, in the order their first sheet comes."""

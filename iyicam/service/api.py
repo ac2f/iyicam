@@ -10,7 +10,7 @@ from .files import FILE_OPS, Files
 from .host import ServiceHost
 
 # what /api/<operation> may call (the whole service interface, nothing else)
-API_OPS = frozenset({"ping", "schema", "validate", "new_project", "calibrate_time", "import", "export", "command", "compute", "gcode", "simulate",
+API_OPS = frozenset({"ping", "schema", "validate", "new_project", "calibrate_time", "tp_presets", "tp_preset_save", "tp_preset_delete", "tp_preset_apply", "import", "export", "command", "compute", "gcode", "simulate",
                      "nest", "job.start", "job.status", "job.cancel", "job.result", "jobs", "job.dismiss",
                      "posts", "post_save", "post_delete", "post_preview", "gcode_explain", "leftover", "plugins", "plugin_install", "plugin_set"})
 
