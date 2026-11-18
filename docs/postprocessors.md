@@ -182,3 +182,17 @@ def register(api):
 
 Useful hooks to override: `job_vars`, `tool_vars`, `block`, `rapid`, `linear`,
 `arc`, `drill`, `fmt`, `finalize`.
+
+## The name of the files (Save G-code)
+
+The Save G-code window of the desktop program, the Output tab of the page and the engine (`gcode` takes `name_parts`
+and `name_sep`) name the files by **prefixes**: a list of texts, each with `{variables}` that the program fills in
+(`{project_name}`, `{sheet_name}`, `{sheet_number}`, `{group}`, `{tool_number}`, `{tool_name}`, `{date}`, `{time}`,
+`{post_name}`, `{material_thickness}`, `{sheet_width}`, `{sheet_height}`, `{toolpath_count}`, `{sheet_count}`), joined by
+a separator (`_`). A variable is added from the list or the buttons, as in the blocks of a post; the window shows the
+names the files will get, and says which variable it does not know. What was written is remembered. With several sheets
+a number is added when the name has no `{sheet_number}` or `{sheet_name}`, so no file overwrites another. In the desktop
+window a name typed over the proposed one in the file dialog is used as it is, as before.
+
+The order of the blocks in a file is always: start of the file, first tool / tool change, start of a toolpath, its
+moves, end of a toolpath (and so on for every toolpath), end of the file.

@@ -1457,6 +1457,7 @@ class ExportDialog(RemembersSize, QDialog):
         self.sheets = QComboBox()
         self.sheets.addItem("Current sheet", "current")
         self.sheets.addItem("All sheets (one file per sheet)", "all")
+        self.sheets.currentIndexChanged.connect(lambda *_: self._name_changed())
         form.addRow("Sheets", self.sheets)
         tiling = QHBoxLayout()
         self.tile = QCheckBox("Tile the job")
@@ -1501,6 +1502,7 @@ class ExportDialog(RemembersSize, QDialog):
         self.desc = QLabel()
         self.desc.setWordWrap(True)
         lay.addWidget(self.desc)
+        lay.addWidget(self._name_box(mem))
         lay.addWidget(QLabel("Toolpaths in this file (in machining order):"))
         pick = QHBoxLayout()
         self.list = QListWidget()
@@ -1538,8 +1540,133 @@ class ExportDialog(RemembersSize, QDialog):
         cp.clicked.connect(lambda: QApplication.clipboard().setText(self.text.toPlainText()))
         bb.addButton(QDialogButtonBox.Close).clicked.connect(self.reject)
         lay.addWidget(bb)
-        self.keep_size(ctrl, "export", 640, 720)
+        self.keep_size(ctrl, "export", 640, 780)
+        self.list.itemChanged.connect(self._name_changed)
+        self.post.currentIndexChanged.connect(self._name_changed)
+        self._name_changed()
         self.preview()
+
+    # -- the name of the files: prefixes with variables, like the blocks of a post ----------------------------
+    def _name_box(self, mem: dict) -> QGroupBox:
+        from ..post import naming
+        box = QGroupBox("File name")
+        lay = QVBoxLayout(box)
+        self._name_rows = QVBoxLayout()
+        lay.addLayout(self._name_rows)
+        self._active = None
+        parts = mem.get("name_parts") if isinstance(mem.get("name_parts"), list) else None
+        try:
+            parts, sep = naming.check(parts, mem.get("name_sep", naming.DEFAULT_SEP))
+        except naming.NamingError:
+            parts, sep = list(naming.DEFAULT_PARTS), naming.DEFAULT_SEP
+        for text in parts:
+            self._add_prefix(text)
+        row = QHBoxLayout()
+        add = QPushButton("＋ Add a prefix")
+        add.clicked.connect(lambda: self._add_prefix("", focus=True))
+        self.name_var = QComboBox()
+        self.name_var.addItem("Insert a variable...", None)
+        for v in naming.VARIABLES:
+            self.name_var.addItem(f"{{{v['name']}}}  {v['text']['en']}", v["name"])
+        self.name_var.activated.connect(self._insert_var)
+        self.name_sep = QLineEdit(sep)
+        self.name_sep.setMaxLength(4)
+        self.name_sep.setMaximumWidth(48)
+        self.name_sep.setToolTip("Put between the prefixes")
+        self.name_sep.textChanged.connect(self._name_changed)
+        for w in (add, self.name_var):
+            row.addWidget(w)
+        row.addWidget(QLabel("between:"))
+        row.addWidget(self.name_sep)
+        row.addStretch(1)
+        lay.addLayout(row)
+        self.name_preview = QLabel()
+        self.name_preview.setWordWrap(True)
+        self.name_preview.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        lay.addWidget(self.name_preview)
+        return box
+
+    def _add_prefix(self, text: str = "", focus: bool = False) -> None:
+        row = QHBoxLayout()
+        edit = QLineEdit(text)
+        edit.setPlaceholderText("a prefix, with {variables}")
+        edit.textChanged.connect(self._name_changed)
+        edit.cursorPositionChanged.connect(lambda *_: setattr(self, "_active", edit))
+        from .panels import small_button
+        gone = small_button("✕", "Remove this prefix", lambda: self._remove_prefix(row))
+        row.addWidget(edit, 1)
+        row.addWidget(gone)
+        self._name_rows.addLayout(row)
+        self._active = edit
+        if focus:
+            edit.setFocus()
+        self._name_changed()
+
+    def _remove_prefix(self, row) -> None:
+        if self._name_rows.count() <= 1:
+            return
+        while row.count():
+            w = row.takeAt(0).widget()
+            if w is not None:
+                if w is self._active:
+                    self._active = None
+                w.deleteLater()
+        self._name_rows.removeItem(row)
+        self._name_changed()
+
+    def name_parts(self) -> list[str]:
+        out = []
+        for i in range(self._name_rows.count()):
+            item = self._name_rows.itemAt(i).layout()
+            if item is not None and item.count():
+                out.append(item.itemAt(0).widget().text())
+        return out
+
+    def _insert_var(self, i: int) -> None:
+        name = self.name_var.itemData(i)
+        self.name_var.setCurrentIndex(0)
+        if name is None:
+            return
+        edit = self._active
+        if edit is None:
+            self._add_prefix("")
+            edit = self._active
+        edit.insert("{" + name + "}")
+        edit.setFocus()
+
+    def file_stem(self, index: int, sheet, tps) -> str | None:
+        """The name of the files of one sheet by the prefixes (``None``: the prefixes are not right: said in the box)."""
+        from ..post import naming
+        project = self.ctrl.project
+        sheets = project.sheets if self.sheets.currentData() != "current" else [sheet]
+        t0 = tps[0] if tps else None
+        group = self.group or next(iter({t.group for t in project.toolpaths if t.id in self.chosen() and t.group}), "")
+        post = self.current_post()
+        vals = naming.values(project.name, sheet.name, index, len(sheets), post.name, group, len(tps),
+                             t0.tool.number if t0 else None, t0.tool.name if t0 else "", project.sheet_thickness(sheet),
+                             sheet.width, sheet.height)
+        parts, sep = naming.check(self.name_parts(), self.name_sep.text() or naming.DEFAULT_SEP)
+        name = naming.render(parts, vals, sep)
+        many = len(sheets) > 1
+        return f"{name}_{index}" if many and not naming.uses(parts, "sheet_number", "sheet_name") else name
+
+    def _name_changed(self, *_) -> None:
+        from ..post import naming
+        if not hasattr(self, "name_preview") or not hasattr(self, "list"):
+            return
+        try:
+            naming.check(self.name_parts(), self.name_sep.text() or naming.DEFAULT_SEP)
+        except naming.NamingError as exc:
+            self.name_preview.setText(f"<span style='color:#b91c1c'>{exc}</span>")
+            return
+        post = self.current_post()
+        names = []
+        sheets = [self.ctrl.sheet] if self.sheets.currentData() == "current" else self.ctrl.project.sheets
+        for i, sh in enumerate(sheets, 1):
+            tps = self.toolpaths(sh)
+            if tps:
+                names.append(f"{self.file_stem(i, sh, tps)}.{post.extension}")
+        self.name_preview.setText("Files: " + (", ".join(names[:4]) + (" ..." if len(names) > 4 else "") if names else "(none)"))
 
     def _tick(self, wanted) -> None:
         """Tick the toolpaths that ``wanted(toolpath)`` says yes to, and no others."""
@@ -1624,17 +1751,31 @@ class ExportDialog(RemembersSize, QDialog):
         post = self.current_post()
         ctrl = self.ctrl
         proj = ctrl.project
-        name = self.group or (proj.path.stem if proj.path else proj.name)
-        fn, _ = save_file(self, ctrl.settings, "gcode", "Save G-code", f"{name}.{post.extension}",
+        from ..post import naming
+        sheets = [ctrl.sheet] if self.sheets.currentData() == "current" else ctrl.project.sheets
+        try:
+            naming.check(self.name_parts(), self.name_sep.text() or naming.DEFAULT_SEP)
+        except naming.NamingError as exc:
+            QMessageBox.warning(self, "Save G-code", f"The file name: {exc}")
+            return
+        first = next(((i, s) for i, s in enumerate(sheets, 1) if self.toolpaths(s)), None)
+        proposed = self.file_stem(first[0], first[1], self.toolpaths(first[1])) if first else (self.group or proj.name)
+        fn, _ = save_file(self, ctrl.settings, "gcode", "Save G-code", f"{proposed}.{post.extension}",
                           f"{post.name} (*.{post.extension});;All files (*)",
                           str(proj.path.parent) if proj.path else str(Path.home()))
         if not fn:
             return
-        sheets = [ctrl.sheet] if self.sheets.currentData() == "current" else ctrl.project.sheets
+        # the name as proposed: every file is named by the prefixes; a name typed over it is the person's own (the old way)
+        by_prefixes = Path(fn).stem == proposed
         written = []
         for i, s in enumerate(sheets):
             path = Path(fn)
-            if len(sheets) > 1:
+            if by_prefixes:
+                tps_here = self.toolpaths(s)
+                if not tps_here:
+                    continue
+                path = path.with_name(f"{self.file_stem(i + 1, s, tps_here)}{path.suffix}")
+            elif len(sheets) > 1:
                 path = path.with_name(f"{path.stem}_{i + 1}{path.suffix}")
             try:
                 for tile, sheet, tps in self.jobs(s):
@@ -1651,6 +1792,7 @@ class ExportDialog(RemembersSize, QDialog):
     def _remember(self) -> None:
         s, u = self.ctrl.settings, self.ctrl.units
         s.remember("export_gcode", {"sheets": self.sheets.currentData(), "tile": self.tile.isChecked(),
+                                    "name_parts": self.name_parts(), "name_sep": self.name_sep.text(),
                                     "tile_axis": self.tile_axis.currentData(),
                                     "tile_len": u.from_display(self.tile_len.value())})
 

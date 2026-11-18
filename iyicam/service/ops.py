@@ -202,6 +202,8 @@ def op_schema(_payload=None) -> dict:
                          # until it closes; the engine's own default stays off for projects and calls that never said)
                          "defaults": jsonable({**{k: v for k, v in seq.DEFAULTS.items() if k not in ("order", "directions")},
                                                "smart_starts": True})},
+            "naming": {"variables": __import__("iyicam.post.naming", fromlist=["x"]).VARIABLES,
+                       "default_parts": ["{project_name}"], "default_sep": "_"},
             "plugin_errors": list(PLUGIN_ERRORS)}
 
 
@@ -491,13 +493,32 @@ def op_gcode(payload: dict, ctl: JobControl | None = None) -> dict:
     errors = [f"{project.toolpath(t).name}: {r.error}" for (t, _s), r in res.items() if r.error]
     stem = _stem(project, payload.get("file_name"))
     program = int(_num(payload, "program_number", 1000, 0, 999999))
+    parts = sep = None
+    if payload.get("name_parts") is not None:            # the name as the person wrote it: prefixes with variables
+        from ..post import naming
+        try:
+            parts, sep = naming.check(payload.get("name_parts"), payload.get("name_sep", naming.DEFAULT_SEP))
+        except naming.NamingError as exc:
+            raise ServiceError("bad_request", str(exc), field="name_parts") from exc
     files, warnings = [], []
     many = len(project.sheets) > 1
+    groups = {t.group for t in project.toolpaths if t.enabled and t.group}
     for i, sheet in enumerate(project.sheets, 1):
         tps = sheet_toolpaths(project, res, sheet)
         if not tps:
             continue
-        base = f"{stem}_{i}" if many else stem
+        if parts is not None:
+            from ..post import naming
+            t0 = tps[0]
+            vals = naming.values(project.name, sheet.name, i, len(project.sheets), post.name,
+                                 str(payload.get("group") or (next(iter(groups)) if len(groups) == 1 else "")),
+                                 len(tps), t0.tool.number, t0.tool.name, project.sheet_thickness(sheet), sheet.width,
+                                 sheet.height)
+            name = naming.render(parts, vals, sep)
+            # (a job with several sheets needs a number in the name or the files would overwrite each other)
+            base = f"{name}_{i}" if many and not naming.uses(parts, "sheet_number", "sheet_name") else name
+        else:
+            base = f"{stem}_{i}" if many else stem
         for tp in tps:
             warnings += [w for w in tp.warnings if w not in warnings]
         for suffix, text in post_toolpaths(project, sheet, tps, post, base, program):

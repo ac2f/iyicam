@@ -35,6 +35,8 @@ const TXT = {
     "tool.spindle_speed": "Devir (dev/dk)", "tool.stepdown": "Paso derinliği (mm)", "tool.stepover": "Yanal adım (mm)",
     "tool.number": "Takım no",
     "more.show": "▸ Daha fazla seçenek ({0})", "more.fewer": "▾ Daha az seçenek",
+    "name.title": "Dosya adı", "name.hint": "Her ön ek ayrı yazılır, aralarına ayraç konur. {değişken} yazılan yere değeri gelir; düğmeler ekler.",
+    "name.add": "＋ Ön ek ekle", "name.sep": "Ayraç", "name.files": "Dosyalar: {0}", "name.remove": "Bu ön eki kaldır",
     "grp.label": "Grup", "grp.none": "(grupsuz)", "grp.new": "Yeni grup adı", "grp.hint": "Aynı gruptaki takım yolları birlikte açılır/kapanır ve tek dosyada kaydedilebilir.",
     "grp.which": "Dosyaya girecek takım yolları", "grp.all": "Hepsi", "grp.noneSel": "Hiçbiri", "grp.onlyGroup": "Yalnız grup: {0}", "grp.pickOne": "En az bir takım yolu seç.",
     "grp.save": "Seçilenleri tek dosyada üret", "grp.count": "{0} / {1} seçili",
@@ -96,6 +98,8 @@ const TXT = {
     "tool.spindle_speed": "Spindle (rpm)", "tool.stepdown": "Step down (mm)", "tool.stepover": "Step over (mm)",
     "tool.number": "Tool number",
     "more.show": "▸ More options ({0})", "more.fewer": "▾ Fewer options",
+    "name.title": "File name", "name.hint": "Every prefix is written on its own, the separator goes between them. Where {variable} is written its value is put in; the buttons add them.",
+    "name.add": "＋ Add a prefix", "name.sep": "Separator", "name.files": "Files: {0}", "name.remove": "Remove this prefix",
     "grp.label": "Group", "grp.none": "(no group)", "grp.new": "New group name", "grp.hint": "Toolpaths of one group are switched on and off together and can be saved in one file.",
     "grp.which": "Toolpaths in the file", "grp.all": "All", "grp.noneSel": "None", "grp.onlyGroup": "Only group: {0}", "grp.pickOne": "Choose at least one toolpath.",
     "grp.save": "Write the chosen ones as one file", "grp.count": "{0} of {1} chosen",
@@ -1182,6 +1186,63 @@ function viewPaths() {
 
 async function guarded(fn) { if (S.busy) return; try { await fn(); } catch (e) { fail(e); } }
 
+/** the name of the G-code files: prefixes with variables (the engine puts the values in, so a file is called the same wherever
+ *  it is saved); what was written is kept in this browser */
+function nameCard(p, sel, stem) {
+  const nm = S.schema.naming || { variables: [], default_parts: ["{project_name}"], default_sep: "_" };
+  if (!S.fileName) {
+    let saved = null;
+    try { saved = JSON.parse(store.get("iyicam.fileName") || "null"); } catch { saved = null; }
+    S.fileName = saved && Array.isArray(saved.parts) && saved.parts.length ? saved : { parts: nm.default_parts.slice(), sep: nm.default_sep };
+  }
+  const fn = S.fileName, save = () => store.set("iyicam.fileName", JSON.stringify(fn));
+  const known = new Set(nm.variables.map(v => v.name));
+  const sample = () => {                                  // (a sample of the first file: the values the page knows)
+    const sh = activeSheet(), now = new Date(), pad = n => String(n).padStart(2, "0");
+    const vals = { project_name: p.name || "job", sheet_name: sh ? sh.name : "", sheet_number: String(p.sheets.indexOf(sh) + 1), sheet_count: String(p.sheets.length),
+      post_name: (S.schema.posts.find(x => x.id === S.post) || {}).name || "", group: "", toolpath_count: String(sel.size),
+      tool_number: p.toolpaths[0] && p.toolpaths[0].tool ? String(p.toolpaths[0].tool.number) : "", tool_name: p.toolpaths[0] && p.toolpaths[0].tool ? p.toolpaths[0].tool.name : "",
+      material_thickness: String((p.material || {}).thickness ?? ""), sheet_width: String(sh ? sh.width : ""), sheet_height: String(sh ? sh.height : ""),
+      date: `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`, time: pad(now.getHours()) + pad(now.getMinutes()) };
+    const bad = fn.parts.flatMap(x => [...x.matchAll(/\{(\w+)\}/g)].map(m => m[1])).filter(v => !known.has(v));
+    if (bad.length) return { bad };
+    const name = fn.parts.map(x => x.replace(/\{(\w+)\}/g, (_, v) => vals[v] ?? "").replace(/[^\w\-. ()+,=#@]+/g, "_").replace(/^[ ._]+|[ ._]+$/g, "")).filter(Boolean).join(fn.sep || "_");
+    return { name: name || "job" };
+  };
+  const prev = h("div", { class: "muted small", style: "margin-top:8px" });
+  const showPrev = () => { const r = sample(); prev.textContent = r.bad ? "{" + r.bad.join("}, {") + "} ?" : t("name.files", r.name + ".*"); prev.classList.toggle("bad", !!r.bad); };
+  let active = null;
+  const rows = h("div");
+  const addRow = text => {
+    const inp = h("input", { type: "text", value: text, placeholder: "{project_name}", spellcheck: "false", autocapitalize: "off", autocomplete: "off" });
+    const i = fn.parts.length; fn.parts.push(text);
+    const row = h("div", { class: "row", style: "margin:4px 0" }, inp);
+    inp.classList.add("grow");
+    inp.onfocus = () => { active = inp; };
+    inp.oninput = () => { fn.parts[[...rows.children].indexOf(row)] = inp.value; save(); showPrev(); };
+    row.append(h("button", { class: "small", title: t("name.remove"), "aria-label": t("name.remove"), onclick: () => {
+      if (rows.children.length <= 1) return;
+      fn.parts.splice([...rows.children].indexOf(row), 1); row.remove(); save(); showPrev();
+    } }, "✕"));
+    rows.append(row);
+    return inp;
+  };
+  const initial = fn.parts.slice(); fn.parts.length = 0;
+  initial.forEach(addRow);
+  const chip = v => h("button", { type: "button", class: "chip", title: v.text[lang] || v.text.en, onclick: () => {
+    const inp = active && active.isConnected ? active : rows.lastChild.firstChild;
+    const a = inp.selectionStart ?? inp.value.length, b = inp.selectionEnd ?? a;
+    inp.setRangeText("{" + v.name + "}", a, b, "end"); inp.dispatchEvent(new Event("input")); inp.focus();
+  } }, v.name);
+  const sep = h("input", { type: "text", value: fn.sep, maxlength: "4", style: "width:64px" });
+  sep.oninput = () => { fn.sep = sep.value; save(); showPrev(); };
+  showPrev();
+  return h("div", { class: "card" }, h("h2", {}, t("name.title")), h("div", { class: "muted small" }, t("name.hint")), rows,
+    h("div", { class: "row", style: "margin-top:6px" }, h("button", { class: "small", onclick: () => { const i = addRow(""); i.focus(); } }, t("name.add")),
+      h("label", { class: "chk" }, t("name.sep") + " ", sep)),
+    h("div", { class: "chips", style: "margin-top:8px" }, nm.variables.map(chip)), prev);
+}
+
 function viewOutput() {
   const p = S.project, sc = S.schema;
   if (!p.toolpaths.length) return h("div", { class: "empty" }, h("div", { class: "big" }, "🛠"), h("div", {}, t("out.needpaths")));
@@ -1214,6 +1275,7 @@ function viewOutput() {
   };
 
   out.push(pickCard);
+  out.push(nameCard(p, sel, stem));
   out.push(h("div", { class: "card" }, h("h2", {}, t("out.post")), post,
     window.IyiPage.post ? window.IyiPage.post.tools(S.post) : null,            // (post.js: change it, copy it, what I J K mean)
     h("div", { class: "row", style: "margin-top:12px" },
@@ -1221,7 +1283,7 @@ function viewOutput() {
       h("button", { class: "primary grow", onclick: () => guarded(async () => {
         if (!sel.size) return toast(t("grp.pickOne"), "warn");
         const everyOn = p.toolpaths.every(x => sel.has(x.id) === x.enabled);
-        const r = await runJob("gcode", { project: p, post: S.post, file_name: chosenFile(), ...(everyOn ? {} : { toolpaths: [...sel] }) });
+        const r = await runJob("gcode", { project: p, post: S.post, file_name: chosenFile(), name_parts: S.fileName.parts, name_sep: S.fileName.sep, ...(everyOn ? {} : { toolpaths: [...sel] }) });
         S.gcode = r; render();
         if (!r.ok) toast(t("out.nogcode"), "bad");
       }) }, "⚙ " + t("out.gcode"))),
