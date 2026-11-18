@@ -558,3 +558,7 @@ window: what it keeps changes, the rest stays. The presets are kept in `toolpath
 the desktop program and the page (engine operations `tp_presets`, `tp_preset_save`, `tp_preset_delete`, `tp_preset_apply`).
 
 **The order of the sheets** is changed with ▲ ▼ on the Sheets panel (desktop) and ↑ ↓ on the Project tab (page).
+
+**The start-up window** of the desktop program shows at once, with what is being loaded (operations and posts, settings,
+plugins, the main window, the projects of the last session) and a bar; it closes when the main window is up.
+`--no-splash` starts without it.

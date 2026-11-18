@@ -9,33 +9,53 @@ from ..core.registry import REGISTRY
 from ..plugins.manager import PluginManager
 
 
-def create_window(argv: list[str] | None = None, load_plugins: bool = True):
-    """Build the application objects; returns ``(app, window)`` without entering the event loop."""
+def create_window(argv: list[str] | None = None, load_plugins: bool = True, splash: bool = False):
+    """Build the application objects; returns ``(app, window)`` without entering the event loop. With
+    ``splash`` the start-up window is shown at once and ``window.splash`` is it (``main`` closes it)."""
     from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance() or QApplication(argv if argv is not None else sys.argv)
+    shown = None
+    if splash:
+        from . import splash as splash_mod
+        try:
+            shown = splash_mod.show()
+        except Exception as exc:   # (a start-up picture must never stop the program)
+            print(f"iyiCAM: splash: {exc}", file=sys.stderr)
+
+    def step(text):
+        if shown is not None:
+            shown.step(text)
+
+    step("Loading the interface...")
 
     from . import theme
     from .controller import Controller
     from .main_window import MainWindow
     from .settings import Settings
 
-    app = QApplication.instance() or QApplication(argv if argv is not None else sys.argv)
     app.setApplicationName("iyiCAM")
     app.setOrganizationName("iyiCAM")
+    step("Loading operations and posts...")
     ensure_registered(REGISTRY)
     try:
         load_user_posts(REGISTRY)
     except Exception as exc:  # a broken user post must not stop the application
         print(f"iyiCAM: user posts: {exc}", file=sys.stderr)
+    step("Reading the settings...")
     settings = Settings.load()
     theme.apply(app, settings.theme)
     app.setWindowIcon(theme.app_icon())
     pm = PluginManager(REGISTRY, [paths.plugins_dir()], settings.disabled_plugins)
     if load_plugins:
+        step("Loading plugins...")
         for info in pm.load_all():
             if info.error:
                 print(f"iyiCAM: plugin {info.key} failed:\n{info.error}", file=sys.stderr)
+    step("Opening the main window...")
     ctrl = Controller(REGISTRY, settings)
     win = MainWindow(ctrl, pm)
+    win.splash = shown
     return app, win
 
 
@@ -94,15 +114,23 @@ def _own_taskbar_group() -> None:
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv if argv is None else argv)
     _own_taskbar_group()
-    app, win = create_window(argv)
+    app, win = create_window(argv, splash="--no-splash" not in argv)
     install_crash_log()
+    splash = getattr(win, "splash", None)
     files = [a for a in argv[1:] if not a.startswith("-")]
+    if splash is not None:
+        splash.step("Opening the projects of the last session...")
     win.restore_tabs()                  # the projects of the last session, then the files named now
     for f in files:
         if f.lower().endswith(".icam"):
             win.open_project(f)
         else:
             win.import_vectors(f, {})
+    if splash is not None:
+        splash.step("Ready")
     win.show()
     win.canvas.zoom_extents()
+    if splash is not None:
+        splash.finish(win)
+        win.splash = None
     return app.exec()
