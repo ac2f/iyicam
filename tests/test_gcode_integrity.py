@@ -692,7 +692,7 @@ def test_the_checks_see_damaged_gcode():
         "plunge not at the plunge rate": good.replace(first_plunge, "G1 Z-3.64 F3000", 1),
         "spindle off": good.replace("S18000 M3", "S18000"),
         "spindle speed is not the tool's": good.replace("S18000 M3", "S9000 M3"),
-        "rapid at Z1": re.sub(r"(G0 X[-\d.]+ Y[-\d.]+ )Z10", r"\1Z1", good, count=1),
+        "rapid at Z1": re.sub(r"(G0 X[-\d.]+ Y[-\d.]+ )Z\d+", r"\1Z1", good, count=1),
         "the tool cuts into the part": shift_x(good, 1.0),
         "no program end": good.replace("M30", ""),
         "units not set": good.replace("G21", "G20"),
