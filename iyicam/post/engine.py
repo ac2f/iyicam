@@ -51,6 +51,7 @@ DEFAULT_OPTIONS: dict[str, Any] = {
     "modal_feed": True,
     "rapid_z_first": True,       # split diagonal rapids so the tool never dives sideways
     "start_from_home": True,     # the first rapid of a file travels at the home Z (the header went there), then goes down
+    "first_stop_safe_z": False,  # on that first way down: stop at the safe Z first (off: straight down to where the cut begins)
     "line_numbers": False,
     "line_number_start": 10,
     "line_number_step": 10,
@@ -89,6 +90,12 @@ DEFAULT_BLOCKS: dict[str, str] = {
     "inverse_time_on": "G93",
     "inverse_time_off": "G94",
 }
+
+def _drop_spindle_stop(text: str) -> str:
+    """A block without its lines that only stop the spindle (``M5`` / ``M05``, with or without a comment)."""
+    return "\n".join(ln for ln in text.split("\n")
+                     if not re.fullmatch(r"\s*M0?5\s*(\(.*\)|;.*)?\s*", ln, re.I))
+
 
 OPTION_CHOICES: dict[str, tuple[str, ...]] = {
     "units": ("mm", "inch"), "line_ending": ("lf", "crlf"), "arcs": ("ijk", "r", "none"),
@@ -262,6 +269,8 @@ class PostProcessor:
         self.lines: list[str] = []
         self._last: dict[str, str | None] = {"X": None, "Y": None, "Z": None, "F": None, "G": None}
         self._pos: list[float] | None = None
+        self._travel_z: float | None = None
+        self._approach_z: float | None = None
         self._cycle: DrillCycle | None = None
         self._cycle_z0 = 0.0
         self._pending: Rapid | None = None
@@ -279,15 +288,21 @@ class PostProcessor:
             tv = {**base, **self.tool_vars(tp, prev_tool, job)}
             if prev_tool is None:
                 if self.options["tool_change_first"]:
-                    self.block("first_tool_change" if self.blocks.get("first_tool_change") else "tool_change", tv)
+                    if self.blocks.get("first_tool_change"):
+                        self.block("first_tool_change", tv)
+                    else:                                    # (the spindle does not turn yet: no spindle stop before the first tool)
+                        self._block_text(_drop_spindle_stop(self.blocks.get("tool_change") or ""), tv)
             elif prev_tool.number != tp.tool.number:
                 self.block("tool_change", tv)
             elif self.blocks.get("tool_same"):
                 self.block("tool_same", tv)
             self.block("toolpath_start", tv)
+            if prev_tool is None:
+                self._travel_z = self._written_z()
             # the first move of a toolpath always writes every coordinate
             self._last.update({"X": None, self._yl: None, "Z": None, "G": None})
-            for m in tp.moves:
+            moves = tp.moves if i or not self._straight_down() else self._first_approach(tp.moves)
+            for m in moves:
                 self.move(m, tv)
             self._end_cycle(tv)
             self.block("toolpath_end", tv)
@@ -301,6 +316,46 @@ class PostProcessor:
         for _, flt in REGISTRY.gcode_filters:
             text = flt(text, job, self)
         return text
+
+    _Z_WORD = re.compile(r"(?<![A-Z])Z\s*(-?\d*\.?\d+)", re.I)
+
+    def _written_z(self) -> float | None:
+        """The Z the start of the file (header, first tool) sent the tool to, in the program's own millimetres; ``None``
+        when it does not say (then the tool is taken to be at the home Z)."""
+        for ln in reversed(self.lines):
+            if self._is_comment(ln.strip()):
+                continue
+            body = re.sub(r"\(.*?\)|;.*$", "", ln)
+            if re.search(r"(?<![A-Z\d])G0?[01](?!\d)|(?<![A-Z\d])G(?:43|53)(?!\d)", body, re.I) or re.match(r"\s*Z", body, re.I):
+                z = self._Z_WORD.search(body)
+                if z and not re.search(r"(?<![A-Z\d])G(?:28|30)(?!\d)", body, re.I):
+                    try:
+                        return float(z.group(1)) / self._k - self._oz
+                    except ValueError:
+                        return None
+        return None
+
+    def _straight_down(self) -> bool:
+        o = self.options
+        return bool(o["start_from_home"] and o["rapid_z_first"] and not o["first_stop_safe_z"])
+
+    def _first_approach(self, moves: list) -> list:
+        """The moves of the first toolpath of the file without the stops on the way down at its start: the tool goes over at
+        the home Z (see ``start_from_home``) and then straight down to where the cut begins, not first to the safe Z."""
+        lead = 0
+        while lead < len(moves) and isinstance(moves[lead], (Rapid, Comment)):
+            lead += 1
+        rapids = [m for m in moves[:lead] if isinstance(m, Rapid)]
+        if rapids:
+            self._approach_z = rapids[0].z         # (the height it would have travelled at: never lower than that)
+        keep: list = []
+        for k, m in enumerate(rapids):
+            nxt = rapids[k + 1] if k + 1 < len(rapids) else None
+            if (nxt is not None and abs(nxt.x - m.x) < 1e-9 and abs(nxt.y - m.y) < 1e-9 and nxt.z <= m.z + 1e-9):
+                continue          # (straight down again from here: this stop is left out)
+            keep.append(m)
+        notes = [m for m in moves[:lead] if isinstance(m, Comment)]
+        return notes + keep + list(moves[lead:])
 
     def _join(self, lines: list[str]) -> str:
         eol = "\r\n" if self.options["line_ending"] == "crlf" else "\n"
@@ -373,7 +428,9 @@ class PostProcessor:
 
     # -- blocks --------------------------------------------------------------------------
     def block(self, name: str, variables: dict) -> None:
-        tpl = self.blocks.get(name) or ""
+        self._block_text(self.blocks.get(name) or "", variables)
+
+    def _block_text(self, tpl: str, variables: dict) -> None:
         if not tpl:
             return
         if not self.options["comments"]:
@@ -471,10 +528,13 @@ class PostProcessor:
 
     def rapid(self, m: Rapid, tv: dict) -> None:
         p = self._pos
-        if p is None and self.options["start_from_home"] and self.options["rapid_z_first"] and m.z < self._home_z - 1e-9:
-            # the first move of the file: the tool is where the header left it, at the home Z (a job that goes home first and then
-            # starts): it travels over at that height and goes down last, it does not dive to the safe Z on the way
-            self._rapid_line(m.x, m.y, self._home_z, tv)
+        top = self._travel_z if getattr(self, "_travel_z", None) is not None else self._home_z
+        if getattr(self, "_approach_z", None) is not None:
+            top = max(top, self._approach_z)
+        if p is None and self.options["start_from_home"] and self.options["rapid_z_first"] and m.z < top - 1e-9:
+            # the first move of the file: the tool is where the header left it (the Z it went to, else the home Z: a job that goes
+            # home first and then starts): it travels over at that height and goes down last, it does not dive on the way
+            self._rapid_line(m.x, m.y, top, tv)
             self._rapid_line(m.x, m.y, m.z, tv)
             return
         if p is not None and self.options["rapid_z_first"]:

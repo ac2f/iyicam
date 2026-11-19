@@ -204,6 +204,19 @@ starts: the first rapid of the file now travels over at the home Z (when that is
 down to the safe Z last, instead of diving to it on the way. The option *First move: travel at the home Z, go down last*
 (`start_from_home`, on by default, with *Rapid: lift first, go down last* on) switches it off.
 
+The height it travels at is the Z the start of the file (or the first tool block) sent the tool to (`G0 Z..`, `G43 H.. Z..`,
+`G53 Z..`); when they do not move Z, the home Z of Material Setup; never lower than the toolpath's own safe Z. From there the
+tool goes **straight down to where the cut begins** (the plunge clearance): it does not stop at the safe Z on the way, so a
+file starts with exactly what the post says and then `G0 X.. Y.. Z<travel>` and `Z<clearance>`. The option *First move: stop at
+the safe Z on the way down* (`first_stop_safe_z`, off by default) puts that stop back.
+
+## The first tool
+
+The *First tool* block is written before the first toolpath. When it is empty the *Tool change* block is used **without its
+spindle stop lines** (`M5` / `M05`): the spindle does not turn yet at the start of a file, so a file does not begin with an M5.
+A *First tool* block of your own is written as it is; to write nothing there at all, turn off *Tool change block for the first
+tool too* (then the spindle has to be started in the *Start of the file* block).
+
 ## Sums in the blocks (a post that follows the job)
 
 Inside the braces of a block a sum of variables and numbers is worked out: `G0 Y{sheet_height + 50}` ends 50 mm above the

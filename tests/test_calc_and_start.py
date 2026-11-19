@@ -76,24 +76,58 @@ def test_the_page_works_out_sums_the_same_way():
     assert out == [w for _, w in cases] and all(isnan)
 
 
-def first_lines(home_z=None, **options):
+def first_lines(home_z=None, header=None, n=2, **options):
     ensure_registered(REGISTRY)
     p, s, objs = make_project([[shapes.rectangle(10, 10, 100, 60)]], size=(500, 300))
     add_tp(p, "profile", end_mill(6), {"through": True}, objs)
     if home_z is not None:
         p.material.home = (0.0, 0.0, home_z)
     res = compute_all(p, REGISTRY)
-    post = REGISTRY.posts["mach3"]
+    base = REGISTRY.posts["mach3"]
+    post = type(base)(base.definition)
     post.options.update(options)
+    # (a post of one's own: its start of the file and its tool change do not move Z)
+    post.blocks["header"] = "%\nG90 G21" if header is None else header
+    post.blocks["tool_change"] = "M5\nT{tool_number} M6\nS{spindle_speed} M3"
     text = post_toolpaths(p, s, sheet_toolpaths(p, res, s), post, "x")[0][1]
     lines = text.splitlines()
-    return lines[next(i for i, ln in enumerate(lines) if ln.startswith("G0 X")):][:2]
+    return lines[next(i for i, ln in enumerate(lines) if ln.startswith("G0 X")):][:n]
 
 
 def test_the_first_rapid_travels_at_the_home_z_and_goes_down_last():
     a, b = first_lines(20.0, start_from_home=True)
-    assert a.startswith("G0 X") and "Z20" in a and b.strip() == "Z10"
+    assert a.startswith("G0 X") and "Z20" in a and b.strip() == "Z2"     # (straight down to where the cut begins)
+    a, b, c = first_lines(20.0, n=3, start_from_home=True, first_stop_safe_z=True)
+    assert "Z20" in a and b.strip() == "Z10" and c.strip() == "Z2"     # (a stop at the safe Z, when asked for)
     a, b = first_lines(20.0, start_from_home=False)
     assert "Z10" in a                                                  # (the old way: dive to the safe Z on the way)
     a, _ = first_lines(5.0, start_from_home=True)                      # (home lower than the safe Z: nothing to do)
     assert "Z10" in a
+
+
+def test_the_first_travel_is_at_the_height_the_start_of_the_file_went_to():
+    a, b = first_lines(20.0, header="%\nG90 G21\nG0 Z35", start_from_home=True)
+    assert "Z35" in a and b.strip() == "Z2"
+    a, b = first_lines(20.0, header="%\nG90G21\nG0Z15.", start_from_home=True)
+    assert "Z15" in a and b.strip() == "Z2"
+
+
+def test_no_spindle_stop_before_the_first_tool():
+    ensure_registered(REGISTRY)
+    p, s, objs = make_project([[shapes.rectangle(10, 10, 100, 60)]], size=(500, 300))
+    add_tp(p, "profile", end_mill(6), {"through": True}, objs)
+    add_tp(p, "profile", end_mill(3, number=2), {"through": True}, objs)
+    res = compute_all(p, REGISTRY)
+    base = REGISTRY.posts["mach3"]
+    post = type(base)(base.definition)
+    post.blocks["header"] = "%\nG90 G21"
+    post.blocks["first_tool_change"] = ""
+    post.blocks["tool_change"] = "M5 (stop)\nT{tool_number} M6\nS{spindle_speed} M3"
+    text = post_toolpaths(p, s, sheet_toolpaths(p, res, s), post, "x")[0][1].replace("\r\n", "\n")
+    body = text[:text.index("T2")]
+    first = body[:body.index("G0 X")]
+    assert "M5" not in first and "T1 M6" in first and "S" in first     # (the first tool: no M5, the spindle starts)
+    assert "M5 (STOP)\nT2 M6" in text                                  # (a later tool change keeps it)
+    post.blocks["first_tool_change"] = "M5\nT{tool_number} M6"         # (a first tool block of one's own is written as it is)
+    text = post_toolpaths(p, s, sheet_toolpaths(p, res, s), post, "x")[0][1]
+    assert text.index("M5") < text.index("T1 M6")

@@ -55,7 +55,7 @@ GROUPS = [
 #: what is changed often (the rest is behind "More options" in the editors); the same for the blocks of text
 COMMON_OPTIONS = {"units", "decimals", "arcs", "ijk", "comments", "line_numbers", "drill_cycles", "split_by_tool",
                   "tool_change_first"}
-COMMON_BLOCKS = {"header", "footer", "tool_change"}
+COMMON_BLOCKS = {"header", "footer", "first_tool_change", "tool_change"}
 
 
 def _o(key, group, kind, en, tr, hen, htr, choices=None, lo=None, hi=None) -> dict:
@@ -141,6 +141,11 @@ OPTIONS: list[dict] = [
        "The first rapid of a file goes over at the home Z (where the start of the file left the tool) and only then down "
        "to the safe Z, instead of diving to it on the way.",
        "Dosyanın ilk hızlı hareketi ev Z'sinde gider (dosya başının bıraktığı yükseklik), güvenli Z'ye yolda değil en son iner."),
+    _o("first_stop_safe_z", "lines", "bool", "First move: stop at the safe Z on the way down",
+       "İlk hareket: inerken güvenli Z'de dur",
+       "Off: after travelling at the home Z the tool goes straight down to where the cut begins. On: it stops at the safe Z "
+       "first (two lines: Z safe, then Z down).",
+       "Kapalıysa ev Z'sinde gittikten sonra kesimin başladığı yere doğrudan iner. Açıksa önce güvenli Z'de durur (iki satır)."),
     _o("line_numbers", "lines", "bool", "Number the lines (N10 N20 ...)", "Satırları numarala (N10 N20 ...)",
        "Some controllers need them to restart in the middle.", "Bazı kontrolcüler ortadan devam etmek için ister."),
     _o("line_number_start", "lines", "int", "First line number", "İlk satır numarası", "", "", lo=0, hi=99999),
@@ -204,8 +209,10 @@ BLOCKS: list[dict] = [
        "Dosyanın başından sonra, Malzeme ayarı makinenin köşeleri nasıl alacağını söylediğinde ({path_code}: G64 durmadan, G61 her "
        "köşede durarak).", "job"),
     _b("first_tool_change", "tools", "First tool", "İlk takım",
-       "Before the first toolpath (when empty, the tool change block is used).",
-       "İlk takım yolundan önce (boşsa takım değiştirme bloğu kullanılır)."),
+       "Before the first toolpath. When empty, the tool change block is used without its spindle stop (M5): the spindle "
+       "does not turn yet. Turn off \"Tool change block for the first tool too\" to write nothing here.",
+       "İlk takım yolundan önce. Boşsa takım değiştirme bloğu iş mili durdurması (M5) olmadan kullanılır: iş mili henüz "
+       "dönmüyor. Buraya hiçbir şey yazılmasın istersen \"İlk takım için de takım değiştirme bloğu\" seçeneğini kapat."),
     _b("tool_change", "tools", "Tool change", "Takım değiştirme", "When the next toolpath has another tool.",
        "Sıradaki takım yolunun takımı farklıysa."),
     _b("tool_same", "tools", "Same tool again", "Aynı takım yine", "When the next toolpath has the same tool (optional).",
