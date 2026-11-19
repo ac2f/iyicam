@@ -29,10 +29,12 @@ class Controller(CutControl, QObject):
     toolpaths_changed = Signal()  # toolpath definitions or results changed
     project_replaced = Signal()   # new / opened project
     message = Signal(str)
+    command_result = Signal(object)   # a command handed back a report to show: (command, result dict)
     units_changed = Signal()      # the display units of every document changed (they are a setting of the window)
     cut_view_changed = Signal()   # the cut that is looked at, or the preview of a cut order, changed (redraw)
 
     AUTO_LIMIT_S = 1.5  # stop auto recalculation when a full calculation is slower than this
+    last_result: dict | None = None   # what the last command that ran handed back (``CommandContext.result()``)
 
     def __init__(self, registry: Registry = REGISTRY, settings: Settings | None = None,
                  tools: ToolLibrary | None = None):
@@ -452,7 +454,9 @@ class Controller(CutControl, QObject):
         self.select([n.id for n in last])
         return True
 
-    def run_command(self, cmd: Command, values: dict | None = None) -> bool:
+    def run_command(self, cmd: Command, values: dict | None = None, show_report: bool = True) -> bool:
+        """Run a vector command as one undo step.  What it handed back is in :attr:`last_result`; a report in it is shown in a
+        window (``show_report=False``: not, for a script that reads :attr:`last_result` itself)."""
         ctx = CommandContext(self.project, self.sheet, [o.id for o in self.selected_objects()
                                                         if self.editable(o)], self.layer_id)
         self.undo_stack.checkpoint(self.project, cmd.label.rstrip("."))
@@ -469,12 +473,18 @@ class Controller(CutControl, QObject):
         except Exception:
             self.undo_stack.rollback(self.project)
             raise
-        for m in ctx.messages:
-            self.message.emit(m)
+        result = ctx.result()
+        self.last_result = result                                   # (what the command handed back: the console returns it)
+        # (the status bar keeps one text: every message in it, not only the last one that overwrote the others)
+        said = ctx.messages + ["⚠ " + w for w in ctx.warnings]
+        if said:
+            self.message.emit(" · ".join(said))
         self.dirty = True
         if ctx.new_selection is not None:
             self.selection = [v.id for v in self.sheet.pick(ctx.new_selection)]
         self._after_change(True)
+        if result["report"] and show_report:
+            self.command_result.emit((cmd, result))                 # (after the drawing is up to date: the window opens over it)
         return True
 
     # -- toolpaths -----------------------------------------------------------------------------------

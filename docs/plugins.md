@@ -110,10 +110,43 @@ default `None` is shown as an optional field ("auto").
 | `ctx.active_layer_id` | |
 | `ctx.add(contours, layer_id=None, name="", select=True)` | create a vector object |
 | `ctx.add_object(obj)`, `ctx.remove(ids)`, `ctx.replace(obj, contours)` | |
-| `ctx.select(ids)`, `ctx.message(text)` | |
+| `ctx.select(ids)`, `ctx.message(text)` | a line for the status bar (desktop) or the toast (page) |
+| `ctx.section(title, rows)`, `ctx.warn(text)`, `ctx.title`, `ctx.data` | a **report** (blocks of `(label, value)` rows), a warning, a title and numbers to hand back |
 
 Raise `api.CommandError("...")` to show a message to the user. Every command
 run from the GUI is one undo step.
+
+### Giving an answer back
+
+A command answers like a function does: **what `run` returns is read**, and
+`ctx.message` is only one way to say something.
+
+```python
+def measure(ctx, values):
+    total = sum(c.length() for o in ctx.selected for c in o.contours)
+    return {"title": "Length",                                   # the title of the window
+            "messages": [f"Total {total:.1f} mm"],               # the status bar / toast (a plain str, or a list of str, works too)
+            "report": [{"title": "TOTAL", "rows": [["Length", f"{total:.1f} mm"]]}],   # a window to read and copy
+            "warnings": ["2 open outlines"],                     # after the messages, with a ⚠
+            "data": {"total": total}}                            # numbers for scripts and the page's own code
+```
+
+| `run` returns | the program |
+|---------------|-------------|
+| `None` | says what `ctx.message` said, as before |
+| a `str` or a list of `str` | says them |
+| a `dict` | `title`, `messages` (or `headline`), `report` (or `sections`), `warnings`, `data`; any other key is data as well |
+| anything else | `data["value"]` |
+
+* **A report opens a window** (desktop: a dialog with the text to select and *Copy*; page: a sheet with the rows and *Copy the
+  report*). A command that returns no `report` says its lines in the status bar / toast only. Return a `report` when the
+  answer is something to *read* (a measurement, a count, a list), not for every run.
+* **All the messages are shown**: the desktop's status bar holds them in one line (the last no longer overwrites the others) and
+  the page's toast shows the first three.
+* **Scripts get the answer back**: in the console, `run("my.command", size=40)` returns
+  `{"title", "messages", "report", "warnings", "data"}` (`False` if the command failed) and `print(report_text(result))` reads
+  a report; `Controller.last_result` holds it too. On the page it is `result` of the service's `command` call
+  ([service.md](service.md)).
 
 ## Toolpath strategies
 

@@ -161,6 +161,13 @@ button.ed .l { font-size: 10px; line-height: 1.1; opacity: .85; white-space: now
 .refgrid { display: grid; grid-template-columns: repeat(3, 44px); gap: 4px; margin: 4px 0 8px; }
 .helprow { display: flex; gap: 12px; align-items: center; min-height: 40px; border-bottom: 1px solid var(--line); }
 .helpic { flex: none; width: 44px; text-align: center; font-size: 20px; }
+/* what a command handed back to be read: a title, rows of label and value (edit.js openReport) */
+.rep .say { margin: 4px 0 2px; font-size: 15px; }
+.rep .warn { margin: 6px 0 0; color: var(--warn, #b45309); font-size: 14px; }
+.rep dl { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0; margin: 4px 0 0; }     /* (no gap between the columns: the lines between the rows run through) */
+.rep dt, .rep dd { margin: 0; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 15px; overflow-wrap: anywhere; }
+.rep dt { padding-right: 14px; }
+.rep dd { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; user-select: text; }
 .fsort { gap: 6px; margin: 6px 0; }/* ---- Shift / Ctrl / Alt buttons, the coordinate row, the list of layers, messages, a low screen (edit.js) ---- */
 button.ed.on.lock { outline: 2px solid var(--accent); outline-offset: 1px; background: var(--brand); border-color: var(--brand); }
 button.ed.goto { background: var(--brand); color: #fff; border-color: var(--brand); }

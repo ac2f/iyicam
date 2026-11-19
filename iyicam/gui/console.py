@@ -12,14 +12,16 @@ from PySide6.QtWidgets import QLineEdit, QPlainTextEdit, QVBoxLayout, QWidget
 
 BANNER = """iyiCAM Python console.  Available names:
   ctrl, project, sheet(), selected(), window, REGISTRY
-  shapes, vectorops, geom, add(contour_or_list), run(command_id, **values)
-Example:  add(shapes.circle((100, 100), 25))"""
+  shapes, vectorops, geom, add(contour_or_list), run(command_id, **values), report_text(result)
+Example:  add(shapes.circle((100, 100), 25))
+          r = run("edit.doctor"); print(r["messages"])   # run() returns what the command handed back (report_text(r) reads a report)"""
 
 
 class Console(QWidget):
     def __init__(self, ctrl, window, parent=None):
         super().__init__(parent)
         from ..core import geom, shapes, vectorops
+        from ..core.commands import report_text
         from ..core.document import VectorObject
         from ..core.registry import REGISTRY
         self.ctrl = ctrl
@@ -47,11 +49,15 @@ class Console(QWidget):
             return obj
 
         def run(cmd_id: str, **values):
-            return self.ctrl.run_command(REGISTRY.commands[cmd_id], values)
+            """Run a command and return what it handed back: ``{"title", "messages", "report", "warnings", "data"}``
+            (``False`` if it failed; ``print(report_text(result))`` reads a report)."""
+            if not self.ctrl.run_command(REGISTRY.commands[cmd_id], values, show_report=False):
+                return False
+            return self.ctrl.last_result
 
         # (``ctrl``, ``project`` and the functions follow the document of the tab that is open)
         self.ns = {"ctrl": ctrl, "window": window, "REGISTRY": REGISTRY, "shapes": shapes,
-                   "vectorops": vectorops, "geom": geom, "add": add, "run": run,
+                   "vectorops": vectorops, "geom": geom, "add": add, "run": run, "report_text": report_text,
                    "sheet": lambda: self.ctrl.sheet, "selected": lambda: self.ctrl.selected_objects()}
         self.interp = code.InteractiveInterpreter(self.ns)
         self.out.setPlainText(BANNER + "\n")

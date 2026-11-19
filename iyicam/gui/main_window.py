@@ -6,7 +6,7 @@ import json
 import traceback
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray, QRectF, QSize, Qt, QUrl
+from PySide6.QtCore import QByteArray, QRectF, QSize, Qt, QTimer, QUrl
 from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QGuiApplication, QImage, QKeySequence
 from PySide6.QtWidgets import (QApplication, QDialog, QDockWidget, QHBoxLayout, QLabel, QMainWindow, QMenu,
                                QMessageBox, QProgressDialog, QPushButton, QTabWidget, QToolBar, QToolButton, QVBoxLayout)
@@ -26,9 +26,9 @@ from .canvas import Canvas
 from .console import Console
 from .cutorder_panel import CutOrderPanel, sequenced_toolpaths
 from .controller import Controller
-from .dialogs import (CommandDialog, ExportDialog, ExportOptionsDialog, ImportDialog, LeftoverDialog, MaterialDialog,
-                      NestingDialog, PluginsDialog, PostEditorDialog, PreferencesDialog, StockDialog, ToolDatabaseDialog,
-                      ToolpathDialog, buttons)
+from .dialogs import (CommandDialog, CommandReportDialog, ExportDialog, ExportOptionsDialog, ImportDialog, LeftoverDialog,
+                      MaterialDialog, NestingDialog, PluginsDialog, PostEditorDialog, PreferencesDialog, StockDialog,
+                      ToolDatabaseDialog, ToolpathDialog, buttons)
 from ..nesting.parts import find_duplicates, squeeze_lines
 from .files import open_file, save_file
 from .forms import ParamForm
@@ -110,7 +110,8 @@ class MainWindow(QMainWindow):
         canvas = Canvas(ctrl)
         canvas.context_menu_hook = self._canvas_menu
         ctrl.busy_parent = self
-        ctrl.message.connect(lambda m: self.statusBar().showMessage(m, 6000))
+        ctrl.message.connect(lambda m: self.statusBar().showMessage(m, min(20000, 4000 + 80 * len(m))))   # (longer text, longer to read it)
+        ctrl.command_result.connect(lambda payload, c=ctrl: QTimer.singleShot(0, lambda: self._show_report(c, *payload)))
         ctrl.changed.connect(lambda c=ctrl: self._doc_changed(c))
         ctrl.project_replaced.connect(lambda c=ctrl: self._doc_changed(c))
         ctrl.units_changed.connect(lambda c=ctrl: self._units_changed(c))
@@ -1283,6 +1284,12 @@ class MainWindow(QMainWindow):
                 return
             values = dlg.values()
         self.ctrl.run_command(cmd, values)
+
+    def _show_report(self, ctrl, cmd, result: dict) -> None:
+        """A command handed back a report (a measurement ...): show it where it can be read and copied."""
+        if ctrl not in self.documents():                  # (its tab was closed in the meantime)
+            return
+        CommandReportDialog(ctrl, cmd, result, self).exec()
 
     def delete(self) -> None:
         """Delete key: the active tool decides (node editing deletes nodes, not vectors)."""

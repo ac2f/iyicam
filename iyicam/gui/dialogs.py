@@ -133,6 +133,41 @@ class CommandDialog(RemembersSize, QDialog):
         return v
 
 
+class CommandReportDialog(RemembersSize, QDialog):
+    """What a command handed back to be read (a measurement, a count, a list): its report as text that can be selected and
+    copied, with the messages and warnings it gave over the top."""
+
+    def __init__(self, ctrl, cmd, result: dict, parent=None):
+        super().__init__(parent)
+        from ..core.commands import report_text
+        self.result = result
+        self.setWindowTitle(str(result.get("title") or cmd.label).rstrip("."))
+        lay = QVBoxLayout(self)
+        say = [m for m in result.get("messages") or []]
+        if say:
+            lab = QLabel("\n".join(say))
+            lab.setWordWrap(True)
+            lab.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            lay.addWidget(lab)
+        self.text = QPlainTextEdit()
+        self.text.setReadOnly(True)
+        self.text.setFont(QFontDatabase.systemFont(QFontDatabase.FixedFont))
+        self.text.setLineWrapMode(QPlainTextEdit.NoWrap)
+        self.text.setPlainText(report_text({**result, "title": ""}))
+        lay.addWidget(self.text, 1)
+        row = QHBoxLayout()
+        copy = QPushButton("Copy")
+        copy.clicked.connect(lambda: QGuiApplication.clipboard().setText(self.text.toPlainText()))
+        close = QPushButton("Close")
+        close.setDefault(True)
+        close.clicked.connect(self.accept)
+        row.addWidget(copy)
+        row.addStretch(1)
+        row.addWidget(close)
+        lay.addLayout(row)
+        self.keep_size(ctrl, f"report:{cmd.id}", 460, 420)
+
+
 # ---------------------------------------------------------------------------
 # sheets / material
 # ---------------------------------------------------------------------------

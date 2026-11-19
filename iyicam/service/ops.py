@@ -449,7 +449,8 @@ def op_command(payload: dict) -> dict:
         raise ServiceError("command_failed", f"{cmd.label}: {type(exc).__name__}: {exc}", command=cmd.id) from exc
     keep = ctx.new_selection if ctx.new_selection is not None else selection
     return {"ok": True, "project": project.to_dict(), "selection": [v.id for v in sheet.pick(keep)],
-            "messages": list(ctx.messages), "changed": bool(ctx.changed)}
+            "messages": list(ctx.messages), "changed": bool(ctx.changed),
+            "result": jsonable(ctx.result())}          # (what the command handed back: report sections to show, warnings, data)
 
 
 # ---------------------------------------------------------------------------------------------

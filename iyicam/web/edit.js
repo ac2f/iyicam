@@ -44,6 +44,7 @@
     "ed.rot": "90° döndür", "ed.layer": "Katmana taşı", "ed.more": "Daha fazlası",
     "ed.done": "Bitti", "ed.close": "Kapat", "ed.cancel": "Vazgeç", "ed.apply": "Uygula", "ed.search": "Komut ara…", "ed.last": "Sonuncuyu sil",
     "ed.undone": "Geri alındı", "ed.redone": "Yinelendi", "ed.cmdsTitle": "Vektör komutları", "ed.cmdDone": "{0} uygulandı",
+    "ed.reportCopy": "Raporu kopyala", "ed.reportCopied": "Rapor kopyalandı",
     "ed.nochange": "Bir şey değişmedi.", "ed.pasted": "{0} vektör yapıştırıldı", "ed.deleted": "{0} vektör silindi",
     "ed.node.insert": "Düğüm ekle (çizgiye dokun)", "ed.node.del": "Düğümü sil", "ed.node.start": "Başlangıç buradan", "ed.node.break": "Düğümden ayır",
     "ed.node.close": "Kapat", "ed.node.line": "Çizgi yap", "ed.node.curve": "Eğri yap", "ed.node.pick": "Düğümleri görmek için tek bir vektör seç.",
@@ -130,6 +131,7 @@
     "ed.rot": "Turn 90°", "ed.layer": "Move to layer", "ed.more": "More",
     "ed.done": "Done", "ed.close": "Close", "ed.cancel": "Cancel", "ed.apply": "Apply", "ed.search": "Search commands…", "ed.last": "Remove the last",
     "ed.undone": "Undone", "ed.redone": "Redone", "ed.cmdsTitle": "Vector commands", "ed.cmdDone": "{0} done",
+    "ed.reportCopy": "Copy the report", "ed.reportCopied": "Report copied",
     "ed.nochange": "Nothing changed.", "ed.pasted": "{0} vector(s) pasted", "ed.deleted": "{0} vector(s) deleted",
     "ed.node.insert": "Insert a node (tap on the line)", "ed.node.del": "Delete the node", "ed.node.start": "Start here", "ed.node.break": "Break at the node",
     "ed.node.close": "Close", "ed.node.line": "Make a line", "ed.node.curve": "Make a curve", "ed.node.pick": "Select one vector to see its nodes.",
@@ -997,15 +999,53 @@
   }
 
   // ------------------------------------------------------------------------------------------ the engine's commands
+  /** What a command handed back to be read (a measurement, a count ...): its report as a window, to read and to copy. */
+  function reportText(res) {
+    const out = [];
+    if (res.title) out.push(res.title, "");
+    for (const s of res.report || []) {
+      out.push(s.title);
+      const w = Math.max(0, ...s.rows.map(r => String(r[0]).length));                      // (the labels line up, as in the desktop program's window)
+      for (const [a, b] of s.rows) out.push(`   ${String(a).padEnd(w)} : ${b}`);
+      out.push("");
+    }
+    for (const w of res.warnings || []) out.push("! " + w);
+    return out.join("\n").trim() + "\n";
+  }
+  async function copyText(text) {                         // (``navigator.clipboard`` is only there on https and localhost: the page is often served over plain http on the network)
+    try { await navigator.clipboard.writeText(text); return true; } catch { /* the older way */ }
+    const ta = h("textarea", { style: "position:fixed;opacity:0;top:0", readonly: true }); ta.value = text;
+    document.body.append(ta); ta.select();
+    let ok = false; try { ok = document.execCommand("copy"); } catch { /* not allowed */ }
+    ta.remove(); return ok;
+  }
+  function openReport(cmd, res) {
+    const say = (res.messages || []).map(m => h("div", { class: "say" }, m));
+    const secs = (res.report || []).map(s => h("div", {}, h("div", { class: "group-h" }, s.title), h("dl", {}, s.rows.map(([a, b]) => [h("dt", {}, a), h("dd", {}, b)]))));
+    const warns = (res.warnings || []).map(w => h("div", { class: "warn" }, "⚠ " + w));
+    let close;
+    const copy = async () => { if (await copyText(reportText(res))) toast(t("ed.reportCopied"), "ok"); };
+    close = openSheet(res.title || cmd.label.replace(/\.\.\.$/, ""), h("div", { class: "rep" }, say, secs, warns,
+      h("div", { class: "row", style: "margin-top:14px" },
+        h("button", { class: "grow", onclick: copy }, t("ed.reportCopy")), h("button", { class: "primary grow", onclick: () => close() }, t("ed.close")))));
+  }
   async function exec(cmd, values) {
     const before = snapshot();
     const r = await runJob("command", { project: S.project, command: cmd.id, sheet: sheet().id, selection: [...E.sel], values, active_layer: activeLayer().id });
-    if (!r.changed) { E.sel = new Set(r.selection); toast(r.messages[0] || t("ed.nochange"), "warn"); B.render(); return; }
+    const res = r.result || { messages: r.messages, report: [], warnings: [] };         // (an engine that gives no ``result`` gives the messages only)
+    const saying = [...r.messages, ...(res.warnings || []).map(w => "⚠ " + w)];
+    const report = (res.report || []).length > 0;
+    if (!r.changed) {
+      E.sel = new Set(r.selection);
+      if (report) openReport(cmd, res); else toast(saying.slice(0, 3).join(" · ") || t("ed.nochange"), "warn");
+      B.render(); return;
+    }
     E.undo.push(before); E.redo = []; trimUndo();
     S.project = r.project; S.sheetId = S.project.sheets.some(x => x.id === S.sheetId) ? S.sheetId : S.project.sheets[0].id;
     E.sel = new Set(r.selection); E.node = null;
     B.changed();
-    toast(r.messages.length ? r.messages.slice(0, 3).join(" · ") : t("ed.cmdDone", cmd.label.replace(/\.\.\.$/, "")), "ok");
+    toast(saying.length ? saying.slice(0, 3).join(" · ") : t("ed.cmdDone", cmd.label.replace(/\.\.\.$/, "")), "ok");
+    if (report) openReport(cmd, res);
   }
   function openForm(cmd) {
     const need = cmd.min_selection || 0;
