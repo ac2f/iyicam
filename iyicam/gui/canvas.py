@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import math
 
-from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor, QImage, QPainter, QPainterPath, QPen, QTransform
 from PySide6.QtWidgets import QWidget
 
@@ -80,6 +80,9 @@ class Canvas(QWidget):
         return n / self.scale
 
     def zoom_extents(self) -> None:
+        if not getattr(self.ctrl, "has_sheet", True):
+            self.update()
+            return
         sh = self.ctrl.sheet
         bb = BBox(0, 0, sh.width, sh.height).union(sh.bbox()) if sh.vectors else BBox(0, 0, sh.width, sh.height)
         self.zoom_to(bb)
@@ -119,6 +122,10 @@ class Canvas(QWidget):
         self.update()
 
     def _sheet_changed(self) -> None:
+        had = getattr(self, "_had_sheet", True)
+        self._had_sheet = getattr(self.ctrl, "has_sheet", True)
+        if not had and self._had_sheet:
+            QTimer.singleShot(0, self.zoom_extents)     # (the first sheet of a blank project: show it whole)
         self._paths.clear()
         self._bboxes.clear()
         self._snapper.invalidate()
@@ -316,6 +323,15 @@ class Canvas(QWidget):
         p.setRenderHint(QPainter.Antialiasing)
         t = theme.get()
         p.fillRect(self.rect(), QColor(t.canvas))
+        if not getattr(self.ctrl, "has_sheet", True):     # (a blank project: nothing to draw on yet)
+            p.setPen(QColor(t.text))
+            f = p.font()
+            f.setPointSize(f.pointSize() + 2)
+            p.setFont(f)
+            p.drawText(self.rect(), Qt.AlignCenter, "No sheet yet.\nAdd the first sheet: Sheets panel, +\n"
+                                                      "(its size, its thickness and where Z is 0)")
+            p.end()
+            return
         sh = self.ctrl.sheet
         T = self.view_transform()
         # sheet

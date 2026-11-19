@@ -599,3 +599,29 @@ A profile toolpath has **Allowance** among its common settings (for *Outside* an
 runs that much further from the line. Outside: `+1` cuts the part 1 mm bigger on every side, `-1` 1 mm smaller. Inside (holes):
 `+1` leaves the hole 1 mm smaller, `-1` makes it bigger. A negative allowance of the tool radius or more cannot be cut (the
 tool would have to run on the other side of the line): it is taken as just under the radius, and the toolpath says so.
+
+## Blank project, Z zero on the table
+
+**Blank (no sheet)** is the first way to start a new project on the desktop: the project has no sheet at all, nothing can be
+drawn yet, and the first thing asked is the first sheet (its size, its thickness and where Z is 0); cancelled, the project
+stays without a sheet (Sheets panel, + asks again). *One sheet of this size* starts as before. (The page always starts with a
+sheet.)
+
+**Z zero**: *top of the material* or *the table* (the board under the material) can be chosen in the New Project window and
+for the first sheet, as in Material Setup. With the table, Z0 of the G-code is the top of the board and a through cut ends just
+under it; the thickness is still used for the passes and for the heights over the material, so the Save G-code window (and the
+Output tab of the page) shows a warning with the thickness it used.
+
+## Simulation, feed rates per second, names of toolpaths
+
+**Simulate (F6)** opens the *Simulation* panel and plays the toolpaths selected on the Toolpaths panel (every one of the sheet
+when none is) as they were calculated: nothing is calculated again. The tool runs over the sheet and what it cuts is painted
+live (lighter where it went into the material, dark where it went through). Play / pause, from the start, everything at once,
+the speed (1x to 1000x), a time slider, the toolpath lines on or off; *Shaded result (3D)* is the old picture of the material.
+
+**Feed rates** can be shown and typed per second (Preferences: *Feed rates: per second*); the G-code is always per minute.
+
+**Names of toolpaths** may have `{variables}` of the toolpath with sums and formats, like the file name prefixes:
+`Profile Ø{tool_diameter} F{feed_rate/60:.1} S{spindle_speed}` is shown, written in the G-code and used in file names as
+`Profile Ø6 F80.0 S18000`. Variables: tool_name, tool_number, tool_diameter, feed_rate, plunge_rate, spindle_speed, stepdown,
+cut_depth, allowance, material_thickness, safe_z, operation, group, sheet_group (the {…} button of the toolpath window).

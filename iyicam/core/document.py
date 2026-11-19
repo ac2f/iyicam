@@ -473,7 +473,8 @@ def project_from_dict(d: dict) -> Project:
                       [vector_from_dict(v) for v in s.get("vectors", [])], s.get("thickness"), s["id"],
                       [[(float(x), float(y)) for x, y in poly] for poly in s["outline"]] if s.get("outline") else None,
                       s["group"].strip() if isinstance(s.get("group"), str) else "")
-                for s in d.get("sheets", [])] or p.sheets
+                for s in d.get("sheets", [])] if isinstance(d.get("sheets"), list) else p.sheets
+    # (a project kept without any sheet, a blank one, opens without any: the sheets are added by the person)
     p.stock = [StockItem.from_dict(x) for x in d.get("stock", [])]
     p.toolpaths = [toolpath_from_dict(t) for t in d.get("toolpaths", [])]
     p.metadata = d.get("metadata", {})

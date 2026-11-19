@@ -77,11 +77,21 @@ class Controller(CutControl, QObject):
     # -- convenience ------------------------------------------------------------------
     @property
     def sheet(self) -> Sheet:
-        s = self.project.sheet(self.sheet_id)
+        s = self.project.sheet(self.sheet_id) if self.sheet_id is not None else None
         if s is None:
+            if not self.project.sheets:            # (a blank project: no sheet yet; an empty one that is no part of it)
+                if getattr(self, "_no_sheet", None) is None:
+                    self._no_sheet = Sheet("(no sheet)", 0.0, 0.0)
+                self._no_sheet.vectors = []
+                return self._no_sheet
             s = self.project.sheets[0]
             self.sheet_id = s.id
         return s
+
+    @property
+    def has_sheet(self) -> bool:
+        """Whether the project has a sheet to draw on (a blank one has none until one is added)."""
+        return bool(self.project.sheets)
 
     @property
     def layer(self):
@@ -122,7 +132,7 @@ class Controller(CutControl, QObject):
         self.cut_preview = None
         self.focus_cut = None
         self.project = project
-        self.sheet_id = project.sheets[0].id
+        self.sheet_id = project.sheets[0].id if project.sheets else None
         self.layer_id = project.layers[0].id
         self.selection = []
         self.results = {}
@@ -269,7 +279,7 @@ class Controller(CutControl, QObject):
 
     def _after_undo(self) -> None:
         if self.project.sheet(self.sheet_id) is None:
-            self.sheet_id = self.project.sheets[0].id
+            self.sheet_id = self.project.sheets[0].id if self.project.sheets else None
             self.sheet_changed.emit()
         self.dirty = True
         self._after_change(True)
@@ -297,6 +307,19 @@ class Controller(CutControl, QObject):
             self.selection_changed.emit()
             self.registry.emit("selection_changed", self.project, list(new))
 
+    def add_first_sheet(self, width: float, height: float, thickness: float | None = None, name: str = "") -> Sheet:
+        """A sheet of this size (and its own thickness) added and opened."""
+        with self.edit("Add sheet", geometry=False):
+            s = self.project.add_sheet(name or None, width, height)
+            if thickness is not None and abs(thickness - self.project.material.thickness) > 1e-9:
+                if not any(x is not s for x in self.project.sheets):
+                    self.project.material.thickness = thickness      # (the first sheet: the project's thickness)
+                else:
+                    s.thickness = thickness
+        self.sheet_id = None
+        self.set_sheet(s.id)
+        return s
+
     def set_sheet(self, sid: str) -> None:
         if sid != self.sheet_id and self.project.sheet(sid) is not None:
             self.sheet_id = sid
@@ -315,6 +338,9 @@ class Controller(CutControl, QObject):
     def add_vectors(self, objs: list[VectorObject], label: str = "Add vectors", select: bool = True) -> None:
         objs = [o for o in objs if o.prune()]   # a vector of nothing is not added
         if not objs:
+            return
+        if not self.project.sheets:             # (a blank project: there is nothing to put them on yet)
+            self.message.emit("Add a sheet first (Sheets panel: +): a blank project has no sheet to draw on")
             return
         with self.edit(label):
             self.sheet.vectors.extend(objs)

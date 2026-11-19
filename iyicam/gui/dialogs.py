@@ -291,11 +291,34 @@ class PresetSaveDialog(QDialog):
 
 
 class SheetDialog(QDialog):
-    def __init__(self, ctrl, sheet, parent=None):
+    def __init__(self, ctrl, sheet, parent=None, first: bool = False):
         super().__init__(parent)
-        self.ctrl, self.sheet = ctrl, sheet
+        self.ctrl, self.sheet, self.first = ctrl, sheet, first
         self.setWindowTitle("Sheet")
         u = ctrl.units
+        m = ctrl.project.material
+        if first:                       # (the first sheet of a blank project: its thickness is the project's, and where Z is 0)
+            params = [Param("name", "Name", "str", sheet.name),
+                      Param("width", "Width (X)", "length", sheet.width, min=1.0),
+                      Param("height", "Height (Y)", "length", sheet.height, min=1.0),
+                      Param("thickness", "Thickness", "length", m.thickness, min=0.01),
+                      Param("z_zero", "Z zero", "choice", m.z_zero,
+                            choices=[("top", "Top of the material"), ("bottom", "The table (the board under the material)")],
+                            help="The table: Z of the G-code is the height over the board the material lies on; the thickness "
+                                 "is then only needed for the passes (Save G-code says which thickness it used)")]
+            lay = QVBoxLayout(self)
+            presets = QComboBox()
+            presets.addItem("Preset sizes...")
+            for name, w, h in ctrl.sheet_sizes():
+                presets.addItem(name, (w, h))
+            lay.addWidget(presets)
+            self.form = ParamForm(params, None, u)
+            lay.addWidget(self.form)
+            presets.activated.connect(lambda i: self._preset(presets.itemData(i)))
+            self.plain = QCheckBox()
+            self.plain.setVisible(False)
+            lay.addWidget(buttons(self))
+            return
         params = [Param("name", "Name", "str", sheet.name),
                   Param("group", "Group", "str", sheet.group, help="Sheets of one group are nested onto together and can "
                                                                     "have toolpaths of their own"),
@@ -327,6 +350,15 @@ class SheetDialog(QDialog):
 
     def accept(self) -> None:
         v = self.form.values()
+        if self.first:
+            with self.ctrl.edit("Sheet properties"):
+                s = self.sheet
+                s.name, s.width, s.height = v["name"], v["width"], v["height"]
+                self.ctrl.project.material.thickness = v["thickness"]
+                self.ctrl.project.material.z_zero = v["z_zero"]
+            self.ctrl.sheet_changed.emit()
+            super().accept()
+            return
         with self.ctrl.edit("Sheet properties"):
             s = self.sheet
             s.name, s.width, s.height = v["name"], v["width"], v["height"]
@@ -1852,6 +1884,19 @@ class NestingDialog(RemembersSize, QDialog):
 # G-code export
 # ---------------------------------------------------------------------------
 
+def zero_warning(project) -> str:
+    """What Save G-code says when Z zero is the table: the Z of the file is measured from the board under the material, and
+    the passes (and the heights over the material) come from the thickness that is set, which nobody may have measured."""
+    m = project.material
+    if m.z_zero != "bottom":
+        return ""
+    th = sorted({round(project.sheet_thickness(s), 3) for s in project.sheets} or {round(m.thickness, 3)})
+    used = ", ".join(f"{t:g}" for t in th)
+    return ("⚠ Z zero is the table (the board under the material): Z0 of the G-code is the top of that board, a through cut "
+            f"ends just under it. The thickness used for the passes and the heights: {used} mm. Check it is the thickness of "
+            "the material on the machine (Material Setup).")
+
+
 class ExportDialog(RemembersSize, QDialog):
     def __init__(self, ctrl, parent=None, only: set[str] | None = None, group: str = ""):
         """``only``: the toolpaths that are ticked (otherwise the ones that are switched on); ``group``: the name
@@ -1903,6 +1948,11 @@ class ExportDialog(RemembersSize, QDialog):
         setup.clicked.connect(self._material_setup)
         row.addWidget(setup)
         form.addRow("Material", row)
+        self.zero_warning = QLabel()
+        self.zero_warning.setWordWrap(True)
+        self.zero_warning.setStyleSheet("background:#fff4ce; color:#7a4d00; border:1px solid #f0c36d; border-radius:4px; "
+                                        "padding:6px")
+        form.addRow(self.zero_warning)
         lay.addLayout(form)
         mem = ctrl.settings.recall("export_gcode")   # the options of the last export
         for w in (self.sheets, self.tile, self.tile_axis, self.tile_len):
@@ -2239,6 +2289,9 @@ class ExportDialog(RemembersSize, QDialog):
         u = self.ctrl.units
         self.heights.setText(f"{material_summary(self.ctrl)} \u00b7 home {u.fmt(m.home[0])}, {u.fmt(m.home[1])}, "
                              f"{u.fmt(m.home[2])}")
+        warn = zero_warning(self.ctrl.project)
+        self.zero_warning.setText(warn)
+        self.zero_warning.setVisible(bool(warn))
         jobs = self.jobs(self.ctrl.sheet)
         if not jobs:
             self.view.show_message("(no calculated toolpaths on this sheet)")

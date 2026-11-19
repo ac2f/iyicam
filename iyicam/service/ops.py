@@ -218,7 +218,8 @@ def _new_project_info() -> dict:
     from ..core import presets
     return {"presets": [[n, w, h] for n, w, h in presets.sizes(None, REGISTRY)],
             "templates": [{"id": t["id"], "label": t["label"], "description": t["description"],
-                           "params": [param_to_dict(p) for p in t["params"]]} for t in presets.templates(REGISTRY)]}
+                           "params": [param_to_dict(p) for p in t["params"]]} for t in presets.templates(REGISTRY)
+                                         if t["id"] != presets.BLANK]}   # (the page draws on a sheet: it starts with one)
 
 
 def op_new_project(payload: dict) -> dict:
@@ -229,7 +230,7 @@ def op_new_project(payload: dict) -> dict:
     w, h, th = _num(payload, "width", 600.0, 1.0, 1e6), _num(payload, "height", 400.0, 1.0, 1e6), _num(payload, "thickness", 18.0, 0.01, 1e4)
     tid = str(payload.get("template") or "")
     values = payload.get("values") if isinstance(payload.get("values"), dict) else {}
-    if tid and tid not in REGISTRY.new_project_templates:
+    if tid and tid != presets.BLANK and tid not in REGISTRY.new_project_templates:
         raise ServiceError("bad_request", f"there is no way to start a project called {tid!r}", field="template",
                            known=sorted(REGISTRY.new_project_templates))
     try:

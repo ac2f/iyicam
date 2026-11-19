@@ -945,6 +945,13 @@ class MainWindow(QMainWindow):
                   Param("thickness", "Thickness", "length", 18.0, min=0.01)]
         form = ParamForm(params, s.recall("new_project", params), self.ctrl.units)
         lay.addWidget(form)
+        zp = [Param("z_zero", "Z zero", "choice", s.recall("material").get("z_zero", "top")
+                    if s.recall("material").get("z_zero") in ("top", "bottom") else "top",
+                    choices=[("top", "Top of the material"), ("bottom", "The table (the board under the material)")],
+                    help="The table: Z of the G-code is the height over the board the material lies on (Save G-code warns "
+                         "and says which thickness it used)")]
+        zform = ParamForm(zp, None, self.ctrl.units)
+        lay.addWidget(zform)
         extra_holder = QVBoxLayout()
         lay.addLayout(extra_holder)
         state: dict = {"extra": None}
@@ -970,6 +977,10 @@ class MainWindow(QMainWindow):
         def template_changed(*_) -> None:
             t = next((x for x in presets.templates(self.ctrl.registry) if x["id"] == start.currentData()), None)
             desc.setText(t["description"] if t else "")
+            blank = start.currentData() == presets.BLANK          # (no sheet: no size to ask for now)
+            form.setVisible(not blank)
+            size.setVisible(not blank)
+            edit.setVisible(not blank)
             if state["extra"] is not None:
                 extra_holder.removeWidget(state["extra"])
                 state["extra"].deleteLater()
@@ -996,7 +1007,15 @@ class MainWindow(QMainWindow):
             except Exception as exc:                      # (a template of a plugin that fails: said, nothing half made)
                 QMessageBox.warning(self, "New Project", f"{type(exc).__name__}: {exc}")
                 return
+            target.project.material.z_zero = zform.values()["z_zero"]
+            mem = dict(s.recall("material"))
+            mem["z_zero"] = target.project.material.z_zero
+            s.remember("material", mem)
             self._name_new(target)
+            if not target.has_sheet:                      # (blank: the first thing is the first sheet)
+                self.activate(target)
+                if self.sheets_panel.add_first():
+                    self.canvas.zoom_extents()
 
     def open_project(self, path: str | None = None) -> None:
         """Open a project in a new tab (in the open one when that has never been used); one that is open

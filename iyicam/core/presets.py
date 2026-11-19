@@ -38,9 +38,14 @@ def sizes(user=None, registry: Registry = REGISTRY) -> list[tuple[str, float, fl
     return out
 
 
+BLANK = "blank"           # the way to start a project with no sheet at all
+
+
 def templates(registry: Registry = REGISTRY) -> list[dict]:
     """The ways to start a project: Blank first, then the plugins'."""
-    out = [{"id": "", "label": "Blank (an empty project)", "params": [], "description": "No toolpaths, one empty sheet"}]
+    out = [{"id": BLANK, "label": "Blank (no sheet)", "params": [],
+            "description": "Nothing at all: the first thing is to add a sheet (Sheets panel, +), with its size and thickness"},
+           {"id": "", "label": "One sheet of this size", "params": [], "description": "No toolpaths, one empty sheet of the size below"}]
     for t in registry.new_project_templates.values():
         out.append({"id": t.id, "label": t.label, "params": t.params, "description": t.description})
     return out
@@ -53,6 +58,9 @@ def create(width: float = 600.0, height: float = 400.0, thickness: float = 18.0,
     p = Project()
     p.sheets[0].width, p.sheets[0].height = width, height
     p.material.thickness = thickness
+    if template == BLANK:
+        p.sheets = []
+        return p
     if template:
         t = registry.new_project_templates.get(template)
         if t is None:

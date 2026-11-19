@@ -327,10 +327,32 @@ class SheetsPanel(DocPanel):
         if hasattr(win, "new_toolpath"):
             win.new_toolpath("profile", sheet_group=name)
 
-    def add(self) -> None:
+    def add(self) -> bool:
+        """A new sheet. The first one of a blank project: its size and thickness are asked for (cancelled: no sheet)."""
+        if not self.ctrl.has_sheet:
+            return self.add_first()
         with self.ctrl.edit("Add sheet", geometry=False):
             s = self.ctrl.project.add_sheet()
         self.ctrl.set_sheet(s.id)
+        return True
+
+    def add_first(self) -> bool:
+        from .dialogs import SheetDialog
+        c = self.ctrl
+        mem = c.settings.recall("new_project")
+        w = mem.get("width") if isinstance(mem.get("width"), (int, float)) else 600.0
+        h = mem.get("height") if isinstance(mem.get("height"), (int, float)) else 400.0
+        s = c.add_first_sheet(w, h, None, "Sheet 1")
+        dlg = SheetDialog(c, s, self, first=True)
+        dlg.setWindowTitle("The first sheet")
+        if not dlg.exec():
+            with c.edit("No sheet", geometry=False):
+                c.project.sheets = [x for x in c.project.sheets if x.id != s.id]
+            c.sheet_id = None
+            c.sheet_changed.emit()
+            c.changed.emit()
+            return False
+        return True
 
     def duplicate(self) -> None:
         src = self.ctrl.sheet
@@ -342,7 +364,7 @@ class SheetsPanel(DocPanel):
         self.ctrl.set_sheet(s.id)
 
     def delete(self) -> None:
-        if len(self.ctrl.project.sheets) <= 1:
+        if len(self.ctrl.project.sheets) <= 1:                   # (the last sheet stays: a project is drawn on a sheet)
             return
         sid = self.ctrl.sheet_id
         with self.ctrl.edit("Delete sheet"):

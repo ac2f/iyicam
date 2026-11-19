@@ -198,7 +198,7 @@ def test_sizes_can_be_edited_and_plugins_add_and_hide_sizes_and_templates():
     made = []
     api.add_new_project_template("kit", "Kitchen kit", lambda p, v: (made.append(v), p.add_sheet("Kit sheet", 100, 100)),
                                  [PluginAPI.Param("n", "Count", "int", 3)], "A sheet for the kit")
-    assert [t["id"] for t in presets.templates(reg)] == ["", "kit"]
+    assert [t["id"] for t in presets.templates(reg)] == [presets.BLANK, "", "kit"]
     p = presets.create(1000, 500, 12, "kit", {"n": 5}, reg)
     assert made == [{"n": 5}] and [s.name for s in p.sheets][-1] == "Kit sheet" and p.sheets[0].width == 1000
     blank = presets.create(700, 300, 10, "", None, reg)

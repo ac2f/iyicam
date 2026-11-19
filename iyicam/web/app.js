@@ -60,6 +60,7 @@ const TXT = {
     "out.files": "G-code dosyaları", "out.download": "İndir", "out.view": "Göster", "out.hide": "Gizle",
     "out.lines": "{0} satır", "out.errors": "Hatalar", "out.warnings": "Uyarılar", "out.nogcode": "G-code üretilemedi.",
     "out.simdone": "Malzeme kaldırma, {0}", "out.stale": "Proje değişti; yeniden hesapla.",
+    "out.zeroTable": "⚠ Z sıfırı tabla (malzemenin altındaki zemin): G-code'daki Z0 zeminin üstü, boydan boya kesim onun hemen altında biter. Pasolar ve yükseklikler için kullanılan kalınlık: {0} mm. Makinedeki malzemenin kalınlığı bu mu, kontrol et (Malzeme ayarı).",
     "err.network": "Sunucuya ulaşılamıyor.", "err.session": "Oturum bitti; anahtarı yeniden gir.",
     "e.unsupported_file": "Bu dosya türü okunamıyor.", "e.empty_file": "Dosya boş.", "e.too_large": "Dosya çok büyük.",
     "e.invalid_project": "Geçerli bir iyiCAM projesi değil.", "e.too_busy": "Sunucu meşgul, biraz sonra dene.",
@@ -137,6 +138,7 @@ const TXT = {
     "out.files": "G-code files", "out.download": "Download", "out.view": "View", "out.hide": "Hide",
     "out.lines": "{0} lines", "out.errors": "Errors", "out.warnings": "Warnings", "out.nogcode": "No G-code could be made.",
     "out.simdone": "Material removal, {0}", "out.stale": "The project changed; calculate again.",
+    "out.zeroTable": "⚠ Z zero is the table (the board under the material): Z0 of the G-code is the top of that board, a through cut ends just under it. The thickness used for the passes and the heights: {0} mm. Check it is the thickness of the material on the machine (Material setup).",
     "err.network": "Cannot reach the server.", "err.session": "Signed out; enter the key again.",
     "e.unsupported_file": "This kind of file cannot be read.", "e.empty_file": "The file is empty.",
     "e.too_large": "The file is too large.", "e.invalid_project": "Not a valid iyiCAM project.",
@@ -1591,7 +1593,10 @@ function viewOutput() {
 
   out.push(pickCard);
   out.push(nameCard(p, sel, stem));
-  out.push(h("div", { class: "card" }, h("h2", {}, t("out.post")), post,
+  const mz = p.material || {};
+  const zeroWarn = mz.z_zero === "bottom" ? h("div", { class: "msg warn", style: "margin:8px 0" },
+    t("out.zeroTable", [...new Set((p.sheets.length ? p.sheets : [{}]).map(x => x.thickness ?? mz.thickness))].join(", "))) : null;
+  out.push(h("div", { class: "card" }, h("h2", {}, t("out.post")), zeroWarn, post,
     window.IyiPage.post ? window.IyiPage.post.tools(S.post) : null,            // (post.js: change it, copy it, what I J K mean)
     h("div", { class: "row", style: "margin-top:12px" },
       h("button", { class: "grow", onclick: () => guarded(() => recompute()) }, "▶ " + t("out.compute")),
