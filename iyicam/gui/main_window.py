@@ -189,6 +189,8 @@ class MainWindow(QMainWindow):
         self._tool_changed(cv.tool.name)
         self.prompt.setText(cv.tool.prompt)
         self.sim_action.setChecked(cv.show_sim)
+        if hasattr(self, "sim_panel"):
+            self.sim_panel.stop()                # (the simulation was of the project of the other tab)
         self._update_title()
         self._update_actions()
         cv.setFocus()
@@ -338,6 +340,11 @@ class MainWindow(QMainWindow):
         self.cutorder_panel = CutOrderPanel(c, self)
         self.cutorder_dock = self._dock("Cut Order", self.cutorder_panel, Qt.RightDockWidgetArea)
         self.tabifyDockWidget(self.toolpaths_dock, self.cutorder_dock)
+        from .simpanel import SimPanel
+        self.sim_panel = SimPanel(self)
+        self.sim_dock = self._dock("Simulation", self.sim_panel, Qt.RightDockWidgetArea)
+        self.tabifyDockWidget(self.toolpaths_dock, self.sim_dock)
+        self.sim_dock.visibilityChanged.connect(lambda v: None if v else self.sim_panel.stop())
         self.toolpaths_dock.raise_()
         self.console = Console(c, self)
         self.console_dock = self._dock("Python Console", self.console, Qt.BottomDockWidgetArea)
@@ -550,7 +557,7 @@ class MainWindow(QMainWindow):
                                                getattr(s, key))
         m.addSeparator()
         for d in (self.project_dock, self.props_dock, self.transform_dock, self.toolpaths_dock, self.cutorder_dock,
-                  self.console_dock):
+                  self.sim_dock, self.console_dock):
             m.addAction(d.toggleViewAction())
 
         tm = m.addMenu("&Appearance")
@@ -1467,11 +1474,17 @@ class MainWindow(QMainWindow):
         ExportDialog(self.ctrl, self, only=set(ids) if ids else None, group=group).exec()
 
     def simulate(self) -> None:
+        """The 2D simulation of the selected toolpaths (all of the sheet when none is selected), as they were calculated:
+        the tool runs over the sheet and what it cuts is painted as it goes."""
+        self.sim_dock.show()
+        self.sim_dock.raise_()
+        self.sim_panel.start(play=True)
+
+    def shaded_simulation(self) -> None:
+        """The material as the whole job leaves it, shaded (3D), over the sheet: the calculated toolpaths, not again."""
         from ..cam.simulate import shade, simulate
         c = self.ctrl
-        if c.stale:
-            c.recalculate()
-        tps = c.sheet_toolpaths() + list(c.backplot)
+        tps = (self.sim_panel.chosen() if hasattr(self, "sim_panel") else c.sheet_toolpaths()) + list(c.backplot)
         if not tps:
             QMessageBox.information(self, "Simulate", "There are no calculated toolpaths on this sheet.")
             return

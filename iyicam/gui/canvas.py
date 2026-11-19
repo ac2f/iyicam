@@ -45,6 +45,7 @@ class Canvas(QWidget):
         self.sim_image: QImage | None = None
         self.sim_rect: QRectF | None = None
         self.show_sim = False
+        self.sim2d = None                       # the 2D simulation panel while it plays (simpanel.SimPanel)
         self.tool = None
         self.context_menu_hook = None
         self._guide_drag: list | None = None  # [kind, index or None, value]
@@ -330,6 +331,9 @@ class Canvas(QWidget):
             p.scale(self.sim_rect.width() / self.sim_image.width(), -self.sim_rect.height() / self.sim_image.height())
             p.drawImage(0, 0, self.sim_image)
             p.restore()
+        sim = self.sim2d.view if self.sim2d is not None else None
+        if sim is not None:
+            sim.paint(p)                        # (what the tool has cut so far, under the vectors)
         self._paint_grid(p, sh)
         pen = QPen(QColor(t.sheet_edge), 1.2)
         pen.setCosmetic(True)
@@ -362,7 +366,7 @@ class Canvas(QWidget):
             p.setPen(pen)
             p.drawPath(path)
         # toolpaths
-        if self.ctrl.settings.show_toolpaths:
+        if self.ctrl.settings.show_toolpaths and (sim is None or self.sim2d.paints_paths()):
             self._paint_toolpaths(p)
         if not getattr(self.tool, "own_numbers", False):    # (the order tool draws the numbers it is making)
             cutview.paint_cut_view(p, self)
@@ -373,6 +377,8 @@ class Canvas(QWidget):
                 if c.segs:
                     self._paint_start(p, c, self.ctrl.settings.show_directions or len(sel) < 50)
         self._paint_guides(p)
+        if sim is not None:
+            sim.paint_tool(p, self)
         # tool overlay
         if self.tool is not None:
             self.tool.paint(p)
