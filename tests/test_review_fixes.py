@@ -34,7 +34,8 @@ def test_names_with_line_breaks_and_brackets_cannot_inject_gcode():
 
 def test_a_full_circle_is_written_and_a_program_number_line_has_no_line_number():
     ensure_registered(REGISTRY)
-    post = REGISTRY.posts["mach3"]
+    base = REGISTRY.posts["mach3"]
+    post = type(base)({**base.definition, "options": {**base.definition.get("options", {}), "safe_arcs": False}})
     tp = Toolpath("t", end_mill(6), [Rapid(10, 0, 5), Feed(10, 0, -1, 500), ArcMove(10, 0, -1, 0, 0, False, 500), Feed(20, 0, -1, 500)])
     p, s, _ = make_project([[shapes.rectangle(0, 0, 50, 50)]], size=(100, 100))
     text = post_toolpaths(p, s, [tp], post, "x")[0][1]
