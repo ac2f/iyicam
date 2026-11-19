@@ -62,5 +62,5 @@ def test_the_common_strategies_come_first_and_columns_are_the_default():
 def test_the_post_specs_say_which_options_and_blocks_are_common():
     sp = editing.specs()
     assert {o["key"] for o in sp["options"] if o["common"]} >= {"units", "decimals", "arcs"}
-    assert {b["name"] for b in sp["blocks"] if b["common"]} == {"header", "footer", "tool_change"}
+    assert {b["name"] for b in sp["blocks"] if b["common"]} == {"header", "footer", "first_tool_change", "tool_change"}
     assert any(not o["common"] for o in sp["options"])
