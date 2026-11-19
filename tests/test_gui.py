@@ -1,5 +1,6 @@
 """Offscreen GUI smoke tests: drive the main window like a user would."""
 import math
+import re
 
 import pytest
 
@@ -157,9 +158,12 @@ def test_commands_toolpaths_export_and_simulation(win, tmp_path):
     assert ex.text.toPlainText().count("_tile") >= 2
     from iyicam.post.export import write_gcode
     files = write_gcode(tmp_path / "job", ctrl.project, ctrl.sheet, ctrl.sheet_toolpaths(), reg.posts["mach3"])
-    assert files[0].read_text().count("G2") + files[0].read_text().count("G3") > 0
+    assert not re.search(r"(?<![A-Z\d.])G0?[23](?![\d.])", files[0].read_text())   # (arcs as short lines: no G2 / G3)
     ctrl.settings.sim_resolution = 1.0
-    win.simulate()
+    win.simulate()                                     # (the 2D simulation of what is calculated)
+    assert win.sim_panel.view is not None and win.canvas.sim2d is win.sim_panel
+    win.sim_panel.stop()
+    win.shaded_simulation()
     assert win.canvas.sim_image is not None and win.canvas.show_sim
     win.canvas.grab()  # paint everything once
     html = __import__("iyicam.gui.main_window", fromlist=["job_report_html"]).job_report_html(ctrl)
@@ -564,6 +568,9 @@ def test_open_gcode_backplot(win, tmp_path):
     win.canvas.grab()
     win.ctrl.settings.sim_resolution = 1.0
     win.simulate()
+    assert win.sim_panel.view is not None and win.sim_panel.view.timeline.toolpaths == list(win.ctrl.backplot)
+    win.sim_panel.stop()
+    win.shaded_simulation()
     assert win.canvas.sim_image is not None
     win.clear_backplot()
     assert not win.ctrl.backplot

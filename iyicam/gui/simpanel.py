@@ -183,7 +183,8 @@ class SimPanel(QWidget):
         c = win.ctrl
         ids = win.toolpaths_panel.selected_ids() if self.which.currentData() == "selected" else []
         tps = c.sheet_toolpaths(enabled_only=not ids)
-        return [tp for tp in tps if not ids or tp.def_id in ids]
+        # (a G-code file opened over the sheet is played too, after the toolpaths)
+        return [tp for tp in tps if not ids or tp.def_id in ids] + list(getattr(c, "backplot", []) or [])
 
     def start(self, play: bool = True) -> bool:
         win = self.window_
