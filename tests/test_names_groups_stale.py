@@ -156,3 +156,24 @@ def test_the_list_and_the_window_show_the_worked_out_name(rwin):
     d.name.setText("X {feed_rate/60:.1}")
     assert d.name_shown.text().startswith("→ X ")
     d.close()
+
+
+def test_the_save_window_names_a_file_of_several_toolpaths_by_all_of_them(rwin):
+    from gui_robot import process
+    from test_cutedit import parts
+    from iyicam.core.document import Selection, ToolpathDef
+    from iyicam.core.tooling import Tool
+    from iyicam.gui.dialogs import ExportDialog
+    win, _ = rwin
+    c, t, objs = parts(win, n=2, auto=False)
+    t.name = "Outline"
+    t2 = ToolpathDef("Holes", "profile", Tool("EM3", "end_mill", 3.0, 2, stepdown=3.0), {"through": True},
+                     Selection("vectors", [objs[0].id]))
+    c.add_toolpath(t2)
+    process()
+    for only in (None, {t.id, t2.id}):
+        d = ExportDialog(c, win, only=only)
+        d._name_rows.itemAt(0).layout().itemAt(0).widget().setText("{toolpath_name}_T{tool_number}_R{revision:03}")
+        process()
+        assert "Outline+Holes_T1+2_R" in d.name_preview.text()
+        d.close()
