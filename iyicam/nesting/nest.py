@@ -612,12 +612,9 @@ class Nester:
             res = [convex_minkowski(VA.convex[0], [(-x, -y) for x, y in VB.convex[0]])]
         elif VA.pieces is not None and VB.pieces is not None:
             # Minkowski sums distribute over unions: combine the convex pieces
-            pc = clip.Clipper()
+            # (all the sums turn counter-clockwise: they are joined a few at a time, which is far faster than all at once)
             negs = VB.negprep()
-            for pa in VA.prep():
-                for nb in negs:
-                    pc.AddPath(convex_minkowski(pa, nb), pyclipper.PT_SUBJECT, True)
-            res = pc.Execute(pyclipper.CT_UNION, pyclipper.PFT_NONZERO, pyclipper.PFT_NONZERO)
+            res = clip.union_all([convex_minkowski(pa, nb) for pa in VA.prep() for nb in negs])
         else:
             pc = clip.Clipper()
             added = False

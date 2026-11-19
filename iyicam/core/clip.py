@@ -51,6 +51,23 @@ class Clipper(pyclipper.Pyclipper):
         return super().Execute(*args, **kwargs) if self._used else []
 
 
+def union_all(paths: list, group: int = 8) -> list:
+    """The union (non-zero) of many integer paths that all turn the same way (counter-clockwise), made in small groups and
+    then two results at a time: the same region as one union of all of them, but a union of hundreds of overlapping
+    pieces at once is very slow in Clipper (25 s against 0.01 s for the no-fit polygon of two curved parts)."""
+    def one(ps):
+        pc = Clipper()
+        for p in ps:
+            pc.AddPath(p, pyclipper.PT_SUBJECT, True)
+        return pc.Execute(pyclipper.CT_UNION, pyclipper.PFT_NONZERO, pyclipper.PFT_NONZERO)
+    if len(paths) <= group:
+        return one(paths)
+    level = [one(paths[i:i + group]) for i in range(0, len(paths), group)]
+    while len(level) > 1:
+        level = [one([p for part in level[i:i + 2] for p in part]) for i in range(0, len(level), 2)]
+    return level[0]
+
+
 class Offsetter(pyclipper.PyclipperOffset):
     """``pyclipper.PyclipperOffset`` with the same tolerance for unusable paths."""
 
