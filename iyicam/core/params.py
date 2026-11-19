@@ -28,6 +28,7 @@ class Param:
     visible: dict[str, Any] | None = None  # {"other_param": value | [values]}
     decimals: int = 3
     advanced: bool | None = None  # None: decided by :func:`is_advanced` (what is rarely changed is kept out of sight)
+    remember: bool = True  # False: a new toolpath / dialog starts with the default, not with the value chosen last
 
     def __post_init__(self) -> None:
         if self.kind not in KINDS:

@@ -749,7 +749,7 @@ function paramsForm(params, vals, tools, opts = {}) {
       cb.onchange = () => { vals[p.name] = cb.checked; refresh(); };
       el = h("div", {}, h("label", { class: "chk" }, cb, p.label), help);
     } else if (p.kind === "choice") {
-      const sel = h("select", {}, (p.choices || []).map(([v, l]) => h("option", { value: v }, l)));
+      const sel = h("select", {}, choiceOptions(p.choices));
       sel.value = String(vals[p.name] ?? p.default ?? "");
       if (sel.value === "" && sel.options.length) sel.value = sel.options[0].value;
       vals[p.name] = sel.value;
@@ -793,11 +793,19 @@ function paramsForm(params, vals, tools, opts = {}) {
 
 // ------------------------------------------------------------------------------------------ toolpath editor
 /** the settings of the cut order (the engine's ``schema.sequence``) as a form */
-/** the order strategies people use come first (the rest follow): columns, rows, shortest route */
-const COMMON_STRATEGIES = ["cols_bl", "rows_bl", "smart", "nearest"];
-function strategyChoices(list) {
-  const first = COMMON_STRATEGIES.map(id => list.find(c => c[0] === id)).filter(Boolean);
-  return first.concat(list.filter(c => !COMMON_STRATEGIES.includes(c[0])));
+/** the order strategies come from the engine group by group (``[key, label, group]``: columns, rows, routes, ...) */
+function strategyChoices(list) { return list; }
+/** the options of a select; choices with a third element (a group) go under ``optgroup`` headings */
+function choiceOptions(choices) {
+  const out = []; let grp = null, last;
+  for (const c of choices || []) {
+    const opt = h("option", { value: c[0] }, c[1]);
+    if (c[2]) {
+      if (c[2] !== last) { grp = h("optgroup", { label: c[2] }); out.push(grp); last = c[2]; }
+      grp.append(opt);
+    } else { out.push(opt); last = undefined; }
+  }
+  return out;
 }
 function sequenceParams() {
   const q = S.schema.sequence, d = q.defaults || {};
@@ -1714,7 +1722,7 @@ async function start() {
 }
 
 // what edit.js (the drawing tools) needs of this file; it adds ``editor`` to it
-window.IyiPage = { S, h, $, t, TXT, api, calc, calcInput, layerApplies, runJob, toast, fail, openSheet, paramsForm, numberInput, fmt, store, guarded, render, touch,
+window.IyiPage = { S, h, $, t, choiceOptions, TXT, api, calc, calcInput, layerApplies, runJob, toast, fail, openSheet, paramsForm, numberInput, fmt, store, guarded, render, touch,
                    persist, changed, activeSheet, layerMap, flatOf, drawScene, fitView, setFile, editor: null, post: null,
                    sceneSegs, lodGroups, lang: () => lang, jobs: null, jobApply: {}, JobDeferred, deviceInfo, setBusy, ApiError,
                    lostConnection, wakePoll, recompute, EXTRA_TABS, SCENE_HOOKS, applyPatch, drawStage };

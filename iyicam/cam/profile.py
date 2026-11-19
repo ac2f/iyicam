@@ -102,7 +102,7 @@ class ProfileOp(Operation):
     def params(cls) -> list[Param]:
         ch = [("outside", "Outside / Right"), ("inside", "Inside / Left"), ("on", "On the vector")]
         return depth_params(6.0, through=True) + [
-            Param("side", "Machine", "choice", "outside", choices=ch, group="Profile"),
+            Param("side", "Machine", "choice", "outside", choices=ch, group="Profile", remember=False),
             Param("direction", "Direction", "choice", "climb",
                   choices=[("climb", "Climb"), ("conventional", "Conventional")], group="Profile"),
             Param("allowance", "Allowance", "length", 0.0, group="Profile",

@@ -216,6 +216,15 @@
     }
     return best;
   };
+  /** whether the point lies inside the closed polyline ``flat`` (even-odd) */
+  G.inside = (flat, x, y) => {
+    let inn = false;
+    for (let i = 0, j = flat.length - 1; i < flat.length; j = i++) {
+      const [xi, yi] = flat[i], [xj, yj] = flat[j];
+      if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) inn = !inn;
+    }
+    return inn;
+  };
   /** the id of the vector whose line is nearest to the point and nearer than ``tol`` (the later one when they tie), or null */
   G.hit = (vectors, flatOf, x, y, tol, ok = () => true) => {
     let best = null, bd = tol;

@@ -26,7 +26,12 @@
     "pv.rapids": "Boşta hareket", "pv.arrows": "Yön okları", "pv.numbers": "Sıra numaraları", "pv.starts": "Başlangıç noktaları",
     "pv.depth": "Derinlik: yüzey → {0} mm", "pv.play": "Oynat", "pv.step": "Hareket {0} / {1}", "pv.all": "Tamamı",
     "pv.order": "Kesim sırası", "pv.orderNone": "Bu takım yolunun kesim sırası yok (delme gibi sıra gerektirmeyen bir işlem).",
-    "pv.pick": "Sırayı çizimde dokunarak ver", "pv.picking": "Kesilecek sırayla çizimdeki parçalara dokun. Seçilen: {0}",
+    "pv.pick": "Sırayı çizimde dokunarak ver", "pv.picking": "Kesilecek sırayla çizimdeki parçalara dokun (tekrar dokunulan geri alınır). Seçilen: {0}",
+    "pv.pickingEnd": "Sondan numaralandırma: ilk dokunduğun en son kesilir, sonraki ondan önce. Seçilen: {0}",
+    "pv.pickingSwap": "İki parçaya dokun: yerleri değişir (istediğin kadar çift). Değişen çift: {0}",
+    "pv.mode": "Numaralandırma", "pv.mode.from": "# numaradan başla", "pv.mode.end": "Sondan başla", "pv.mode.swap": "İkisinin yerini değiştir",
+    "pv.at": "Başlangıç numarası", "pv.anchor": "Bundan sonra devam", "pv.anchorTip": "Sonraki dokunduğun parçadan sonra (sondan modunda: önce) numaralandırmaya devam et",
+    "pv.undoTap": "Son dokunuşu geri al",
     "pv.done": "Bitti", "pv.up": "Bir yukarı", "pv.down": "Bir aşağı", "pv.first": "En başa", "pv.last": "En sona", "pv.reverse": "Sırayı ters çevir",
     "pv.strategy": "Otomatik sıra (strateji)", "pv.reorder": "Bu stratejiyle sırala", "pv.direction": "Kesim yönü", "pv.startp": "Başlangıç noktaları ⚑",
     "pv.draft": "Önizleme (pembe): değişiklik henüz uygulanmadı", "pv.apply": "Uygula", "pv.drop": "Vazgeç", "pv.computing": "Hesaplanıyor…",
@@ -41,7 +46,12 @@
     "pv.rapids": "Moves in the air", "pv.arrows": "Direction arrows", "pv.numbers": "Order numbers", "pv.starts": "Start points",
     "pv.depth": "Depth: surface → {0} mm", "pv.play": "Play", "pv.step": "Move {0} / {1}", "pv.all": "All",
     "pv.order": "Cut order", "pv.orderNone": "This toolpath has no cut order (drilling and the like need none).",
-    "pv.pick": "Give the order by tapping the drawing", "pv.picking": "Tap the parts on the drawing in the order they are to be cut. Picked: {0}",
+    "pv.pick": "Give the order by tapping the drawing", "pv.picking": "Tap the parts on the drawing in the order they are to be cut (a part tapped again is taken back). Picked: {0}",
+    "pv.pickingEnd": "Numbering from the end: the first part you tap is cut last, the next one before it. Picked: {0}",
+    "pv.pickingSwap": "Tap two parts: they change places (as many pairs as you like). Pairs swapped: {0}",
+    "pv.mode": "Numbering", "pv.mode.from": "Start from #", "pv.mode.end": "Start from the end", "pv.mode.swap": "Swap two",
+    "pv.at": "Start number", "pv.anchor": "Go on after", "pv.anchorTip": "Go on numbering after the next part you tap (from the end: before it)",
+    "pv.undoTap": "Take the last tap back",
     "pv.done": "Done", "pv.up": "One up", "pv.down": "One down", "pv.first": "To the first", "pv.last": "To the last", "pv.reverse": "Turn the order round",
     "pv.strategy": "Automatic order (strategy)", "pv.reorder": "Order with this strategy", "pv.direction": "Cutting direction", "pv.startp": "Start points ⚑",
     "pv.draft": "Preview (pink): the change is not applied yet", "pv.apply": "Apply", "pv.drop": "Cancel", "pv.computing": "Calculating…",
@@ -169,13 +179,15 @@
       const dpr = window.devicePixelRatio || 1;
       ctx.save(); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.font = "bold 11px system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-      const list = picks ? picks : order;
+      const list = picks ? pickResult(order) : order, tapped = new Set(picks || []);
+      const waiting = picks && PV.pickMode === "swap" && picks.length % 2 ? picks[picks.length - 1] : null;
       list.forEach((key, i) => {
         const kp = keyPoint(sheet, key);
         if (!kp) return;
         const x = view.ox + view.s * kp.c.start[0], y = view.oy - view.s * kp.c.start[1];
         if (S.pv.numbers || picks) {
-          ctx.fillStyle = picks ? "#ec4899" : `hsl(${240 - 240 * (order.length > 1 ? i / (order.length - 1) : 0)} 80% 45%)`;
+          ctx.fillStyle = picks ? (key === waiting ? "#2563eb" : tapped.has(key) ? "#ec4899" : "#9ca3af")
+            : `hsl(${240 - 240 * (order.length > 1 ? i / (order.length - 1) : 0)} 80% 45%)`;
           ctx.beginPath(); ctx.arc(x, y, key === PV.hl ? 11 : 9, 0, 7); ctx.fill();
           ctx.fillStyle = "#fff"; ctx.fillText(String(i + 1), x, y + 0.5);
         } else if (S.pv.starts) { ctx.fillStyle = "#16a34a"; ctx.beginPath(); ctx.arc(x, y, 4, 0, 7); ctx.fill(); }
@@ -192,7 +204,22 @@
     for (const k of keys) { const [id, ci] = k.split(":"); if (!byVec.has(id)) byVec.set(id, []); byVec.get(id).push(+ci); }
     if (!byVec.size) return null;
     const id = G.hit(sheet.vectors, B.flatOf, x, y, 14 / view.s, v => byVec.has(v.id));
-    if (!id) return null;
+    if (!id) {                    // (a tap inside a part, away from its lines: the smallest cut around the point)
+      let best = null;
+      for (const [vid, cis] of byVec) {
+        const v = vectorMap(sheet).get(vid);
+        if (!v) continue;
+        for (const ci of cis) {
+          const c = v.contours[ci];
+          if (!c || !c.closed) continue;
+          const b = G.contourBBox(c);
+          if (!b || x < b.x0 || x > b.x1 || y < b.y0 || y > b.y1) continue;
+          const area = (b.x1 - b.x0) * (b.y1 - b.y0);
+          if ((!best || area < best.area) && G.inside(G.flatten(c), x, y)) best = { key: `${vid}:${ci}`, area };
+        }
+      }
+      return best ? best.key : null;
+    }
     const v = vectorMap(sheet).get(id);
     let best = null;
     for (const ci of byVec.get(id)) { const q = G.nearest(v.contours[ci], x, y); if (q && (!best || q.d < best.d)) best = { ci, d: q.d }; }
@@ -202,8 +229,10 @@
     const key = keyAt(V.sheet, x, y, view);
     if (PV.pick) {
       if (!key) return;
-      const i = PV.pick.indexOf(key);
-      if (i >= 0) PV.pick.splice(i, 1); else PV.pick.push(key);
+      if (PV.pickAnchorNext && PV.pickMode !== "swap") {     // (this tap: the numbering goes on after / before this cut)
+        PV.pickBase = pickResult(orderOf(V.sheet)); PV.pick = []; PV.pickAnchor = key; PV.pickAnchorNext = false;
+      } else if (PV.pickMode !== "swap" && PV.pick.includes(key)) PV.pick.splice(PV.pick.indexOf(key), 1);
+      else PV.pick.push(key);
       fill(); redraw();
       return;
     }
@@ -227,6 +256,34 @@
     PV.previewTimer = setTimeout(runPreview, 450);
   }
   const setOrder = order => startDraft({ auto_order: false, order }, order, order);
+  /** the order as the cuts tapped so far make it (``PV.pickMode``: "from" number ``PV.pickAt``, "end": the first tapped
+   *  is cut ``PV.pickAt`` - 1 places before the last, "swap": every two tapped exchange their places) */
+  function pickResult(order) {
+    const base = (PV.pickBase || order).filter(k => order.includes(k)).concat(order.filter(k => !(PV.pickBase || order).includes(k)));
+    const picked = [...new Set(PV.pick || [])];
+    if (PV.pickMode === "swap") {
+      const out = base.slice();
+      for (let i = 0; i + 1 < picked.length; i += 2) {
+        const a = out.indexOf(picked[i]), b = out.indexOf(picked[i + 1]);
+        if (a >= 0 && b >= 0) { out[a] = picked[i + 1]; out[b] = picked[i]; }
+      }
+      return out;
+    }
+    const rest = base.filter(k => !picked.includes(k));
+    let at = Math.max(0, (PV.pickAt || 1) - 1);
+    if (PV.pickAnchor && !picked.includes(PV.pickAnchor) && rest.includes(PV.pickAnchor)) {
+      const i = rest.indexOf(PV.pickAnchor);
+      at = PV.pickMode === "end" ? rest.length - i : i + 1;
+    }
+    if (PV.pickMode === "end") {
+      const cut = rest.length - Math.min(at, rest.length);
+      return rest.slice(0, cut).concat(picked.slice().reverse(), rest.slice(cut));
+    }
+    at = Math.min(at, rest.length);
+    return rest.slice(0, at).concat(picked, rest.slice(at));
+  }
+  B.pickResult = pickResult;
+  const startPick = () => { PV.pick = []; PV.pickBase = null; PV.pickAnchor = null; PV.pickAnchorNext = false; PV.hl = null; PV.pickMode = PV.pickMode || "from"; PV.pickAt = PV.pickAt || 1; fill(); redraw(); };
   function move(to) {
     const o = orderOf(V.sheet).slice(), i = PV.sel;
     if (i < 0 || i >= o.length) return;
@@ -331,23 +388,36 @@
     if (!res) { box.append(h("div", { class: "muted small" }, t("pv.choose"))); return box; }
     if (!order.length) { box.append(h("div", { class: "muted small" }, t("pv.orderNone"))); return box; }
     const sel = PV.sel;
-    const rows = (PV.pick || order).map((key, i) => {
+    const rows = (PV.pick ? pickResult(order) : order).map((key, i) => {
       const kp = keyPoint(sheet, key);
       const bb = kp ? G.contourBBox(kp.c) : null;
       const name = kp && kp.v.name ? kp.v.name : (kp ? `${key.split(":")[0].slice(0, 4)}` : key);
       return h("div", { class: "orow" + (i === sel && !PV.pick ? " on" : ""), role: "button", tabindex: "0",
         onclick: () => { if (PV.pick) return; PV.sel = i; PV.hl = key; fill(); redraw(); } },
-        h("span", { class: "onum" }, String(i + 1)),
+        h("span", { class: "onum", style: PV.pick && PV.pick.includes(key) ? "background:#ec4899;color:#fff" : null }, String(i + 1)),
         h("span", { class: "grow" }, bb ? t("pv.cutof", name, mm(bb.x1 - bb.x0), mm(bb.y1 - bb.y0)) : name));
     });
     box.append(h("div", { class: "pvlist" }, rows));
     const b = (txt, title, fn, dis) => h("button", { class: "small", title, "aria-label": title, disabled: !!dis, onclick: fn }, txt);
     if (PV.pick) {
-      box.append(h("div", { class: "msg", style: "margin:6px 0" }, t("pv.picking", PV.pick.length)),
+      const modeSel = h("select", { "aria-label": t("pv.mode") }, ["from", "end", "swap"].map(m => h("option", { value: m }, t("pv.mode." + m))));
+      modeSel.value = PV.pickMode || "from";
+      modeSel.onchange = () => { PV.pickMode = modeSel.value; PV.pickAt = 1; PV.pickAnchor = null; fill(); redraw(); };
+      const atIn = h("input", { type: "number", min: 1, max: order.length, step: 1, value: PV.pickAt || 1, style: "width:5em", "aria-label": t("pv.at") });
+      atIn.onchange = () => { PV.pickAt = Math.max(1, Math.min(order.length, Math.round(+atIn.value) || 1)); PV.pickAnchor = null; fill(); redraw(); };
+      const anchor = h("button", { class: "small" + (PV.pickAnchorNext ? " primary" : ""), title: t("pv.anchorTip"), disabled: PV.pickMode === "swap",
+        onclick: () => { PV.pickAnchorNext = !PV.pickAnchorNext; fill(); } }, "⚓ " + t("pv.anchor"));
+      const hint = PV.pickMode === "swap" ? t("pv.pickingSwap", Math.floor(PV.pick.length / 2))
+        : PV.pickMode === "end" ? t("pv.pickingEnd", PV.pick.length) : t("pv.picking", PV.pick.length);
+      box.append(h("div", { class: "row", style: "margin:6px 0;gap:6px;flex-wrap:wrap" }, modeSel,
+          PV.pickMode === "swap" ? null : h("label", { class: "chk" }, "#", atIn), anchor),
+        h("div", { class: "msg", style: "margin:6px 0" }, hint),
         h("div", { class: "row" }, h("button", { class: "small primary", onclick: () => {
-          const picked = PV.pick, rest = order.filter(k => !picked.includes(k));
-          PV.pick = null; if (picked.length) setOrder([...picked, ...rest]); else { fill(); redraw(); }
-        } }, "✓ " + t("pv.done")), b("✕", t("pv.drop"), () => { PV.pick = null; fill(); redraw(); })));
+          const next = pickResult(order), any = PV.pick.length;
+          PV.pick = null; PV.pickBase = null; PV.pickAnchor = null; PV.pickAnchorNext = false;
+          if (any) setOrder(next); else { fill(); redraw(); }
+        } }, "✓ " + t("pv.done")), b("↶", t("pv.undoTap"), () => { PV.pick.pop(); fill(); redraw(); }, !PV.pick.length),
+          b("✕", t("pv.drop"), () => { PV.pick = null; PV.pickBase = null; PV.pickAnchor = null; fill(); redraw(); })));
       return box;
     }
     const one = sel >= 0;
@@ -355,10 +425,10 @@
       b("↑", t("pv.up"), () => move(sel - 1), !one || sel === 0), b("↓", t("pv.down"), () => move(sel + 1), !one || sel === order.length - 1),
       b("⤒", t("pv.first"), () => move(0), !one || sel === 0), b("⤓", t("pv.last"), () => move(order.length - 1), !one || sel === order.length - 1),
       b("⇅", t("pv.reverse"), () => { setOrder(orderOf(sheet).slice().reverse()); }),
-      b("👆 " + t("pv.pick"), t("pv.pick"), () => { PV.pick = []; PV.hl = null; fill(); redraw(); })));
+      b("👆 " + t("pv.pick"), t("pv.pick"), startPick)));
     // the engine's own ordering and the cutting direction
     const seq = tp ? (tp.sequence || {}) : {}, def = (S.schema.sequence && S.schema.sequence.defaults) || {};
-    const stratSel = h("select", { "aria-label": t("pv.strategy") }, strategies().map(([v, l]) => h("option", { value: v }, l)));
+    const stratSel = h("select", { "aria-label": t("pv.strategy") }, B.choiceOptions(strategies()));
     stratSel.value = (PV.draft && PV.draft.seq.strategy) || seq.strategy || def.strategy || "nearest";
     const dirSel = h("select", { "aria-label": t("pv.direction") }, directions().map(([v, l]) => h("option", { value: v }, l)));
     dirSel.value = (PV.draft && PV.draft.seq.direction) || seq.direction || def.direction || "toolpath";

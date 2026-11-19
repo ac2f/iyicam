@@ -69,6 +69,26 @@ def _length_spin(ctrl, value: float, special: str | None = None) -> QDoubleSpinB
     return w
 
 
+def fill_strategies(box: QComboBox) -> None:
+    """The order strategies under the headings of their groups (a heading cannot be chosen)."""
+    from PySide6.QtGui import QFont, QStandardItem
+    box.clear()
+    model = box.model()
+    last = None
+    for k, label, group in seq.grouped_strategies():
+        if group != last:
+            head = QStandardItem(group)
+            head.setFlags(Qt.NoItemFlags)                       # (not selectable, not enabled)
+            f = QFont()
+            f.setBold(True)
+            head.setFont(f)
+            model.appendRow(head)
+            last = group
+        box.addItem("    " + label, k)
+    if box.currentData() is None:                                # (the first heading is not a choice)
+        box.setCurrentIndex(1)
+
+
 def _combo() -> QComboBox:
     c = QComboBox()
     c.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
@@ -90,7 +110,12 @@ class DirectionsDialog(QDialog):
         form = QFormLayout()
         self.combos: dict[str, QComboBox] = {}
         current = seq.settings(cfg)
-        for k, label in seq.STRATEGIES:
+        last = None
+        for k, label, group in seq.grouped_strategies():
+            if group != last:
+                head = QLabel(f"<b>{group}</b>")
+                form.addRow(head)
+                last = group
             box = QComboBox()
             for d, dl in seq.DIRECTIONS:
                 box.addItem(dl, d)
@@ -234,8 +259,7 @@ class CutOrderPanel(DocPanel):
         form.addRow(self.auto)
         self._advanced.append((form, self.auto))
         self.strategy = _combo()
-        for k, label in seq.strategy_list():                  # (the ones people use first)
-            self.strategy.addItem(label, k)
+        fill_strategies(self.strategy)                         # (in groups: columns, rows, routes, ...)
         self.strategy.setToolTip("Smart: the shortest route between the cuts (nearest next, then improved), "
                                  "inner pieces first. The others sweep the sheet from a corner, by rows, ...")
         form.addRow("Strategy", self.strategy)
@@ -365,12 +389,27 @@ class CutOrderPanel(DocPanel):
         self.start_at.setRange(1, 1)
         self.start_at.setPrefix("#")
         self.start_at.setMaximumWidth(64)
-        self.start_at.setToolTip("The place in the order that \"Pick...\" starts at")
-        self.pick = QPushButton("Pick...")
-        self.pick.setToolTip("Click the vectors in the order they should be cut, starting at this position")
-        for w in (self.up, self.down, self.start_at, self.pick):
+        self.start_at.setToolTip("Where the numbering starts: from # on (from the end: # places from the end, #1 is the last)")
+        self.pick_mode = QComboBox()
+        for k, label, tip in (("from", "Number from #", "The cuts you click take the places from # on"),
+                              ("end", "Number from the end", "The first cut you click is cut last (# places from the "
+                                                             "end: #1 is the last), the next one before it, ..."),
+                              ("swap", "Swap two", "Click two cuts: they exchange their places (as many pairs as you like)")):
+            self.pick_mode.addItem(label, k)
+            self.pick_mode.setItemData(self.pick_mode.count() - 1, tip, Qt.ToolTipRole)
+        self.pick_mode.setToolTip("How the cuts you click on the drawing are numbered")
+        self.pick = QPushButton("Click to number...")
+        self.pick.setToolTip("Click the vectors on the drawing in the order they should be cut (the numbers they "
+                             "will have are shown as you click). Ctrl+click a cut: numbering goes on after it.")
+        for w in (self.up, self.down):
             r.addWidget(w)
         lay.addLayout(r)
+        r = QHBoxLayout()
+        for w in (self.pick_mode, self.start_at, self.pick):
+            r.addWidget(w)
+        lay.addLayout(r)
+        self.pick_mode.currentIndexChanged.connect(
+            lambda: self.start_at.setEnabled(self.pick_mode.currentData() != "swap"))
         return box
 
     def _start_edit_group(self) -> QGroupBox:
@@ -535,7 +574,8 @@ class CutOrderPanel(DocPanel):
             for w, v in ((self.strategy, shown["strategy"]), (self.grouping, shown["grouping"]),
                          (self.direction, seq.direction_for(shown))):
                 w.blockSignals(True)
-                w.setCurrentIndex(max(0, w.findData(v)))
+                i = w.findData(v)
+                w.setCurrentIndex(i if i >= 0 else w.findData(seq.DEFAULTS["strategy"]) if w is self.strategy else 0)
                 w.blockSignals(False)
             for w, v in ((self.auto, bool(shown["auto_order"])), (self.smart, bool(shown["smart_starts"]))):
                 w.blockSignals(True)
@@ -551,8 +591,9 @@ class CutOrderPanel(DocPanel):
             enabled = self.tid is not None
             for w in (self.tp, self.auto, self.strategy, self.grouping, self.band, self.direction, self.all_dirs,
                       self.preview_order, self.reorder, self.smart, self.margin, self.corner, self.preview_starts,
-                      self.now, self.release, self.tool, self.list, self.up, self.down, self.start_at, self.pick):
+                      self.now, self.release, self.tool, self.list, self.up, self.down, self.start_at, self.pick, self.pick_mode):
                 w.setEnabled(enabled)
+            self.start_at.setEnabled(enabled and self.pick_mode.currentData() != "swap")
             self._fill_list()
             self._summary(p)
         finally:
@@ -837,7 +878,7 @@ class CutOrderPanel(DocPanel):
         canvas = getattr(self.window_, "canvas", None)
         if canvas is not None and self.tid:
             self.ctrl.clear_cut_preview()
-            canvas.set_tool(OrderTool(canvas, self.tid, self.start_at.value() - 1))
+            canvas.set_tool(OrderTool(canvas, self.tid, self.start_at.value() - 1, self.pick_mode.currentData()))
 
     # -- the start point of the selected cut ------------------------------------------------------------------
     def _step(self, sign: int) -> None:

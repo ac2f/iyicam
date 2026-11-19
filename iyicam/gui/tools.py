@@ -1380,18 +1380,54 @@ class StartPointTool(CanvasTool):
 
 
 class OrderTool(CanvasTool):
-    """Pick cuts one after the other: they are cut in this order from position ``index`` on."""
+    """Number the cuts by clicking them, with the order they will have shown on every cut as it is made.
+
+    ``mode``: ``"from"``: the clicked cuts take the places ``index``, ``index + 1``, ... (``index`` 0 based);
+    ``"end"``: numbering from the end: the first clicked cut is cut last (``index`` places before the last), the next one
+    before it, ...; ``"swap"``: every two cuts clicked exchange their places. Ctrl + click on a cut: numbering goes on
+    after it (from the end: before it). A cut clicked again is taken back."""
 
     name = "order"
     cursor = Qt.PointingHandCursor
+    own_numbers = True
+    MODES = ("from", "end", "swap")
 
-    def __init__(self, canvas, tdef_id: str, index: int = 0):
+    def __init__(self, canvas, tdef_id: str, index: int = 0, mode: str = "from"):
         super().__init__(canvas)
         self.tdef_id = tdef_id
         self.index = max(0, index)
+        self.mode = mode if mode in self.MODES else "from"
         self.picked: list[str] = []
-        self.prompt = (f"Cut order from #{self.index + 1}: click the vectors in the order they should be cut. "
-                       "Enter (or double click) applies, Backspace takes the last one back, Esc cancels.")
+        self.anchor: str | None = None        # Ctrl + click: the cut the numbering goes on after (from the end: before)
+        self.base: list[str] = self.ctrl.sheet_cut_keys(tdef_id)
+        self.prompt = self._prompt()
+
+    def _prompt(self) -> str:
+        n = len(self.base)
+        if self.mode == "swap":
+            head = "Swap places: click two cuts, they exchange their numbers (as many pairs as you like)."
+        elif self.mode == "end":
+            head = f"Numbering from the end: the first cut you click becomes #{max(1, n - self.index)}, the next one the one before."
+        else:
+            head = f"Numbering from #{self.index + 1}: click the cuts in the order they should be cut."
+        return (head + " Ctrl+click: go on after that cut. Click a cut again to take it back. "
+                "Enter (or double click) applies, Backspace takes the last one back, Esc cancels.")
+
+    def result(self) -> list[str]:
+        """The order of this sheet's cuts as it will be when applied."""
+        from ..cam import sequence as seq
+        if self.mode == "swap":
+            pairs = [(self.picked[i], self.picked[i + 1]) for i in range(0, len(self.picked) - 1, 2)]
+            return seq.swapped(self.base, pairs)
+        index = self.index
+        if self.anchor is not None and self.anchor not in self.picked:
+            rest = [k for k in self.base if k not in set(self.picked)]
+            if self.anchor in rest:
+                i = rest.index(self.anchor)
+                index = i + 1 if self.mode == "from" else len(rest) - i
+        if self.mode == "end":
+            return seq.manual_from_end(self.base, index, self.picked)
+        return seq.manual_from(self.base, index, self.picked)
 
     def _keys(self) -> dict[str, tuple]:
         t = self.ctrl.project.toolpath(self.tdef_id)
@@ -1415,14 +1451,38 @@ class OrderTool(CanvasTool):
                   if c.closed and c.bbox().contains(w) and point_in_polygon(w, c.flatten(0.1))]
         return min(around)[1] if around else None
 
+    def _status(self) -> None:
+        if self.mode == "swap":
+            pairs = len(self.picked) // 2
+            wait = " - click the cut it changes places with" if len(self.picked) % 2 else ""
+            self.say(f"{pairs} pair(s) swapped{wait}. Enter applies.")
+        else:
+            order = self.result()
+            last = order.index(self.picked[-1]) + 1 if self.picked else None
+            nxt = "" if last is None else f": the last one is #{last}"
+            what = "numbered from the end" if self.mode == "end" else "picked"
+            self.say(f"{len(self.picked)} {what}{nxt}. Enter applies.")
+
     def press(self, ev, w):
         if ev.button() != Qt.LeftButton:
             return
         k = self._at(w)
-        if k is not None and k not in self.picked:
+        if k is None:
+            return
+        if k not in self.base:
+            self.base.append(k)
+        if ev.modifiers() & Qt.ControlModifier and self.mode != "swap":
+            self.base, self.picked = self.result(), []     # (what has been clicked so far stays)
+            self.anchor = k
+            i = self.base.index(k)
+            self.say(f"Numbering goes on {'after' if self.mode == 'from' else 'before'} #{i + 1}: click the next cuts.")
+        elif self.mode != "swap" and k in self.picked:
+            self.picked.remove(k)                    # (clicked again: taken back)
+            self._status()
+        else:
             self.picked.append(k)
-            self.say(f"{len(self.picked)} picked: next is #{self.index + len(self.picked) + 1}. Enter applies.")
-            self.canvas.update()
+            self._status()
+        self.canvas.update()
 
     def double_click(self, ev, w):
         self.apply()
@@ -1433,31 +1493,44 @@ class OrderTool(CanvasTool):
             return True
         if ev.key() == Qt.Key_Backspace and self.picked:
             self.picked.pop()
+            self._status()
             self.canvas.update()
             return True
         return False
 
     def apply(self) -> None:
-        if self.picked:
-            self.ctrl.set_manual_order(self.tdef_id, self.index, self.picked)
+        order = self.result()
+        if self.picked and order:
+            self.ctrl.set_sheet_order(self.tdef_id, order)
             self.picked = []
         self.canvas.cancel_tool()
 
     def paint(self, p):
         keys = self._keys()
         font = p.font()
-        font.setPixelSize(12)
+        font.setPixelSize(11)
         font.setBold(True)
         p.setFont(font)
-        for n, k in enumerate(self.picked):
+        mine = set(self.picked)
+        waiting = self.picked[-1] if self.mode == "swap" and len(self.picked) % 2 else None
+        order = self.result()
+        for n, k in enumerate(order):                # every cut with the number it will have; the clicked ones stand out
             if k not in keys:
                 continue
-            c = keys[k][1]
-            q = self.s(c.start)
-            p.setPen(QPen(QColor("#a50f15"), 1.5))
-            p.setBrush(QBrush(QColor("#fcbba1")))
-            p.drawEllipse(q, 11, 11)
-            p.drawText(QRectF(q.x() - 11, q.y() - 11, 22, 22), Qt.AlignCenter, str(self.index + n + 1))
+            q = self.s(keys[k][1].start)
+            text = str(n + 1)
+            r = max(9.0, 4.0 + 3.5 * len(text))
+            if k == waiting:
+                p.setPen(QPen(QColor("#08519c"), 2))
+                p.setBrush(QBrush(QColor("#c6dbef")))
+            elif k in mine:
+                p.setPen(QPen(QColor("#a50f15"), 1.5))
+                p.setBrush(QBrush(QColor("#fcbba1")))
+            else:
+                p.setPen(QPen(QColor("#737373"), 1))
+                p.setBrush(QBrush(QColor(255, 255, 255, 210)))
+            p.drawEllipse(q, r, 9)
+            p.drawText(QRectF(q.x() - r, q.y() - 9, 2 * r, 18), Qt.AlignCenter, text)
 
 
 TOOLS = {cls.name: cls for cls in (SelectTool, NodeTool, PolylineTool, LineTool, RectTool, CircleTool,

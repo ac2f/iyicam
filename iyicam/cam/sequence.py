@@ -34,6 +34,7 @@ from .startpoints import DEFAULT_HOLD, EDGE_HOLD, _span_distance, closing_zone, 
 STRATEGIES: list[tuple[str, str]] = [
     ("smart", "Smart: shortest route (optimised)"),
     ("nearest", "Shortest travel (nearest next)"),
+    ("follow", "Follow on: the next start point nearest the end of the last cut"),
     ("rows_bl", "Rows: bottom left → top right"),
     ("rows_br", "Rows: bottom right → top left"),
     ("rows_tl", "Rows: top left → bottom right"),
@@ -57,11 +58,35 @@ STRATEGIES: list[tuple[str, str]] = [
 
 COMMON_STRATEGIES = ("cols_bl", "rows_bl", "smart", "nearest")      # what people use: first in every list
 
+#: the strategies in groups (the lists show them under these headings, the groups in this order)
+STRATEGY_GROUPS: list[tuple[str, tuple[str, ...]]] = [
+    ("Columns", ("cols_bl", "cols_br", "cols_tl", "cols_tr")),
+    ("Rows", ("rows_bl", "rows_br", "rows_tl", "rows_tr")),
+    ("Route (shortest travel)", ("smart", "nearest", "follow")),
+    ("Zig-zag", ("zigzag_up", "zigzag_down", "zigzag_right", "zigzag_left")),
+    ("Diagonal", ("diag_bl", "diag_br", "diag_tl", "diag_tr")),
+    ("Other", ("small_first", "centre_out", "edges_in")),
+]
+ROUTE_STRATEGIES = ("nearest", "smart", "follow")   # no sweep: the next cut is the one nearest the tool
+
+
+def strategy_group(key: str) -> str:
+    for g, keys in STRATEGY_GROUPS:
+        if key in keys:
+            return g
+    return "Other"
+
 
 def strategy_list() -> list[tuple[str, str]]:
-    """:data:`STRATEGIES` with the common ones first."""
+    """:data:`STRATEGIES` group by group (:data:`STRATEGY_GROUPS`; what is in no group comes last)."""
     by = dict(STRATEGIES)
-    return [(k, by[k]) for k in COMMON_STRATEGIES] + [(k, v) for k, v in STRATEGIES if k not in COMMON_STRATEGIES]
+    keys = [k for _, ks in STRATEGY_GROUPS for k in ks if k in by]
+    return [(k, by[k]) for k in keys] + [(k, v) for k, v in STRATEGIES if k not in keys]
+
+
+def grouped_strategies() -> list[tuple[str, str, str]]:
+    """``(key, label, group)`` of every strategy, in the order of :func:`strategy_list`."""
+    return [(k, v, strategy_group(k)) for k, v in strategy_list()]
 
 
 GROUPINGS: list[tuple[str, str]] = [
@@ -196,6 +221,11 @@ class SeqItem:
     def center(self) -> Pt:
         return self.bbox.center
 
+    def start_entry(self, pos: Pt) -> tuple[Pt, Pt]:
+        """Entered at its own start point (the vector is not turned round): where, and where the tool is after."""
+        c = self.contour
+        return (c.start, c.start) if c.closed else (c.start, c.end)
+
     def entry(self, pos: Pt) -> tuple[Pt, Pt]:
         """Where the item is entered from ``pos`` and where the tool is when it is done."""
         c = self.contour
@@ -259,8 +289,10 @@ def _plan(strategy: str) -> tuple[str, float, float, bool]:
     return pat, sx, sy, False
 
 
-def _nearest(items: list[SeqItem], pos: Pt, wait: dict[str, set[str]] | None = None) -> list[SeqItem]:
-    """Greedy nearest next item (exact distances, pruned with bounding boxes).
+def _nearest(items: list[SeqItem], pos: Pt, wait: dict[str, set[str]] | None = None, own_start: bool = False
+             ) -> list[SeqItem]:
+    """Greedy nearest next item (exact distances, pruned with bounding boxes). ``own_start``: every item is entered
+    at its own start point (the ``follow`` strategy: where the last cut ended, the nearest start point is next).
 
     ``wait[key]`` are items that have to be cut before ``key``; an item waits for them as long as another
     item can be taken (when everything left waits, the nearest goes: a ring of waiting items is broken)."""
@@ -291,7 +323,7 @@ def _nearest(items: list[SeqItem], pos: Pt, wait: dict[str, set[str]] | None = N
         for i in np.argsort(lb, kind="stable"):
             if lb[i] > best_d or not usable[i]:
                 break
-            q, e = items[i].entry(pos)
+            q, e = items[i].start_entry(pos) if own_start else items[i].entry(pos)
             d = dist(pos, q)
             if d < best_d - 1e-9:
                 best, best_d, best_exit = int(i), d, e
@@ -396,6 +428,8 @@ def rank(items: list[SeqItem], strategy: str, pos: Pt, band: float = 0.0,
     items = list(items)
     if len(items) > 1 and strategy == "smart":
         return _smart(items, pos, wait)
+    if len(items) > 1 and strategy == "follow":
+        return _nearest(items, pos, wait, own_start=True)
     if len(items) <= 1 or strategy == "nearest":
         return _nearest(items, pos, wait)
     cx = np.array([it.center[0] for it in items])
@@ -435,7 +469,7 @@ def order_items(items: list[SeqItem], strategy: str = "nearest", grouping: str =
     out: list[str] = []
 
     def exit_of(it: SeqItem, p: Pt) -> Pt:
-        return it.entry(p)[1]
+        return (it.start_entry(p) if strategy == "follow" else it.entry(p))[1]
 
     if grouping == "part":
         kids: dict[str | None, list[SeqItem]] = defaultdict(list)
@@ -531,7 +565,7 @@ def sequence(items: list[SeqItem], cfg: dict, pos: Pt = (0.0, 0.0),
         zoning = zones and supporting                          # (where a cut closes is only asked for with smart start points)
         blockers = zone_blockers(items, s, sheet) if zoning else {}
         holds, hold_w = hold_blockers(items, s, sheet) if supporting else ({}, {})
-        route = s["strategy"] in ("nearest", "smart")
+        route = s["strategy"] in ROUTE_STRATEGIES
         wait: dict[str, set[str]] = defaultdict(set)      # a route strategy keeps the neighbours that would take the
         if route and blockers:                             # sheet away from the closing zone of a cut for after it
             plain = order_items(items, s["strategy"], s["grouping"], pos, s["band"], sheet)
@@ -1236,6 +1270,27 @@ def manual_from(order: list[str], index: int, picked: list[str]) -> list[str]:
     rest = [k for k in order if k not in taken]
     index = max(0, min(index, len(rest)))
     return rest[:index] + chosen + rest[index:]
+
+
+def manual_from_end(order: list[str], offset: int, picked: list[str]) -> list[str]:
+    """Numbering from the end: the first of ``picked`` is cut last (``offset`` places before the last one), the
+    next one just before it, ...; the rest keeps its order."""
+    chosen = list(dict.fromkeys(picked))
+    taken = set(chosen)
+    rest = [k for k in order if k not in taken]
+    offset = max(0, min(offset, len(rest)))
+    cut = len(rest) - offset
+    return rest[:cut] + chosen[::-1] + rest[cut:]
+
+
+def swapped(order: list[str], pairs: list[tuple[str, str]]) -> list[str]:
+    """``order`` with the places of every pair of keys exchanged, one pair after the other."""
+    out = list(order)
+    for a, b in pairs:
+        if a in out and b in out and a != b:
+            i, j = out.index(a), out.index(b)
+            out[i], out[j] = b, a
+    return out
 
 
 # ---------------------------------------------------------------------------

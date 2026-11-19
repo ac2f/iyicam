@@ -153,7 +153,7 @@ def test_a_preview_changes_nothing_until_it_is_applied(rwin):
     assert "2 cut(s)" in p.summary() and p.changed
     assert c.apply_cut_preview() and c.cut_preview is None
     assert c.cut_order(t.id) == keys[::-1] and t.sequence["strategy"] == "rows_br"
-    assert c.settings.sequence_defaults["strategy"] == "rows_br"            # (remembered for new toolpaths)
+    assert "strategy" not in c.settings.sequence_defaults                   # (new toolpaths start with the default one)
     c.undo()
     assert c.cut_order(t.id) == keys
     assert robot.problems() == []

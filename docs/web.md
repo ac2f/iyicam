@@ -562,3 +562,23 @@ the desktop program and the page (engine operations `tp_presets`, `tp_preset_sav
 **The start-up window** of the desktop program shows at once, with what is being loaded (operations and posts, settings,
 plugins, the main window, the projects of the last session) and a bar; it closes when the main window is up.
 `--no-splash` starts without it.
+
+## Order strategies in groups, follow-on, numbering by clicking
+
+**Strategies** are listed under headings: *Columns*, *Rows*, *Route (shortest travel)*, *Zig-zag*, *Diagonal*, *Other*. A new
+toolpath always starts with the default strategy (columns from the bottom left) and with *Outside* for a profile: these two
+are not carried over from the last toolpath (the other cut order settings are).
+
+**Follow on** (in *Route*): after a vector is cut, the next one is the vector whose start point is nearest to where the tool
+is; the start points stay where they are (with *smart start points* off, they are the vectors' own). The rule that keeps the
+material supported still holds.
+
+**Numbering by clicking** (desktop: Cut order panel, *Click to number...*; page: Preview tab, *Give the order by tapping the
+drawing*): click (tap) the cuts on the drawing; every cut shows the number it will have as you go, the clicked ones in red
+(pink on the page). A click inside a part counts as well as one on its line; a cut clicked again is taken back.
+- *Number from #*: the clicked cuts take the places from the number chosen on.
+- *Number from the end*: the first cut clicked is cut last (#1 = the last place, #2 = one before it, ...), the next one before it.
+- *Swap two*: every two cuts clicked exchange their places.
+- Ctrl+click on the desktop (the ⚓ button and then a tap on the page): the numbering goes on after that cut (from the end:
+  before it).
+Enter / *Done* applies, Backspace / ↶ takes the last click back, Esc / ✕ cancels.

@@ -451,7 +451,8 @@ class Controller(CutControl, QObject):
         if self.settings.strategy_directions and "directions" not in tdef.sequence:
             tdef.sequence["directions"] = dict(self.settings.strategy_directions)
         for key, value in self.settings.sequence_defaults.items():
-            tdef.sequence.setdefault(key, value)   # new toolpaths are ordered the way the last one was
+            if key in self.REMEMBERED_SEQUENCE:    # (the strategy is not: every new toolpath starts with the default one)
+                tdef.sequence.setdefault(key, value)   # new toolpaths are ordered the way the last one was
         with self.edit(f"Add toolpath {tdef.name}", geometry=False):
             self.project.toolpaths.append(tdef)
         self.recalculate({tdef.id})
@@ -679,7 +680,7 @@ class Controller(CutControl, QObject):
             self.recalculate(only)
 
     # cut order and start point settings that new toolpaths start with (what was chosen last)
-    REMEMBERED_SEQUENCE = ("strategy", "grouping", "direction", "smart_starts", "start_margin", "corner_distance")
+    REMEMBERED_SEQUENCE = ("grouping", "direction", "smart_starts", "start_margin", "corner_distance")
 
     def remember_cut_order(self, **changes) -> None:
         """Cut order / start point settings chosen by the user: new toolpaths start with them."""
@@ -724,18 +725,41 @@ class Controller(CutControl, QObject):
         on_sheet = {f"{o.id}:{i}" for o in self.project.vectors_for(t, s) for i in range(len(o.contours))}
         return [k for k in t.sequence.get("order", []) if k in on_sheet]
 
+    def sheet_cut_keys(self, tid: str, sheet: Sheet | None = None) -> list[str]:
+        """The cuts of a toolpath on a sheet in the order they are made; cuts the stored order does not have yet (a
+        project opened with kept toolpaths, vectors added since) follow in the order the calculation made them."""
+        t = self.project.toolpath(tid)
+        s = sheet or self.sheet
+        if t is None:
+            return []
+        mine = self.cut_order(tid, s)
+        known = set(mine)
+        res = self.results.get((tid, s.id))
+        made = list(res.order or []) if res is not None else []
+        keys = [f"{o.id}:{i}" for o in self.project.vectors_for(t, s) for i, c in enumerate(o.contours) if c.segs]
+        valid = set(keys)
+        extra = [k for k in dict.fromkeys(made) if k in valid and k not in known]
+        known |= set(extra)
+        return mine + extra + [k for k in keys if k not in known]
+
+    def set_sheet_order(self, tid: str, new_mine: list[str], sheet: Sheet | None = None) -> None:
+        """Cut this sheet's cuts of a toolpath in the order ``new_mine`` (the other sheets keep theirs); freezes the order."""
+        t = self.project.toolpath(tid)
+        if t is None or not new_mine:
+            return
+        want = set(new_mine)
+        it = iter(new_mine)
+        order = [next(it) if k in want else k for k in t.sequence.get("order", [])]
+        order += list(it)                       # (cuts the stored order did not have)
+        if order == list(t.sequence.get("order", [])) and t.sequence.get("auto_order") is False:
+            return
+        self.set_sequence(tid, order=order, auto_order=False)
+
     def set_manual_order(self, tid: str, index: int, picked: list[str]) -> None:
         """Cut ``picked`` from position ``index`` (0 based) of this sheet's order on; freezes the order."""
         from ..cam.sequence import manual_from
-        t = self.project.toolpath(tid)
-        if t is None:
-            return
-        mine = self.cut_order(tid)
-        new_mine = manual_from(mine, index, picked)
-        it = iter(new_mine)
-        mine_set = set(mine)
-        order = [next(it) if k in mine_set else k for k in t.sequence.get("order", [])]
-        self.set_sequence(tid, order=order, auto_order=False)
+        if self.project.toolpath(tid) is not None:
+            self.set_sheet_order(tid, manual_from(self.sheet_cut_keys(tid), index, picked))
 
     def set_start_point(self, vid: str, ci: int, point, lock: bool = True) -> None:
         """Start a vector contour at ``point`` (a new node where there is none) and keep it there."""

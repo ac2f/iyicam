@@ -364,7 +364,8 @@ class Canvas(QWidget):
         # toolpaths
         if self.ctrl.settings.show_toolpaths:
             self._paint_toolpaths(p)
-        cutview.paint_cut_view(p, self)
+        if not getattr(self.tool, "own_numbers", False):    # (the order tool draws the numbers it is making)
+            cutview.paint_cut_view(p, self)
         # start points / directions of selected vectors
         p.resetTransform()
         for o in self.ctrl.selected_objects():

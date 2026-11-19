@@ -203,7 +203,7 @@ def op_schema(_payload=None) -> dict:
             "posts": posts, "importers": importers, "exporters": exporters, "tools": tools,
             "cdr": cdr_info, "layer_colors": list(LAYER_COLORS), "origins": sorted(ORIGINS), "dxf_versions": [list(v) for v in DXF_VERSIONS],
             "tool_types": [[k, v] for k, v in TOOL_TYPES.items()],
-            "sequence": {"strategies": [list(x) for x in seq.strategy_list()], "groupings": [list(x) for x in seq.GROUPINGS],
+            "sequence": {"strategies": [list(x) for x in seq.grouped_strategies()], "groupings": [list(x) for x in seq.GROUPINGS],
                          "directions": [list(x) for x in seq.DIRECTIONS],
                          # (a toolpath made on the page starts with smart start points: the start points go where the cut is held
                          # until it closes; the engine's own default stays off for projects and calls that never said)

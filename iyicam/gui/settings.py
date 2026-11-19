@@ -61,7 +61,7 @@ class Settings:
             return dict(stored)
         out = {}
         for p in params:
-            if p.name in stored and p.kind != "tool":
+            if p.name in stored and p.kind != "tool" and getattr(p, "remember", True):
                 try:
                     v = stored[p.name]
                     out[p.name] = p.coerce(v) if v is not None else None
@@ -71,7 +71,7 @@ class Settings:
 
     def remember(self, key: str, values: dict, params: Iterable[Param] | None = None, save: bool = True) -> None:
         """Keep the values of dialog ``key`` (the ones of ``params`` when given) for the next time."""
-        names = None if params is None else {p.name for p in params if p.kind != "tool"}
+        names = None if params is None else {p.name for p in params if p.kind != "tool" and getattr(p, "remember", True)}
         clean = {k: _json_safe(v) for k, v in values.items() if names is None or k in names}
         clean = {k: v for k, v in clean.items() if v is not _DROP}
         if self.memory.get(key) != clean:
