@@ -189,7 +189,7 @@ class MainWindow(QMainWindow):
         self._tool_changed(cv.tool.name)
         self.prompt.setText(cv.tool.prompt)
         self.sim_action.setChecked(cv.show_sim)
-        if hasattr(self, "sim_panel"):
+        if getattr(getattr(self, "sim_panel", None), "view", None) is not None:
             self.sim_panel.stop()                # (the simulation was of the project of the other tab)
         self._update_title()
         self._update_actions()
@@ -344,7 +344,7 @@ class MainWindow(QMainWindow):
         self.sim_panel = SimPanel(self)
         self.sim_dock = self._dock("Simulation", self.sim_panel, Qt.RightDockWidgetArea)
         self.tabifyDockWidget(self.toolpaths_dock, self.sim_dock)
-        self.sim_dock.visibilityChanged.connect(lambda v: None if v else self.sim_panel.stop())
+        self.sim_dock.visibilityChanged.connect(self._sim_dock_shown)
         self.toolpaths_dock.raise_()
         self.console = Console(c, self)
         self.console_dock = self._dock("Python Console", self.console, Qt.BottomDockWidgetArea)
@@ -719,6 +719,11 @@ class MainWindow(QMainWindow):
         if a is not None and a.isChecked() != bool(value):
             a.setChecked(bool(value))
         self.cutorder_panel.sync_view()
+
+    def _sim_dock_shown(self, visible: bool) -> None:
+        """The simulation ends when its panel is closed (not while the window is being taken down)."""
+        if not visible and getattr(self.sim_panel, "view", None) is not None:
+            self.sim_panel.stop()
 
     def _toggle_sim(self, value: bool) -> None:
         self.canvas.show_sim = value
