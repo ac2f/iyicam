@@ -105,8 +105,10 @@ class ProfileOp(Operation):
             Param("side", "Machine", "choice", "outside", choices=ch, group="Profile", remember=False),
             Param("direction", "Direction", "choice", "climb",
                   choices=[("climb", "Climb"), ("conventional", "Conventional")], group="Profile"),
-            Param("allowance", "Allowance", "length", 0.0, group="Profile",
-                  help="Material left on the wall; negative cuts into the part"),
+            Param("allowance", "Allowance (+ bigger part / − smaller part)", "length", 0.0, group="Profile",
+                  advanced=False, visible={"side": ["outside", "inside"]},
+                  help="Material left on the wall, as in ArtCAM. Outside: + cuts the part that much bigger on every "
+                       "side, − smaller. Inside (holes): + leaves the hole that much smaller, − bigger."),
             Param("sharp_corners", "Sharp corners", "bool", False, group="Profile",
                   visible={"side": ["outside", "inside"]},
                   help="Keep offset corners sharp instead of rolling around them"),
@@ -158,7 +160,10 @@ class ProfileOp(Operation):
             return []
         surface = -start
         r = tool.radius_at_depth(final - start) if tool.is_tapered else tool.radius
-        self._tool_r = r + v["allowance"]
+        if v["side"] != "on" and r + v["allowance"] <= 0.001:
+            ctx.warn(f"Allowance {v['allowance']:g} is more than the tool radius: it is taken as {-(r - 0.001):g}")
+            v = self.values = {**v, "allowance": -(r - 0.001)}
+        self._tool_r = r + (v["allowance"] if v["side"] != "on" else 0.0)
         self._sig = (repr(sorted((k, repr(x)) for k, x in v.items())), repr(sorted(tool.to_dict().items())),
                      tuple(levels), surface, final, ctx.safe_z, ctx.clearance)
         sources = [(f"{o.id}:{i}", c) for o in ctx.objects for i, c in enumerate(o.contours) if c.segs]

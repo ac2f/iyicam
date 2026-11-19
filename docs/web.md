@@ -592,3 +592,10 @@ unfolds (remembered), its tick switches the whole group on or off, and selecting
 A toolpath is shown **red** ("needs recalculating") only when something it depends on changed since it was calculated: the
 vectors it machines, its sheets, its own settings or the material. Drawing or moving other vectors leaves it as it is.
 The automatic calculation does only the red ones; F5 (Recalculate All) calculates every toolpath.
+
+## Allowance (a part bigger or smaller)
+
+A profile toolpath has **Allowance** among its common settings (for *Outside* and *Inside*), the way ArtCAM has it: the tool
+runs that much further from the line. Outside: `+1` cuts the part 1 mm bigger on every side, `-1` 1 mm smaller. Inside (holes):
+`+1` leaves the hole 1 mm smaller, `-1` makes it bigger. A negative allowance of the tool radius or more cannot be cut (the
+tool would have to run on the other side of the line): it is taken as just under the radius, and the toolpath says so.

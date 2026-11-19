@@ -32,7 +32,7 @@ def test_a_collapsed_form_shows_the_basics_and_the_rest_with_the_button(rwin):
     f = ParamForm(REGISTRY.operations["profile"].params(), None, None, None, collapse=True)
     f.show()
     shown = lambda: {n for n, (lay, w) in f._rows.items() if lay.isRowVisible(w)}
-    assert shown() == {"through", "side", "tabs"} and "More options" in f.more.text()
+    assert shown() == {"through", "side", "allowance", "tabs"} and "More options" in f.more.text()
     f.more.setChecked(True)
     assert {"overcut", "ramp", "direction"} <= shown() and "Fewer" in f.more.text()
     plain = ParamForm(REGISTRY.operations["profile"].params(), None, None, None)       # (a command's form shows all)
