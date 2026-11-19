@@ -844,19 +844,29 @@ class CutOrderPanel(DocPanel):
         if self._syncing or self._loading:
             return
         sel = self.ctrl.selection
-        if len(sel) != 1:
-            return
-        for cut in self._cuts:
-            if cut["key"].rsplit(":", 1)[0] == sel[0]:
-                if cut["key"] != self.focus_key():
-                    self._syncing = True
-                    try:
-                        self.select_cut(cut["key"])
-                        self.ctrl.set_focus_cut(cut["key"])
-                    finally:
-                        self._syncing = False
-                    self._row_state()
-                return
+        if len(sel) == 1:
+            for cut in self._cuts:
+                if cut["key"].rsplit(":", 1)[0] == sel[0]:
+                    if cut["key"] != self.focus_key():
+                        self._syncing = True
+                        try:
+                            self.select_cut(cut["key"])
+                            self.ctrl.set_focus_cut(cut["key"])
+                        finally:
+                            self._syncing = False
+                        self._row_state()
+                    return
+        # nothing, several vectors or a vector this toolpath does not cut: no cut is looked at any more (the yellow line
+        # of the cut that was goes)
+        if self.focus_key() is not None or self.ctrl.focus_cut is not None:
+            self._syncing = True
+            try:
+                self.list.setCurrentItem(None)
+                self.list.clearSelection()
+                self.ctrl.set_focus_cut(None)
+            finally:
+                self._syncing = False
+            self._row_state()
 
     def _move(self, delta: int) -> None:
         r = self.list.indexOfTopLevelItem(self.list.currentItem())

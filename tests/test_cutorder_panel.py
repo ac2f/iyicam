@@ -278,13 +278,13 @@ def test_a_row_points_the_drawing_at_its_cut_and_the_drawing_points_at_a_row(rwi
     assert panel.explain.text().startswith("Cut ") and panel.places["sw"].isEnabled()
     c.select([objs[2].id])                                                    # click a vector on the drawing
     assert panel.focus_key() == keys[2] and c.focus_cut == keys[2]
-    c.select([objs[0].id, objs[1].id])                                        # two: the list stays
-    assert panel.focus_key() == keys[2]
+    c.select([objs[0].id, objs[1].id])                                        # two: no cut is looked at any more
+    assert panel.focus_key() is None and c.focus_cut is None
     c.changed.emit()                                                          # a refresh does not take the selection
     process()
-    assert set(c.selection) == {objs[0].id, objs[1].id}
+    assert set(c.selection) == {objs[0].id, objs[1].id} and c.focus_cut is None
     c.select([])
-    assert panel.focus_key() == keys[2]
+    assert panel.focus_key() is None
 
 
 def test_rows_move_with_the_buttons_and_by_dragging(rwin):
@@ -695,3 +695,21 @@ def test_the_panel_counts_the_start_points_by_kind(rwin):
     c.unlock_start(keys_of(objs)[0])
     process()
     assert "3 as drawn" in panel.info.text()
+
+
+def test_the_yellow_line_of_a_cut_goes_when_something_else_is_selected(rwin):
+    win, _ = rwin
+    c, t, objs, panel = opened(win, n=3)
+    keys = keys_of(objs)
+    c.select([objs[1].id])
+    process()
+    assert c.focus_cut == keys[1]
+    c.select([objs[0].id, objs[2].id])                        # (a band over two vectors)
+    process()
+    assert c.focus_cut is None and panel.focus_key() is None
+    c.select([objs[2].id])
+    process()
+    assert c.focus_cut == keys[2]
+    c.select([])
+    process()
+    assert c.focus_cut is None
