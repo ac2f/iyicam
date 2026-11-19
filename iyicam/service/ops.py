@@ -210,6 +210,9 @@ def op_schema(_payload=None) -> dict:
                          "defaults": jsonable({**{k: v for k, v in seq.DEFAULTS.items() if k not in ("order", "directions")},
                                                "smart_starts": True})},
             "naming": {"variables": __import__("iyicam.post.naming", fromlist=["x"]).VARIABLES,
+                       "segment_variables": __import__("iyicam.post.naming", fromlist=["x"]).SEGMENT_VARIABLES,
+                       "default_segment": __import__("iyicam.post.naming", fromlist=["x"]).DEFAULT_SEGMENT,
+                       "default_segment_sep": __import__("iyicam.post.naming", fromlist=["x"]).DEFAULT_SEGMENT_SEP,
                        "default_parts": ["{project_name}"], "default_sep": "_"},
             "plugin_errors": list(PLUGIN_ERRORS), "new_project": _new_project_info()}
 
@@ -670,6 +673,9 @@ def op_gcode(payload: dict, ctl: JobControl | None = None) -> dict:
         tps = sheet_toolpaths(project, res, sheet)
         if not tps:
             continue
+        if payload.get("together", True) is not False:          # (the toolpaths of a group are cut one after the other)
+            from ..post import naming as _nm
+            tps = _nm.group_order(project, tps)
         for tp in tps:
             warnings += [w for w in tp.warnings if w not in warnings]
         if parts is not None:
@@ -680,7 +686,11 @@ def op_gcode(payload: dict, ctl: JobControl | None = None) -> dict:
             grp = str(payload.get("group") or (next(iter(groups)) if len(groups) == 1 else ""))
 
             def stem_of(g, sheet=sheet, i=i, rev=rev, grp=grp):
-                vals = naming.values_for(project, sheet, i, len(project.sheets), post.name, grp, g, rev)
+                vals = naming.values_for(project, sheet, i, len(project.sheets), post.name, grp, g, rev,
+                                         segment=str(payload.get("segment_template") or naming.DEFAULT_SEGMENT),
+                                         segment_sep=(str(payload["segment_sep"])[:4] if isinstance(payload.get("segment_sep"), str)
+                                                      else naming.DEFAULT_SEGMENT_SEP),
+                                         stack=payload.get("stack", True) is not False)
                 name = naming.render(parts, vals, sep)
                 # (a job with several sheets needs a number in the name or the files would overwrite each other)
                 return f"{name}_{i}" if many and not naming.uses(parts, "sheet_number", "sheet_name") else name

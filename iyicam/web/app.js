@@ -60,6 +60,8 @@ const TXT = {
     "out.files": "G-code dosyaları", "out.download": "İndir", "out.view": "Göster", "out.hide": "Gizle",
     "out.lines": "{0} satır", "out.errors": "Hatalar", "out.warnings": "Uyarılar", "out.nogcode": "G-code üretilemedi.",
     "out.simdone": "Malzeme kaldırma, {0}", "out.stale": "Proje değişti; yeniden hesapla.",
+    "name.segTitle": "Takım yolu parçası ({segments})", "name.segHint": "{segments} dosyadaki her takım yolu için bir parça yazar; bir grubun benzer takım yolları tek parçada toplanır (m: kaç tane). [köşeli parantez] içindeki parça, içindeki değişken boşsa yazılmaz.",
+    "name.seg": "Parça", "name.together": "Bir grubun takım yolları art arda kesilsin", "name.stack": "Grubu tek parçada topla",
     "out.zeroTable": "⚠ Z sıfırı tabla (malzemenin altındaki zemin): G-code'daki Z0 zeminin üstü, boydan boya kesim onun hemen altında biter. Pasolar ve yükseklikler için kullanılan kalınlık: {0} mm. Makinedeki malzemenin kalınlığı bu mu, kontrol et (Malzeme ayarı).",
     "err.network": "Sunucuya ulaşılamıyor.", "err.session": "Oturum bitti; anahtarı yeniden gir.",
     "e.unsupported_file": "Bu dosya türü okunamıyor.", "e.empty_file": "Dosya boş.", "e.too_large": "Dosya çok büyük.",
@@ -138,6 +140,8 @@ const TXT = {
     "out.files": "G-code files", "out.download": "Download", "out.view": "View", "out.hide": "Hide",
     "out.lines": "{0} lines", "out.errors": "Errors", "out.warnings": "Warnings", "out.nogcode": "No G-code could be made.",
     "out.simdone": "Material removal, {0}", "out.stale": "The project changed; calculate again.",
+    "name.segTitle": "Part of a toolpath ({segments})", "name.segHint": "{segments} writes a part for every toolpath of the file; the alike toolpaths of a group are stacked into one part (m: how many). A piece in [brackets] is left out when a variable in it has no value.",
+    "name.seg": "Part", "name.together": "Cut the toolpaths of a group one after the other", "name.stack": "Stack a group in one part",
     "out.zeroTable": "⚠ Z zero is the table (the board under the material): Z0 of the G-code is the top of that board, a through cut ends just under it. The thickness used for the passes and the heights: {0} mm. Check it is the thickness of the material on the machine (Material setup).",
     "err.network": "Cannot reach the server.", "err.session": "Signed out; enter the key again.",
     "e.unsupported_file": "This kind of file cannot be read.", "e.empty_file": "The file is empty.",
@@ -735,6 +739,48 @@ function fieldText(f, vals) {
   const sub = expr.replace(/[A-Za-z_]\w*/g, w => { const n = Number(String(vals[w] ?? "").replace(",", ".")); return vals[w] !== undefined && vals[w] !== "" && Number.isFinite(n) ? `(${n})` : "NaN"; });
   const v = /NaN/.test(sub) ? NaN : calc(sub.replace(/:/g, "/"));
   return Number.isFinite(v) ? formatField(v, spec) : "";
+}
+/** the toolpaths with the ones of a group one after the other, where the first of them is (post/naming.group_order) */
+function groupOrder(list) {
+  const out = [], done = new Set();
+  for (const tp of list) {
+    if (done.has(tp)) continue;
+    const same = tp.group ? list.filter(x => !done.has(x) && x.group === tp.group) : [tp];
+    for (const x of same) { out.push(x); done.add(x); }
+  }
+  return out;
+}
+/** {segments} of a file name, as the engine makes it (post/naming.segments) */
+function webSegments(p, sh, list, fn) {
+  const tpl = fn.segment || "{side}_{name}{depth}[s{step}]z{safe_z}[m{count}]";
+  const num = v => (v === undefined || v === null || v === "" || !Number.isFinite(+v) ? "" : String(+(+v).toPrecision(12)));
+  const sides = { outside: "o", inside: "i", on: "a" }, opSide = { pocket: "p", drill: "d", vcarve: "v", engrave: "e", fluting: "f", inlay: "n" };
+  const m = p.material || {}, thick = sh && sh.thickness != null ? sh.thickness : m.thickness;
+  const parts = [];
+  for (const tp of list) {
+    const op = (S.schema.operations || []).find(o => o.id === tp.op);
+    const v = {};
+    for (const q of (op ? op.params : [])) v[q.name] = q.default;
+    Object.assign(v, tp.params || {});
+    const depth = v.through ? thick : +(v.cut_depth || 0), fin = v.through ? thick + (+v.overcut || 0) : depth;
+    const tool = tp.tool || {}, sd = +v.stepdown || Math.max(0.01, +tool.stepdown || fin || 1), start = +v.start_depth || 0;
+    const passes = fin > start ? Math.max(1, Math.ceil((fin - start) / sd - 1e-9)) : 0;
+    const vals = { side: ("side" in v ? sides[v.side] : "") || opSide[tp.op] || (tp.op || "").slice(0, 1), name: toolpathName(p, tp),
+      depth: num(depth), final_depth: num(fin), stepdown: num(sd), step: passes > 1 ? num(sd) : "", passes: String(passes),
+      safe_z: num(tp.safe_z ?? m.safe_z), count: "", tool_diameter: num(tool.diameter), tool_number: num(tool.number),
+      group: tp.group || "", feed_rate: num(tool.feed_rate) };
+    const key = [vals.group, vals.side, vals.depth, vals.final_depth, vals.stepdown, vals.safe_z, vals.tool_diameter].join("|");
+    const last = parts[parts.length - 1];
+    if (fn.stack !== false && vals.group && last && last.key === key) { last.n++; continue; }
+    parts.push({ key, vals, n: 1 });
+  }
+  return parts.map(({ vals, n }) => {
+    const v = { ...vals };
+    if (n > 1) { v.count = String(n); v.name = v.group || v.name; }
+    const text = tpl.replace(/\[([^\[\]]*)\]/g, (_, inner) => [...inner.matchAll(/\{([^{}]*)\}/g)].flatMap(mm => splitField(mm[1])[0].match(/[A-Za-z_]\w*/g) || [])
+      .every(nme => !["", "0"].includes(String(v[nme] ?? ""))) ? inner : "");
+    return text.replace(/\{([^{}]*)\}/g, (_, f) => fieldText(f, v)).replace(/[^\w\-. ()+,=#@]+/g, "_").replace(/^[ ._]+|[ ._]+$/g, "");
+  }).filter(Boolean).join(fn.segSep ?? "-");
 }
 /** the name of a toolpath with its {variables} and sums worked out (the engine's post/naming.toolpath_name) */
 function toolpathName(p, tp) {
@@ -1518,6 +1564,7 @@ function nameCard(p, sel, stem) {
       safe_z: safe.length ? String(Math.max(...safe)) : String((p.material || {}).safe_z ?? ""),
       cut_depth: join(chosen.map(x => x.params && typeof x.params.cut_depth === "number" ? x.params.cut_depth : null)),
       sheet_group: sh && sh.group ? sh.group : "", revision: String(revisionNow()) };
+    vals.segments = webSegments(p, sh, fn.together === false ? chosen : groupOrder(chosen), fn);
     const bad = fn.parts.flatMap(x => [...x.matchAll(/\{([^{}]*)\}/g)].flatMap(m => (splitField(m[1])[0].match(/[A-Za-z_]\w*/g) || []))).filter(v => !known.has(v));
     if (bad.length) return { bad: [...new Set(bad)] };
     const name = fn.parts.map(x => x.replace(/\{([^{}]*)\}/g, (_, f) => fieldText(f, vals)).replace(/[^\w\-. ()+,=#@]+/g, "_").replace(/^[ ._]+|[ ._]+$/g, "")).filter(Boolean).join(fn.sep || "_");
@@ -1550,11 +1597,28 @@ function nameCard(p, sel, stem) {
   } }, v.name);
   const sep = h("input", { type: "text", value: fn.sep, maxlength: "4", style: "width:64px" });
   sep.oninput = () => { fn.sep = sep.value; save(); showPrev(); };
+  if (fn.segment === undefined) fn.segment = nm.default_segment || "{side}_{name}{depth}[s{step}]z{safe_z}[m{count}]";
+  if (fn.segSep === undefined) fn.segSep = nm.default_segment_sep ?? "-";
+  const seg = h("input", { type: "text", value: fn.segment, style: "width:100%" });
+  seg.oninput = () => { fn.segment = seg.value; save(); showPrev(); };
+  const segSep = h("input", { type: "text", value: fn.segSep, maxlength: "4", style: "width:64px" });
+  segSep.oninput = () => { fn.segSep = segSep.value; save(); showPrev(); };
+  const together = h("input", { type: "checkbox", checked: fn.together !== false });
+  together.onchange = () => { fn.together = together.checked; save(); showPrev(); };
+  const stack = h("input", { type: "checkbox", checked: fn.stack !== false });
+  stack.onchange = () => { fn.stack = stack.checked; save(); showPrev(); };
+  const segChip = v => h("button", { class: "chip", title: v.text[lang] || v.text.en, onclick: () => {
+    const at = seg.selectionStart ?? seg.value.length; seg.value = seg.value.slice(0, at) + "{" + v.name + "}" + seg.value.slice(seg.selectionEnd ?? at); seg.oninput(); seg.focus(); } }, "{" + v.name + "}");
   showPrev();
   return h("div", { class: "card" }, h("h2", {}, t("name.title")), h("div", { class: "muted small" }, t("name.hint")), rows,
     h("div", { class: "row", style: "margin-top:6px" }, h("button", { class: "small", onclick: () => { const i = addRow(""); i.focus(); } }, t("name.add")),
       h("label", { class: "chk" }, t("name.sep") + " ", sep)),
-    h("div", { class: "chips", style: "margin-top:8px" }, nm.variables.map(chip)), prev, revisionRow());
+    h("div", { class: "chips", style: "margin-top:8px" }, nm.variables.map(chip)),
+    h("div", { class: "group-h", style: "margin-top:10px" }, t("name.segTitle")), h("div", { class: "muted small" }, t("name.segHint")),
+    h("label", { class: "f" }, h("span", {}, t("name.seg")), seg),
+    h("div", { class: "row" }, h("label", { class: "chk" }, t("name.sep") + " ", segSep),
+      h("label", { class: "chk" }, together, t("name.together")), h("label", { class: "chk" }, stack, t("name.stack"))),
+    h("div", { class: "chips", style: "margin-top:6px" }, (nm.segment_variables || []).map(segChip)), prev, revisionRow());
 }
 
 function viewOutput() {
@@ -1603,7 +1667,7 @@ function viewOutput() {
       h("button", { class: "primary grow", onclick: () => guarded(async () => {
         if (!sel.size) return toast(t("grp.pickOne"), "warn");
         const everyOn = p.toolpaths.every(x => sel.has(x.id) === x.enabled);
-        const r = await runJob("gcode", { project: p, post: S.post, file_name: chosenFile(), name_parts: S.fileName.parts, name_sep: S.fileName.sep, ...revisionPayload(), ...(everyOn ? {} : { toolpaths: [...sel] }) });
+        const r = await runJob("gcode", { project: p, post: S.post, file_name: chosenFile(), name_parts: S.fileName.parts, name_sep: S.fileName.sep, segment_template: S.fileName.segment, segment_sep: S.fileName.segSep, together: S.fileName.together !== false, stack: S.fileName.stack !== false, ...revisionPayload(), ...(everyOn ? {} : { toolpaths: [...sel] }) });
         S.gcode = r;
         if (r.ok) { if (r.reused) toast(t("out.reused"), "ok"); revisionAfterSave(); }
         render();

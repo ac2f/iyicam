@@ -200,6 +200,18 @@ window a name typed over the proposed one in the file dialog is used as it is, a
 toolpaths (`{toolpath_name}_T{tool_number}` gives `Outline_T1` and `Holes_T2`); when two files would get the same name the
 post's `_1_T1`, `_2_T2` ... is put after it.
 
+**A name made of the toolpaths: `{segments}`.** It writes a part for every toolpath of the file, in the order they are cut,
+joined by `-` (*between* the parts). The part is a template, `{side}_{name}{depth}[s{step}]z{safe_z}[m{count}]` at first:
+`side` is `i` inside, `o` outside, `a` along the line (`p` pocket, `d` drill, `v` v-carve, `e` engrave), `depth` the depth
+(a cut through: the thickness), `step` the depth of a pass (only when there is more than one), `safe_z`, `count` how many
+toolpaths are stacked; also `final_depth`, `stepdown`, `passes`, `tool_diameter`, `tool_number`, `group`, `feed_rate`. A piece
+in `[brackets]` is left out when a variable in it has no value. The alike toolpaths of a group (same side, depths, safe Z and
+tool) are **stacked** into one part named by the group, with their number. With *Cut the toolpaths of a group one after the
+other* (on) the toolpaths of a group are cut together, where the first of them is. Example: a 4 mm tool, `oyma01`, `oyma02`,
+`oyma03` (group *oyma*, inside, 2 mm in 1 mm passes), `kesim` outside and `kesim` along, through 4 mm, safe Z 10, revision 1:
+`{revision:03}d{tool_diameter}-{segments}` gives `001d4-i_oyma2s1z10m3-o_kesim4z10-a_kesim4z10`, and the file cuts the three
+*oyma* first. The page (Output tab) and the engine (`segment_template`, `segment_sep`, `together`, `stack`) do the same.
+
 **Sums and number formats in the prefixes**: between the braces there can be a sum of variables and numbers
 (`{sheet_number + 100}`, `{sheet_width / 10}`) and, after a last `:`, how the number is written:
 - `{revision:03}` (or `{revision:3}`): at least three digits, zeros in front: 1 → `001`, 12 → `012`;

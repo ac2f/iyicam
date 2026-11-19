@@ -2050,6 +2050,44 @@ class ExportDialog(RemembersSize, QDialog):
         row.addWidget(self.name_sep)
         row.addStretch(1)
         lay.addLayout(row)
+        # {segments}: a part of the name for every toolpath of the file, a group stacked into one
+        row = QHBoxLayout()
+        self.segment = QLineEdit(mem.get("segment") if isinstance(mem.get("segment"), str) and mem.get("segment")
+                                 else naming.DEFAULT_SEGMENT)
+        self.segment.setToolTip("The part of every toolpath in {segments}. A piece in [brackets] is left out when a variable "
+                                "in it has no value: [s{step}] only with more than one pass, [m{count}] only for a stack.")
+        self.segment.textChanged.connect(self._name_changed)
+        self.segment_var = QComboBox()
+        self.segment_var.addItem("Insert...", None)
+        for v in naming.SEGMENT_VARIABLES:
+            self.segment_var.addItem(f"{{{v['name']}}}  {v['text']['en']}", v["name"])
+        self.segment_var.activated.connect(self._insert_segment_var)
+        self.segment_sep = QLineEdit(mem.get("segment_sep") if isinstance(mem.get("segment_sep"), str)
+                                     else naming.DEFAULT_SEGMENT_SEP)
+        self.segment_sep.setMaxLength(4)
+        self.segment_sep.setMaximumWidth(48)
+        self.segment_sep.setToolTip("Put between the parts of the toolpaths")
+        self.segment_sep.textChanged.connect(self._name_changed)
+        row.addWidget(QLabel("Part of a toolpath ({segments}):"))
+        row.addWidget(self.segment, 1)
+        row.addWidget(self.segment_var)
+        row.addWidget(QLabel("between:"))
+        row.addWidget(self.segment_sep)
+        lay.addLayout(row)
+        row = QHBoxLayout()
+        self.together = QCheckBox("Cut the toolpaths of a group one after the other")
+        self.together.setToolTip("The toolpaths of a group are cut together, where the first of them is (the order of the "
+                                 "file); off: in the order of the Toolpaths panel")
+        self.together.setChecked(mem.get("together", True) is not False)
+        self.stack = QCheckBox("Stack a group in one part (m = how many)")
+        self.stack.setToolTip("The alike toolpaths of a group are one part of {segments}, named by the group, with their number")
+        self.stack.setChecked(mem.get("stack", True) is not False)
+        for w in (self.together, self.stack):
+            w.toggled.connect(self._name_changed)
+            row.addWidget(w)
+        row.addStretch(1)
+        lay.addLayout(row)
+        self.together.toggled.connect(self.preview)
         self.name_preview = QLabel()
         self.name_preview.setWordWrap(True)
         self.name_preview.setTextInteractionFlags(Qt.TextSelectableByMouse)
@@ -2169,6 +2207,13 @@ class ExportDialog(RemembersSize, QDialog):
                 out.append(item.itemAt(0).widget().text())
         return out
 
+    def _insert_segment_var(self, i: int) -> None:
+        name = self.segment_var.itemData(i)
+        self.segment_var.setCurrentIndex(0)
+        if name is not None:
+            self.segment.insert("{" + name + "}")
+            self.segment.setFocus()
+
     def _insert_var(self, i: int) -> None:
         name = self.name_var.itemData(i)
         self.name_var.setCurrentIndex(0)
@@ -2197,7 +2242,8 @@ class ExportDialog(RemembersSize, QDialog):
         sheets = project.sheets if self.sheets.currentData() != "current" else [sheet]
         group = self.group or next(iter({t.group for t in project.toolpaths if t.id in self.chosen() and t.group}), "")
         return naming.values_for(project, sheet, index, len(sheets), self.current_post().name, group, tps,
-                                 revision=self._revision_for(sheet))
+                                 revision=self._revision_for(sheet), segment=self.segment.text() or naming.DEFAULT_SEGMENT,
+                                 segment_sep=self.segment_sep.text(), stack=self.stack.isChecked())
 
     def file_stem(self, index: int, sheet, tps) -> str | None:
         """The name of a file of one sheet holding ``tps`` by the prefixes."""
@@ -2267,8 +2313,13 @@ class ExportDialog(RemembersSize, QDialog):
                 if self.list.item(i).checkState() == Qt.Checked}
 
     def toolpaths(self, sheet):
+        """The calculated toolpaths of the sheet that are saved, in the order they are cut (a group together, when asked)."""
+        from ..post import naming
         ids = self.chosen()
-        return [tp for tp in self.ctrl.sheet_toolpaths(sheet, enabled_only=False) if tp.def_id in ids]
+        tps = [tp for tp in self.ctrl.sheet_toolpaths(sheet, enabled_only=False) if tp.def_id in ids]
+        if getattr(self, "together", None) is not None and self.together.isChecked():
+            tps = naming.group_order(self.ctrl.project, tps)
+        return tps
 
     def jobs(self, sheet) -> list[tuple[str, object, list]]:
         """``[(file suffix, sheet, toolpaths)]``: the sheet, or one entry per tile."""
@@ -2392,6 +2443,8 @@ class ExportDialog(RemembersSize, QDialog):
         prev = s.recall("export_gcode").get("last") if last is None else last
         s.remember("export_gcode", {"sheets": self.sheets.currentData(), "tile": self.tile.isChecked(),
                                     "name_parts": self.name_parts(), "name_sep": self.name_sep.text(),
+                                    "segment": self.segment.text(), "segment_sep": self.segment_sep.text(),
+                                    "together": self.together.isChecked(), "stack": self.stack.isChecked(),
                                     "folder": self.folder.text().strip(), "subfolder": self.subfolder.text(),
                                     "rev_scope": self.rev_scope.currentData(), "rev_auto": self.rev_auto.isChecked(),
                                     "last": prev,

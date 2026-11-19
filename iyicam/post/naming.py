@@ -6,6 +6,7 @@ separator (``_``). Used by the Save G-code window of the desktop program, the pa
 from __future__ import annotations
 
 import datetime as _dt
+import math
 import re
 
 DEFAULT_PARTS = ["{project_name}"]
@@ -29,6 +30,8 @@ _V = [
     ("material_thickness", "Thickness of the material", "Malzeme kalınlığı"),
     ("sheet_width", "Width of the sheet", "Sac genişliği"), ("sheet_height", "Height of the sheet", "Sac yüksekliği"),
     ("date", "Date (2026-11-18)", "Tarih (2026-11-18)"), ("time", "Time (0930)", "Saat (0930)"),
+    ("segments", "A part for every toolpath of the file, a group stacked into one (see the part of a toolpath)",
+     "Dosyadaki her takım yolu için bir parça; bir grup tek parçada toplanır (takım yolu parçasına bak)"),
 ]
 VARIABLES: list[dict] = [{"name": n, "text": {"en": en, "tr": tr}} for n, en, tr in _V]
 NAMES = {v["name"] for v in VARIABLES}
@@ -181,7 +184,8 @@ def joined(items) -> str:
 
 
 def values_for(project, sheet, index: int, count: int, post_name: str, group: str, tps, revision=None,
-               now: _dt.datetime | None = None) -> dict:
+               now: _dt.datetime | None = None, segment: str | None = None, segment_sep: str | None = None,
+               stack: bool = True) -> dict:
     """The variables for a file holding the calculated toolpaths ``tps`` (every toolpath of the file counts: names, tools
     and depths are joined with ``+``, the safe Z is the highest)."""
     defs = [project.toolpath(t.def_id) for t in tps]
@@ -193,6 +197,8 @@ def values_for(project, sheet, index: int, count: int, post_name: str, group: st
               "toolpath_name": joined(toolpath_name(project, d, sheet) if d is not None else t.name for d, t in zip(defs, tps)),
               "cut_depth": joined(float(d.params["cut_depth"]) for d in defs
                                   if d is not None and isinstance(d.params.get("cut_depth"), (int, float)))})
+    v["segments"] = segments(project, sheet, list(tps), segment or DEFAULT_SEGMENT,
+                             DEFAULT_SEGMENT_SEP if segment_sep is None else segment_sep, stack)
     return v
 
 
@@ -241,3 +247,113 @@ def toolpath_name(project, tdef, sheet=None) -> str:
         return name
     return _ANY.sub(lambda m: field_text(m.group(1), vals) if all(n in TOOLPATH_NAMES for n in _IDENT.findall(_split(m.group(1))[0]))
                     else m.group(0), name)
+
+
+
+# ------------------------------------------------------------------------------------------------------------------
+# a file name made of the toolpaths of the file: {segments}
+#
+# Every toolpath is a part of the name (``i_oyma2s1z10``); the toolpaths of a group that are alike (same side, depths, safe
+# Z, tool) are stacked into one part with how many there are (``i_oyma2s1z10m3``). A part is written by the part template:
+# its {variables} and its [optional pieces], a piece in brackets being left out when a variable in it has no value
+# (``[s{step}]`` only when the cut takes more than one pass, ``[m{count}]`` only for more than one toolpath).
+
+DEFAULT_SEGMENT = "{side}_{name}{depth}[s{step}]z{safe_z}[m{count}]"
+DEFAULT_SEGMENT_SEP = "-"
+SEGMENT_VARIABLES: list[dict] = [{"name": n, "text": {"en": en, "tr": tr}} for n, en, tr in [
+    ("side", "i inside, o outside, a along the line (p pocket, d drill, v v-carve, e engrave ...)",
+     "i iç, o dış, a çizgi üstü (p cep, d delik, v v-oyma, e gravür ...)"),
+    ("name", "Name of the toolpath (of the group, for a stack)", "Takım yolunun adı (yığında grubun adı)"),
+    ("depth", "Depth (a cut through: the thickness)", "Derinlik (boydan boya: kalınlık)"),
+    ("final_depth", "Depth the tool goes to (with the cut below the bottom)", "Takımın indiği derinlik (alt taşma ile)"),
+    ("step", "Depth of a pass, only when there is more than one", "Paso derinliği, birden fazla paso varsa"),
+    ("stepdown", "Depth of a pass", "Paso derinliği"), ("passes", "How many passes", "Kaç paso"),
+    ("safe_z", "Safe Z", "Güvenli Z"), ("count", "How many toolpaths are stacked, only when more than one",
+                                           "Kaç takım yolu toplandı, birden fazlaysa"),
+    ("tool_diameter", "Diameter of the tool", "Takımın çapı"), ("tool_number", "Number of the tool", "Takımın numarası"),
+    ("group", "Group", "Grup"), ("feed_rate", "Feed rate (mm/min)", "İlerleme hızı (mm/dk)"),
+]]
+SEGMENT_NAMES = {v["name"] for v in SEGMENT_VARIABLES}
+_SIDE_OF_OP = {"pocket": "p", "drill": "d", "vcarve": "v", "engrave": "e", "fluting": "f", "inlay": "n"}
+_OPTIONAL = re.compile(r"\[([^\[\]]*)\]")
+
+
+def group_order(project, tps: list) -> list:
+    """The toolpaths of a file with the ones of a group one after the other (where the first of them is): a group is cut
+    together. Toolpaths without a group keep their place."""
+    out, placed = [], set()
+    for tp in tps:
+        if id(tp) in placed:
+            continue
+        d = project.toolpath(tp.def_id)
+        g = d.group if d is not None else ""
+        same = [x for x in tps if id(x) not in placed and g and (project.toolpath(x.def_id) or d).group == g] if g else [tp]
+        for x in same:
+            out.append(x)
+            placed.add(id(x))
+    return out
+
+
+def _segment_values(project, sheet, tdef, tp) -> dict:
+    from ..core.params import resolve
+    def num(v):
+        return "" if v is None else f"{float(v):g}"
+    params = tdef.params if tdef is not None else {}
+    op_cls = project_op(tdef)
+    v = resolve(op_cls.params(), params) if op_cls is not None else dict(params)
+    thick = project.sheet_thickness(sheet)
+    if v.get("through"):
+        depth, final = thick, thick + float(v.get("overcut") or 0.0)
+    else:
+        depth = final = float(v.get("cut_depth") or 0.0)
+    tool = tp.tool if tp is not None else tdef.tool
+    sd = float(v.get("stepdown") or 0.0) or max(0.01, float(tool.stepdown or 0.0) or final or 1.0)
+    start = float(v.get("start_depth") or 0.0)
+    passes = max(1, math.ceil((final - start) / sd - 1e-9)) if final > start else 0
+    side = {"outside": "o", "inside": "i", "on": "a"}.get(v.get("side"), "") if "side" in v else ""
+    side = side or _SIDE_OF_OP.get(tdef.op if tdef is not None else "", (tdef.op[:1] if tdef is not None else ""))
+    safe = tdef.safe_z if tdef is not None and tdef.safe_z is not None else project.material.safe_z
+    return {"side": side, "name": toolpath_name(project, tdef, sheet) if tdef is not None else (tp.name if tp else ""),
+            "depth": num(depth), "final_depth": num(final), "stepdown": num(sd), "step": num(sd) if passes > 1 else "",
+            "passes": str(passes), "safe_z": num(safe), "count": "", "tool_diameter": num(tool.diameter),
+            "tool_number": str(tool.number), "group": (tdef.group if tdef is not None else "") or "",
+            "feed_rate": num(tool.feed_rate)}
+
+
+def project_op(tdef):
+    if tdef is None:
+        return None
+    from ..core.registry import REGISTRY
+    return REGISTRY.operations.get(tdef.op)
+
+
+def render_segment(template: str, vals: dict) -> str:
+    """One part: the [optional pieces] whose variables have a value, then the {variables} (sums and formats as anywhere)."""
+    def opt(m):
+        names = [n for f in _ANY.findall(m.group(1)) for n in _IDENT.findall(_split(f)[0])]
+        return m.group(1) if all(str(vals.get(n, "")) not in ("", "0") for n in names) else ""
+    text = _OPTIONAL.sub(opt, template or DEFAULT_SEGMENT)
+    return _ANY.sub(lambda m: field_text(m.group(1), vals), text)
+
+
+def segments(project, sheet, tps: list, template: str = DEFAULT_SEGMENT, sep: str = DEFAULT_SEGMENT_SEP,
+             stack: bool = True) -> str:
+    """The parts of the toolpaths ``tps`` (in their order) joined by ``sep``; with ``stack`` the toolpaths of a group that
+    are alike and come one after the other are one part, named by the group, with their number (``count``)."""
+    parts: list[tuple[str, dict, int]] = []         # (key of what is alike, values, how many)
+    for tp in tps:
+        d = project.toolpath(tp.def_id)
+        v = _segment_values(project, sheet, d, tp)
+        key = (v["group"], v["side"], v["depth"], v["final_depth"], v["stepdown"], v["safe_z"], v["tool_diameter"])
+        if stack and v["group"] and parts and parts[-1][0] == key:
+            k, pv, n = parts[-1]
+            parts[-1] = (k, pv, n + 1)
+            continue
+        parts.append((key, v, 1))
+    out = []
+    for _k, v, n in parts:
+        v = dict(v)
+        if n > 1:
+            v["count"], v["name"] = str(n), v["group"] or v["name"]
+        out.append(clean(render_segment(template, v)))
+    return (sep if sep is not None else DEFAULT_SEGMENT_SEP).join(x for x in out if x)
