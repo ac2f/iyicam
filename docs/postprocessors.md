@@ -210,6 +210,17 @@ The desktop window, the page and the engine write the same name.
 The order of the blocks in a file is always: start of the file, first tool / tool change, start of a toolpath, its
 moves, end of a toolpath (and so on for every toolpath), end of the file.
 
+## Arcs: straight lines by default (safe to pause)
+
+By default (*Arcs as short straight lines (safe)*, `safe_arcs`, on) no G2 / G3 is written: every arc is written as short
+straight G1 lines that stay within the arc tolerance (`arc_tolerance`, 0.005 mm) of it, the way ArtCAM's simple files are.
+A G2 / G3 can be read by a controller in another way than it was meant: Mach3, paused in the middle of an arc chain and
+started again, or with its IJ mode put back to *absolute* by a reset, takes the centre of the arc from somewhere else and cuts
+a growing circle (a spiral) that is in no preview. With straight lines there is nothing to read another way.
+
+With the option off, arcs are G2 / G3 as *Arcs* says, and every arc line also carries its IJ mode (`G91.1 G3 X.. Y.. I.. J..`,
+`arc_mode_each`, on), so that a controller that lost the mode still puts the centre in the right place.
+
 ## The first move of a file
 
 A job that goes to the home Z at the start of the file (a line like `G0 Z{home_z}` in the *Start of the file* block) and then

@@ -365,7 +365,7 @@ def _posts_that_write_arcs():
 def test_the_explanation_of_every_arc_the_engine_writes_is_a_true_circle(host, opts):
     """The explainer reads the G-code the way a controller does: the end of every arc must lie on the circle it says
     (the centre and radius it gives), whatever the post's way of writing numbers, units and arcs."""
-    d = draft_from(host, "linuxcnc", options=opts)
+    d = draft_from(host, "linuxcnc", options={**opts, "safe_arcs": False})
     if opts.get("ijk") == "absolute":              # (what the post writes, the header must tell the controller)
         d["blocks"]["header"] = d["blocks"]["header"].replace("G91.1", "G90.1")
         assert E.clean_draft(d)[1] == []

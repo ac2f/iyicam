@@ -71,7 +71,10 @@ def simulate_arcs(text, decimals_tol=2e-3):
 @pytest.mark.parametrize("post_id", sorted(p.stem for p in BUILTIN_DIR.glob("*.toml")))
 def test_every_builtin_post_generates_consistent_gcode(post_id):
     p, s, tps = job_project()
-    post = REGISTRY.posts[post_id]
+    base = REGISTRY.posts[post_id]
+    safe = post_toolpaths(p, s, tps, base, "job")             # (by default: arcs as straight lines, no G2 / G3 at all)
+    assert not any(re.search(r"(?<![A-Z\d.])G0?[23](?!\d)", t) for _, t in safe), "G2 / G3 in a safe file"
+    post = type(base)({**base.definition, "options": {**base.definition.get("options", {}), "safe_arcs": False}})
     files = post_toolpaths(p, s, tps, post, "job")
     assert files
     arcs = 0
@@ -134,7 +137,7 @@ def test_arc_r_mode_and_splitting():
              ArcMove(0, -10, -1, 0, 0, True, 500)]
     tp = Toolpath("t", end_mill(), moves)
     from iyicam.post.engine import PostJob
-    post = PostProcessor({"id": "r", "options": {"arcs": "r", "arc_max_sweep": 360}})
+    post = PostProcessor({"id": "r", "options": {"arcs": "r", "arc_max_sweep": 360, "safe_arcs": False}})
     text = post.generate(PostJob([tp], p, s))
     rlines = [l for l in text.splitlines() if re.search(r"R-?\d", l)]
     assert len(rlines) == 5  # R arcs are split into quarter circles: 180 -> 2, 270 -> 3
@@ -249,3 +252,22 @@ def test_rotary_wrapping_writes_angles(mode):
     from iyicam.core.document import project_from_dict, project_to_dict
     q = project_from_dict(project_to_dict(p)).material
     assert q.rotary and q.rotary_diameter == 50
+
+
+def test_arcs_are_straight_lines_by_default_and_the_ij_mode_is_on_every_arc_line_otherwise():
+    """A G2 / G3 that the controller reads another way than it was meant (paused in the middle and gone on, the IJ mode put
+    back by a reset) cuts a spiral: by default no arc is written at all; with arcs on, every arc line says its IJ mode."""
+    p, s, _ = make_project([])
+    moves = [Rapid(10, 0, 5), Feed(10, 0, -1, 500), ArcMove(-10, 0, -1, 0, 0, False, 500),
+             ArcMove(10, 0, -1, 0, 0, False, 500)]
+    tp = Toolpath("t", end_mill(), moves)
+    from iyicam.post.engine import PostJob
+    safe = PostProcessor({"id": "s"}).generate(PostJob([tp], p, s))
+    assert not re.search(r"(?<![A-Z\d.])G0?[23](?!\d)", safe)
+    pts = [q for q in (tuple(map(float, m)) for m in re.findall(r"X(-?[\d.]+) Y(-?[\d.]+)", safe)) if q != (0.0, 0.0)]  # (not home)
+    assert len(pts) > 40 and all(abs(math.hypot(x, y) - 10) < 0.0015 for x, y in pts)     # (every point on the circle, to the decimals)
+    on = PostProcessor({"id": "a", "options": {"safe_arcs": False}}).generate(PostJob([tp], p, s))
+    arc_lines = [l for l in on.splitlines() if re.search(r"G[23] ", l)]
+    assert arc_lines and all(l.startswith("G91.1 G") for l in arc_lines)
+    plain = PostProcessor({"id": "b", "options": {"safe_arcs": False, "arc_mode_each": False}}).generate(PostJob([tp], p, s))
+    assert "G91.1" not in plain

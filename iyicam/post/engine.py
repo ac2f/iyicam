@@ -39,6 +39,9 @@ DEFAULT_OPTIONS: dict[str, Any] = {
     "integer_point": False,      # write "10." instead of "10" (Fanuc style)
     "g_leading_zero": False,     # G00/G01 instead of G0/G1
     "arcs": "ijk",               # ijk | r | none
+    "safe_arcs": True,           # arcs written as short straight lines: nothing for the controller to read wrong (pausing in
+                                 # the middle of an arc and going on, an IJ mode lost by a reset ...); off: G2 / G3 as "arcs" says
+    "arc_mode_each": True,       # with G2 / G3 and I J: the IJ mode (G91.1 / G90.1) on every arc line, not only at the start
     "ijk": "incremental",        # incremental | absolute
     "arc_max_sweep": 180.0,      # degrees, larger arcs are split
     "arc_min_radius": 0.01,
@@ -591,7 +594,7 @@ class PostProcessor:
             self.linear(m.x, m.y, m.z, m.f, tv)
             return
         helical = abs(m.z - sz) > 1e-9
-        if (o["arcs"] == "none" or r * self._k < o["arc_min_radius"] or r * self._k > o["arc_max_radius"]
+        if (o["arcs"] == "none" or o["safe_arcs"] or r * self._k < o["arc_min_radius"] or r * self._k > o["arc_max_radius"]
                 or (helical and not o["helical"]) or self._rotary):  # wrapped arcs are no circles
             self._linearize(sx, sy, sz, m, r, sweep, tv)
             return
@@ -611,7 +614,13 @@ class PostProcessor:
                 x, y, z = m.cx + r * math.cos(a), m.cy + r * math.sin(a), sz + (m.z - sz) * i / n
             px, py = self._pos[0], self._pos[1]
             w = self._coords(x, y, z, force_xy=o["arc_xy_always"])
-            words = {**w, "G": self._motion(2 if m.cw else 3), "F": self._feed_word(m.f), "N": "",
+            g = self._motion(2 if m.cw else 3)
+            if o["arcs"] != "r" and o["arc_mode_each"]:
+                # the IJ mode with every arc: a controller that lost it (a reset, a stop and go on) cannot read the centre
+                # as absolute (or as incremental) where it is not
+                self._last["G"] = self.gcode(2 if m.cw else 3)
+                g = ("G90.1 " if o["ijk"] == "absolute" else "G91.1 ") + self.gcode(2 if m.cw else 3)
+            words = {**w, "G": g, "F": self._feed_word(m.f), "N": "",
                      "I": "", "J": "", "K": "", "R": ""}
             if o["arcs"] == "r":
                 sw = abs(sweep) / n

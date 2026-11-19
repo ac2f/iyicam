@@ -53,7 +53,7 @@ GROUPS = [
 
 
 #: what is changed often (the rest is behind "More options" in the editors); the same for the blocks of text
-COMMON_OPTIONS = {"units", "decimals", "arcs", "ijk", "comments", "line_numbers", "drill_cycles", "split_by_tool",
+COMMON_OPTIONS = {"units", "decimals", "arcs", "safe_arcs", "ijk", "comments", "line_numbers", "drill_cycles", "split_by_tool",
                   "tool_change_first"}
 COMMON_BLOCKS = {"header", "footer", "first_tool_change", "tool_change"}
 
@@ -133,6 +133,18 @@ OPTIONS: list[dict] = [
        "The controller keeps the last one.", "Kontrolcü sonuncusunu hatırlar."),
     _o("modal_feed", "lines", "bool", "Write F only when it changes", "F yalnız değişince yazılsın",
        "Off: F on every line that cuts.", "Kapalıysa kesen her satırda F yazılır."),
+    _o("safe_arcs", "lines", "bool", "Arcs as short straight lines (safe)", "Yayları kısa düz çizgi yaz (güvenli)",
+       "On (the default): no G2 / G3 is written, every arc is short straight lines (within the arc tolerance), the way ArtCAM's "
+       "simple files are. Nothing can be read wrong by the controller: a pause in the middle of an arc and going on, an IJ mode "
+       "that a reset put back, a plane that changed. Off: arcs are G2 / G3 as the other options say.",
+       "Açık (varsayılan): G2 / G3 yazılmaz, her yay kısa düz çizgilerle yazılır (yay toleransı içinde), ArtCAM'in sade "
+       "dosyaları gibi. Kontrolcünün yanlış okuyacağı bir şey kalmaz: yayın ortasında durdurup devam etmek, bir sıfırlamanın geri "
+       "getirdiği I J modu, değişen düzlem. Kapalıysa yaylar diğer seçeneklerin dediği gibi G2 / G3 olur."),
+    _o("arc_mode_each", "lines", "bool", "IJ mode on every arc line", "Her yay satırında I J modu",
+       "With G2 / G3 and I J: G91.1 (or G90.1) is written on every arc line, so a controller that lost the mode cannot put "
+       "the centre somewhere else and cut a spiral.",
+       "G2 / G3 ve I J ile: her yay satırına G91.1 (ya da G90.1) yazılır; modu kaybeden bir kontrolcü merkezi başka yere koyup "
+       "spiral kesemez."),
     _o("rapid_z_first", "lines", "bool", "Rapid: lift first, go down last", "Hızlı harekette: önce kaldır, en son in",
        "A rapid that changes Z and X Y is split so the tool never dives sideways into the material.",
        "Hem Z'yi hem X Y'yi değiştiren hızlı hareket bölünür; kesici malzemeye yandan dalmaz."),

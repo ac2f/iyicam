@@ -699,7 +699,8 @@ def test_the_checks_see_damaged_gcode():
     }
     for reason, text in damage.items():
         assert text != good, reason
-        with pytest.raises(AssertionError, match=re.escape(reason)):
+        alt = {"rapid down into uncut material": "rapid at Z-3.64"}.get(reason)     # (caught first as a rapid below the safe Z)
+        with pytest.raises(AssertionError, match=re.escape(reason) + ("|" + re.escape(alt) if alt else "")):
             verify_profile([text], opt, inch, params, sequence, tool, parts)
     # cut the other way round than asked
     p, s, parts, tool, tps = profile_job({"through": True, "direction": "conventional"}, sequence)

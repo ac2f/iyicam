@@ -1,5 +1,6 @@
 """The desktop post editor (a form for every option, the blocks, the file, a preview you can click), the G-code you
 can click in *Save G-code*, and the window that says what I J K are."""
+import re
 import tomllib
 
 import pytest
@@ -176,10 +177,10 @@ def test_the_preview_can_be_the_current_sheet_and_a_click_explains_a_line(rwin):
     dlg.source.setCurrentIndex(dlg.source.findData("sheet"))
     assert "Panel" in dlg.out.toPlainText() or "p " in dlg.out.toPlainText() or "G1" in dlg.out.toPlainText()
     dlg.source.setCurrentIndex(dlg.source.findData("sample"))
-    i = line_with(dlg.view, "G3 ")
-    click_line(dlg.view, i)
-    note = dlg.view.note.toPlainText()
-    assert "counter-clockwise" in note and "centre of the circle" in note and "I" in note and "radius" in note
+    # (arcs are written as short straight lines by default: no G2 / G3 for a controller to read wrong)
+    assert not re.search(r"(?<![A-Z\d.])G0?[23] ", dlg.out.toPlainText())
+    click_line(dlg.view, line_with(dlg.view, "G1 "))
+    assert "straight line" in dlg.view.note.toPlainText()
     click_line(dlg.view, line_with(dlg.view, "M3"))
     assert "Spindle" in dlg.view.note.toPlainText()
     assert robot.problems() == []
@@ -195,10 +196,9 @@ def test_save_gcode_has_the_editor_and_explains_lines(rwin):
     dlg.post.setCurrentIndex(dlg.post.findData("mach3"))
     dlg.preview()
     text = dlg.text.toPlainText()
-    assert "G3" in text or "G2" in text
-    i = line_with(dlg.view, "G2 ") if "G2 " in text else line_with(dlg.view, "G3 ")
-    click_line(dlg.view, i)
-    assert "centre of the circle" in dlg.view.note.toPlainText()
+    assert not re.search(r"(?<![A-Z\d.])G0?[23] ", text)                     # (the safe file: no arcs)
+    click_line(dlg.view, line_with(dlg.view, "G1 "))
+    assert "straight line" in dlg.view.note.toPlainText()
     # the editor, opened from here: a post made there is chosen when it closes
     n = dlg.post.count()
     robot.hook = lambda d: d.new() if isinstance(d, PostEditorDialog) else None
