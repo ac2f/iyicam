@@ -669,25 +669,24 @@ def op_gcode(payload: dict, ctl: JobControl | None = None) -> dict:
         tps = sheet_toolpaths(project, res, sheet)
         if not tps:
             continue
-        if parts is not None:
-            from ..post import naming
-            t0 = tps[0]
-            d0 = project.toolpath(t0.def_id)
-            by_group = payload.get("revision_by_group") if isinstance(payload.get("revision_by_group"), dict) else {}
-            rev = by_group.get(sheet.group, payload.get("revision")) if sheet.group else payload.get("revision")
-            vals = naming.values(project.name, sheet.name, i, len(project.sheets), post.name,
-                                 str(payload.get("group") or (next(iter(groups)) if len(groups) == 1 else "")),
-                                 len(tps), t0.tool.number, t0.tool.name, project.sheet_thickness(sheet), sheet.width,
-                                 sheet.height, tool_diameter=t0.tool.diameter, toolpath_name=d0.name if d0 else "",
-                                 safe_z=(d0.safe_z if d0 and d0.safe_z is not None else project.material.safe_z),
-                                 cut_depth=(d0.params.get("cut_depth") if d0 else None), sheet_group=sheet.group, revision=rev)
-            name = naming.render(parts, vals, sep)
-            # (a job with several sheets needs a number in the name or the files would overwrite each other)
-            base = f"{name}_{i}" if many and not naming.uses(parts, "sheet_number", "sheet_name") else name
-        else:
-            base = f"{stem}_{i}" if many else stem
         for tp in tps:
             warnings += [w for w in tp.warnings if w not in warnings]
+        if parts is not None:
+            from ..post import naming
+            from ..post.export import named_files
+            by_group = payload.get("revision_by_group") if isinstance(payload.get("revision_by_group"), dict) else {}
+            rev = by_group.get(sheet.group, payload.get("revision")) if sheet.group else payload.get("revision")
+            grp = str(payload.get("group") or (next(iter(groups)) if len(groups) == 1 else ""))
+
+            def stem_of(g, sheet=sheet, i=i, rev=rev, grp=grp):
+                vals = naming.values_for(project, sheet, i, len(project.sheets), post.name, grp, g, rev)
+                name = naming.render(parts, vals, sep)
+                # (a job with several sheets needs a number in the name or the files would overwrite each other)
+                return f"{name}_{i}" if many and not naming.uses(parts, "sheet_number", "sheet_name") else name
+            for fstem, text in named_files(project, sheet, tps, post, stem_of, program):
+                files.append({"name": f"{fstem}.{post.extension}", "mime": "text/plain", "text": text, "sheet": sheet.id})
+            continue
+        base = f"{stem}_{i}" if many else stem
         for suffix, text in post_toolpaths(project, sheet, tps, post, base, program):
             files.append({"name": f"{base}{suffix}.{post.extension}", "mime": "text/plain", "text": text,
                           "sheet": sheet.id})

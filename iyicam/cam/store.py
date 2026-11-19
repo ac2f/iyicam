@@ -26,6 +26,32 @@ def signature(project: Project) -> str:
     return hashlib.sha1(json.dumps(d, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
+def toolpath_signature(project: Project, tdef) -> str:
+    """What one toolpath depends on: its own settings (not its name, whether it is on or its group), the material and, on every
+    sheet it is calculated on, the sheet and the vectors it machines. A change anywhere else leaves it as it is."""
+    from ..core.document import toolpath_to_dict, vector_to_dict
+    from .job import sheets_for
+    t = toolpath_to_dict(tdef)
+    for k in ("name", "enabled", "group"):
+        t.pop(k, None)
+    seq = dict(t.get("sequence") or {})
+    if seq.get("auto_order", True):
+        seq.pop("order", None)                  # (an automatic order is what the calculation writes back: not a setting)
+    t["sequence"] = seq
+    sheets = []
+    for sh in sheets_for(project, tdef):
+        machined = []
+        for o in project.vectors_for(tdef, sh):
+            d = vector_to_dict(o)
+            d.pop("name", None)
+            machined.append(d)
+        sheets.append({"id": sh.id, "w": sh.width, "h": sh.height, "t": project.sheet_thickness(sh),
+                       "outline": sh.outline, "machined": machined})
+    m = dict(vars(project.material))
+    blob = json.dumps([t, m, sheets], sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha1(blob.encode()).hexdigest()
+
+
 def _r(v: float) -> float:
     return round(float(v), 9)
 

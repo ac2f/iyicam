@@ -365,9 +365,21 @@ class ToolpathsPanel(DocPanel):
         lay.setContentsMargins(2, 2, 2, 2)
         self.tree = QTreeWidget()
         self.tree.setHeaderLabels(["Toolpath", "Group", "Tool", "Time"])
-        self.tree.setRootIsDecorated(False)
+        self.tree.setRootIsDecorated(True)                 # (the toolpaths of a group are stacked under it)
         self.tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        self.tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
+        h = self.tree.header()
+        h.setStretchLastSection(False)
+        for i in range(4):
+            h.setSectionResizeMode(i, QHeaderView.Interactive)   # (every column can be made wider or narrower)
+        mem = ctrl.settings.recall("toolpaths_panel")
+        widths = mem.get("widths")
+        for i, w in enumerate(widths if isinstance(widths, list) else [190, 80, 90, 60]):
+            if isinstance(w, int) and 20 <= w <= 2000 and i < 4:
+                self.tree.setColumnWidth(i, w)
+        h.sectionResized.connect(self._widths_changed)
+        self._folded: set[str] = {g for g in (mem.get("folded") or []) if isinstance(g, str)}
+        self.tree.itemCollapsed.connect(lambda it: self._fold(it, True))
+        self.tree.itemExpanded.connect(lambda it: self._fold(it, False))
         self.tree.itemChanged.connect(self._item_changed)
         self.tree.itemDoubleClicked.connect(lambda *_: self.edit())
         self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -427,8 +439,43 @@ class ToolpathsPanel(DocPanel):
     def _update_material(self) -> None:
         self.material.setText(material_summary(self.ctrl))
 
+    GROUP_ROLE = Qt.UserRole + 1
+
     def selected_ids(self) -> list[str]:
-        return [it.data(0, Qt.UserRole) for it in self.tree.selectedItems()]
+        """The selected toolpaths (a selected group heading stands for every toolpath in it)."""
+        out = []
+        for it in self.tree.selectedItems():
+            if it.data(0, self.GROUP_ROLE):
+                out += [it.child(k).data(0, Qt.UserRole) for k in range(it.childCount())]
+            elif it.data(0, Qt.UserRole):
+                out.append(it.data(0, Qt.UserRole))
+        return list(dict.fromkeys(out))
+
+    def _rows(self):
+        """Every toolpath row, in groups or not."""
+        for i in range(self.tree.topLevelItemCount()):
+            it = self.tree.topLevelItem(i)
+            if it.data(0, self.GROUP_ROLE):
+                for k in range(it.childCount()):
+                    yield it.child(k)
+            else:
+                yield it
+
+    def _widths_changed(self, *_) -> None:
+        if getattr(self, "_updating", False):
+            return
+        mem = dict(self.ctrl.settings.recall("toolpaths_panel"))
+        mem["widths"] = [self.tree.columnWidth(i) for i in range(4)]
+        self.ctrl.settings.remember("toolpaths_panel", mem, save=False)
+
+    def _fold(self, it, folded: bool) -> None:
+        g = it.data(0, self.GROUP_ROLE)
+        if not g or getattr(self, "_updating", False):
+            return
+        (self._folded.add if folded else self._folded.discard)(g)
+        mem = dict(self.ctrl.settings.recall("toolpaths_panel"))
+        mem["folded"] = sorted(self._folded)
+        self.ctrl.settings.remember("toolpaths_panel", mem, save=False)
 
     def refresh(self) -> None:
         if self._changing:   # called from inside the change of one of the rows: rebuild when that is over
@@ -440,6 +487,9 @@ class ToolpathsPanel(DocPanel):
         total = PathStats()
         problems = 0
         rate = self.ctrl.project.material.machine()
+        old_ids = set(getattr(self.ctrl, "stale_ids", set())) if self.ctrl.stale else set()
+        heads: dict[str, QTreeWidgetItem] = {}
+        times: dict[str, float] = {}
         for t in self.ctrl.project.toolpaths:
             res = [r for r in self.ctrl.results_for(t) if r.toolpaths or r.error or r.warnings]
             here = self.ctrl.results.get((t.id, self.ctrl.sheet_id))
@@ -456,17 +506,45 @@ class ToolpathsPanel(DocPanel):
             op = self.ctrl.registry.operations.get(t.op)
             msgs = [r.error for r in res if r.error] + [w for r in res for w in r.warnings]
             tip = f"{op.label if op else t.op}\n{t.tool.describe()}"
+            if t.id in old_ids:
+                tip += "\n\nIts vectors or settings changed since it was calculated: F5 calculates it again."
+                it.setForeground(0, QColor("#c00000"))
             if msgs:
                 tip += "\n\n" + "\n".join(dict.fromkeys(msgs))
-                it.setForeground(0, QColor("#b35806" if not any(r.error for r in res) else "#c00000"))
+                if t.id not in old_ids:
+                    it.setForeground(0, QColor("#b35806" if not any(r.error for r in res) else "#c00000"))
                 problems += 1
             it.setToolTip(0, tip)
-            self.tree.addTopLevelItem(it)
+            if t.group:
+                head = heads.get(t.group)
+                if head is None:                      # (a heading for the group: its toolpaths are stacked under it)
+                    head = QTreeWidgetItem([t.group, "", "", ""])
+                    head.setData(0, self.GROUP_ROLE, t.group)
+                    f = QFont(head.font(0))
+                    f.setBold(True)
+                    head.setFont(0, f)
+                    head.setFlags(head.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsAutoTristate)
+                    self.tree.addTopLevelItem(head)
+                    heads[t.group] = head
+                head.addChild(it)
+                if t.enabled and here and here.toolpaths:
+                    times[t.group] = times.get(t.group, 0.0) + st.time_s
+            else:
+                self.tree.addTopLevelItem(it)
             if t.id in sel:
                 it.setSelected(True)
+        for g, head in heads.items():
+            n = head.childCount()
+            head.setText(0, f"{g}  ({n})")
+            head.setText(3, format_time(times[g]) if times.get(g) else "")
+            head.setToolTip(0, f"Group {g}: {n} toolpath(s). Tick to switch them all on or off; right click for the group.")
+            head.setExpanded(g not in self._folded)
+            if any(head.child(k).data(0, Qt.UserRole) in old_ids for k in range(n)):
+                head.setForeground(0, QColor("#c00000"))
         txt = f"Sheet total: {format_time(total.time_s)}"
         if self.ctrl.stale:
-            txt += "  —  <b>toolpaths need recalculating</b>"
+            txt += (f"  —  <b>{len(old_ids)} toolpath(s) need recalculating</b> (red)" if old_ids
+                    else "  —  <b>toolpaths need recalculating</b>")
         if problems:
             txt += f"  —  {problems} with warnings (hover for details)"
         self.status.setText(txt)
@@ -475,6 +553,17 @@ class ToolpathsPanel(DocPanel):
 
     def _item_changed(self, it, col) -> None:
         if self._updating:
+            return
+        g = it.data(0, self.GROUP_ROLE)
+        if g:                                   # (the tick of a group heading: every toolpath of the group on or off)
+            state = it.checkState(0)
+            if state != Qt.PartiallyChecked:
+                self._changing = True
+                try:
+                    self._switch_group(g, state == Qt.Checked)
+                finally:
+                    self._changing = False
+                QTimer.singleShot(0, self.refresh)
             return
         t = self.ctrl.project.toolpath(it.data(0, Qt.UserRole))
         if t is not None:
@@ -560,8 +649,8 @@ class ToolpathsPanel(DocPanel):
 
     def _select_group(self, g: str) -> None:
         ids = set(self.ctrl.group_ids(g))
-        for i in range(self.tree.topLevelItemCount()):
-            it = self.tree.topLevelItem(i)
+        self.tree.clearSelection()
+        for it in self._rows():
             it.setSelected(it.data(0, Qt.UserRole) in ids)
 
     def _switch_group(self, g: str, on: bool) -> None:

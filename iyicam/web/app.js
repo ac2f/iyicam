@@ -706,6 +706,34 @@ const isSum = text => !/^\s*[-+]?\s*(\d+[.,]?\d*|[.,]\d+)([eE][+-]?\d+)?\s*$/.te
 
 /** A number box that takes sums. ``valueAsNumber`` gives the worked-out value (NaN when it is not a number), so the code that
  *  reads number boxes does not change; the sum is replaced by its value when the box is left or Enter is pressed. */
+/** a prefix field of a file name: ``expression[:format]`` (``revision:03`` three digits with zeros, ``tool_diameter:.1``),
+ *  the same rules as the engine's (post/naming.py) */
+const FIELD_SPEC = /^(0?)(\d{1,2})?(?:\.(\d))?$/;
+function splitField(f) {
+  const i = f.lastIndexOf(":");
+  if (i >= 0) { const spec = f.slice(i + 1).trim(); if (spec && FIELD_SPEC.test(spec)) return [f.slice(0, i).trim(), spec]; }
+  return [f.trim(), null];
+}
+function formatField(v, spec) {
+  const m = FIELD_SPEC.exec(spec || "");
+  let text = m && m[3] !== undefined ? v.toFixed(+m[3]) : (Math.abs(v - Math.round(v)) < 1e-9 ? String(Math.round(v)) : String(+v.toPrecision(6)));
+  if (m && m[2]) { const neg = text.startsWith("-"), body = neg ? text.slice(1) : text; text = (neg ? "-" : "") + body.padStart(+m[2] - (neg ? 1 : 0), "0"); }
+  return text;
+}
+function fieldText(f, vals) {
+  const [expr, spec] = splitField(f);
+  if (/^[A-Za-z_]\w*$/.test(expr)) {
+    const raw = String(vals[expr] ?? "");
+    if (spec === null) return raw;
+    const n = Number(raw.replace(",", "."));
+    if (raw !== "" && Number.isFinite(n)) return formatField(n, spec);
+    const m = FIELD_SPEC.exec(spec);
+    return raw && m && m[2] ? raw.padStart(+m[2], "0") : raw;
+  }
+  const sub = expr.replace(/[A-Za-z_]\w*/g, w => { const n = Number(String(vals[w] ?? "").replace(",", ".")); return vals[w] !== undefined && vals[w] !== "" && Number.isFinite(n) ? `(${n})` : "NaN"; });
+  const v = /NaN/.test(sub) ? NaN : calc(sub.replace(/:/g, "/"));
+  return Number.isFinite(v) ? formatField(v, spec) : "";
+}
 function calcInput(attrs = {}) {
   const el = h("input", { ...attrs, type: "text", autocomplete: "off", autocapitalize: "off", spellcheck: "false" });
   Object.defineProperty(el, "valueAsNumber", { get() { return calc(el.value); }, configurable: true });
@@ -1461,17 +1489,21 @@ function nameCard(p, sel, stem) {
   const known = new Set(nm.variables.map(v => v.name));
   const sample = () => {                                  // (a sample of the first file: the values the page knows)
     const sh = activeSheet(), now = new Date(), pad = n => String(n).padStart(2, "0");
+    const chosen = p.toolpaths.filter(x => sel.has(x.id) && x.enabled !== false);
+    const join = list => [...new Set(list.filter(v => v !== undefined && v !== null && v !== "").map(String))].join("+");
+    const safe = chosen.map(x => x.safe_z ?? (p.material || {}).safe_z).filter(v => v !== undefined && v !== null);
     const vals = { project_name: p.name || "job", sheet_name: sh ? sh.name : "", sheet_number: String(p.sheets.indexOf(sh) + 1), sheet_count: String(p.sheets.length),
-      post_name: (S.schema.posts.find(x => x.id === S.post) || {}).name || "", group: "", toolpath_count: String(sel.size),
-      tool_number: p.toolpaths[0] && p.toolpaths[0].tool ? String(p.toolpaths[0].tool.number) : "", tool_name: p.toolpaths[0] && p.toolpaths[0].tool ? p.toolpaths[0].tool.name : "",
+      post_name: (S.schema.posts.find(x => x.id === S.post) || {}).name || "", group: "", toolpath_count: String(chosen.length),
+      tool_number: join(chosen.map(x => x.tool && x.tool.number)), tool_name: join(chosen.map(x => x.tool && x.tool.name)),
       material_thickness: String((p.material || {}).thickness ?? ""), sheet_width: String(sh ? sh.width : ""), sheet_height: String(sh ? sh.height : ""),
       date: `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`, time: pad(now.getHours()) + pad(now.getMinutes()),
-      tool_diameter: p.toolpaths[0] && p.toolpaths[0].tool ? String(p.toolpaths[0].tool.diameter) : "", toolpath_name: p.toolpaths[0] ? p.toolpaths[0].name : "",
-      safe_z: String((p.material || {}).safe_z ?? ""), cut_depth: p.toolpaths[0] && p.toolpaths[0].params ? String(p.toolpaths[0].params.cut_depth ?? "") : "",
+      tool_diameter: join(chosen.map(x => x.tool && x.tool.diameter)), toolpath_name: join(chosen.map(x => x.name)),
+      safe_z: safe.length ? String(Math.max(...safe)) : String((p.material || {}).safe_z ?? ""),
+      cut_depth: join(chosen.map(x => x.params && typeof x.params.cut_depth === "number" ? x.params.cut_depth : null)),
       sheet_group: sh && sh.group ? sh.group : "", revision: String(revisionNow()) };
-    const bad = fn.parts.flatMap(x => [...x.matchAll(/\{(\w+)\}/g)].map(m => m[1])).filter(v => !known.has(v));
-    if (bad.length) return { bad };
-    const name = fn.parts.map(x => x.replace(/\{(\w+)\}/g, (_, v) => vals[v] ?? "").replace(/[^\w\-. ()+,=#@]+/g, "_").replace(/^[ ._]+|[ ._]+$/g, "")).filter(Boolean).join(fn.sep || "_");
+    const bad = fn.parts.flatMap(x => [...x.matchAll(/\{([^{}]*)\}/g)].flatMap(m => (splitField(m[1])[0].match(/[A-Za-z_]\w*/g) || []))).filter(v => !known.has(v));
+    if (bad.length) return { bad: [...new Set(bad)] };
+    const name = fn.parts.map(x => x.replace(/\{([^{}]*)\}/g, (_, f) => fieldText(f, vals)).replace(/[^\w\-. ()+,=#@]+/g, "_").replace(/^[ ._]+|[ ._]+$/g, "")).filter(Boolean).join(fn.sep || "_");
     return { name: name || "job" };
   };
   const prev = h("div", { class: "muted small", style: "margin-top:8px" });

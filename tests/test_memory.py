@@ -203,7 +203,7 @@ def test_toolpath_settings_and_tool_are_remembered_per_kind(sess):
     v = made["values"]
     assert made["tool"].diameter == 8.0 and made["tool"].feed_rate == 4321 and made["all_sheets"] is False
     assert (v["side"], v["overcut"], v["allowance"], v["tabs"], v["tab_count"], v["through"]) == \
-        ("inside", 0.7, 0.4, True, 6, False)
+        ("outside", 0.7, 0.4, True, 6, False)          # (inside / outside starts at outside every time)
     # the depth of a cut follows the material of the project, not what was typed last time
     assert v["cut_depth"] == pytest.approx(c.project.material.thickness)
     assert made["name"] != "My cut"                      # names are not remembered
@@ -237,8 +237,8 @@ def test_cut_order_choice_is_the_start_of_the_next_toolpaths(sess):
     c.add_vectors([obj], select=False)
     t2 = ToolpathDef("b", "profile", end_mill(6), {"through": True}, Selection("vectors", [obj.id]))
     c.add_toolpath(t2)
-    assert (t2.sequence["strategy"], t2.sequence["grouping"], t2.sequence["smart_starts"],
-            t2.sequence["start_margin"]) == ("rows_tr", "part", True, 2.5)
+    assert (t2.sequence.get("strategy", "cols_bl"), t2.sequence["grouping"], t2.sequence["smart_starts"],
+            t2.sequence["start_margin"]) == ("cols_bl", "part", True, 2.5)   # (the strategy starts at the default)
 
 
 # -- nesting ---------------------------------------------------------------------------------------------------

@@ -582,3 +582,13 @@ drawing*): click (tap) the cuts on the drawing; every cut shows the number it wi
 - Ctrl+click on the desktop (the ⚓ button and then a tap on the page): the numbering goes on after that cut (from the end:
   before it).
 Enter / *Done* applies, Backspace / ↶ takes the last click back, Esc / ✕ cancels.
+
+## The toolpath list (desktop)
+
+The toolpaths of a group are stacked under a heading of the group (its name, how many, their time); the heading folds and
+unfolds (remembered), its tick switches the whole group on or off, and selecting it selects its toolpaths. Every column
+(toolpath, group, tool, time) can be made wider or narrower by dragging its edge; the widths are remembered.
+
+A toolpath is shown **red** ("needs recalculating") only when something it depends on changed since it was calculated: the
+vectors it machines, its sheets, its own settings or the material. Drawing or moving other vectors leaves it as it is.
+The automatic calculation does only the red ones; F5 (Recalculate All) calculates every toolpath.

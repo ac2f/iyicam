@@ -195,4 +195,4 @@ def test_the_panel_has_a_group_column_and_groups_in_the_menu(rwin):
     panel = win.toolpaths_panel if hasattr(win, "toolpaths_panel") else None
     if panel is not None:
         panel.refresh()
-        assert panel.tree.headerItem().text(1) == "Group" and panel.tree.topLevelItem(0).text(1) == "Letters"
+        assert panel.tree.headerItem().text(1) == "Group" and panel.tree.topLevelItem(0).child(0).text(1) == "Letters"

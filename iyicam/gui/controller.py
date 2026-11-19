@@ -51,6 +51,8 @@ class Controller(CutControl, QObject):
         self.results: dict[tuple[str, str], ComputeResult] = {}
         self.backplot: list = []  # toolpaths read from an existing G-code file (display / simulation only)
         self.stale = False
+        self._sigs: dict[str, str] = {}         # toolpath id -> what it depended on when it was calculated
+        self.stale_ids: set[str] = set()        # the toolpaths whose own vectors or settings changed since
         self.dirty = False
         self.last_compute_s = 0.0
         self.busy_parent = None       # the window the "please wait" window of a long calculation belongs to
@@ -124,7 +126,9 @@ class Controller(CutControl, QObject):
         self.layer_id = project.layers[0].id
         self.selection = []
         self.results = {}
+        self._sigs = {}
         self.stale = bool(project.toolpaths)
+        self.stale_ids = {t.id for t in project.toolpaths}
         self.undo_stack.clear()
         self.dirty = False
         self.project_replaced.emit()
@@ -135,6 +139,7 @@ class Controller(CutControl, QObject):
         kept = self._kept_results(project)
         if kept is not None:                       # (the toolpaths as they were calculated and saved: not calculated again)
             self.results, self.stale = kept, False
+            self._mark_calculated({t.id for t in project.toolpaths})
             self.toolpaths_changed.emit()
         elif project.toolpaths and (self.settings.auto_recalculate or self.settings.calculate_on_open):
             self.recalculate()
@@ -230,7 +235,7 @@ class Controller(CutControl, QObject):
         self.changed.emit()
         self.selection_changed.emit()
         if geometry and self.project.toolpaths:
-            self.stale = True
+            self.refresh_stale()          # (only the toolpaths whose own vectors changed are old)
             self.toolpaths_changed.emit()
             if self.settings.auto_recalculate and self.last_compute_s < self.AUTO_LIMIT_S:
                 self._recalc.start()
@@ -547,7 +552,7 @@ class Controller(CutControl, QObject):
         with self.edit("Group sheets" if name else "Ungroup sheets", geometry=False):
             for s in todo:
                 s.group = name
-        self.stale = bool(self.project.toolpaths)
+        self.refresh_stale()
         self.toolpaths_changed.emit()
         self.sheet_changed.emit()
         self.calc_if_auto()
@@ -598,6 +603,7 @@ class Controller(CutControl, QObject):
         else:
             self.results = {k: v for k, v in self.results.items() if k[0] not in only}
             self.results.update(res)
+        self._mark_calculated({t.id for t in self.project.toolpaths} if only is None else set(only))
         self._store_orders(res)
         if apply_starts and self._apply_start_updates(res, force_smart or set()):
             # the vectors now carry the start points; toolpaths sharing them follow
@@ -782,7 +788,32 @@ class Controller(CutControl, QObject):
 
     def _auto_recalculate(self) -> None:
         if self.stale:
-            self.recalculate()
+            old = self.stale_ids & {t.id for t in self.project.toolpaths}
+            self.recalculate(old if old and self.results and len(old) < len(self.project.toolpaths) else None)
+
+    # -- which toolpaths are old ---------------------------------------------------------------------
+    def _signature(self, t) -> str:
+        from ..cam.store import toolpath_signature
+        try:
+            return toolpath_signature(self.project, t)
+        except Exception:      # noqa: BLE001  (a toolpath that cannot be described is taken as changed)
+            return ""
+
+    def _mark_calculated(self, ids: set[str]) -> None:
+        """The toolpaths ``ids`` are as they were calculated now."""
+        for t in self.project.toolpaths:
+            if t.id in ids:
+                self._sigs[t.id] = self._signature(t)
+        self.refresh_stale()
+
+    def refresh_stale(self) -> set[str]:
+        """Which toolpaths changed (their own vectors, sheets or settings) since they were calculated; ``stale`` is whether
+        any did."""
+        tps = self.project.toolpaths
+        self._sigs = {k: v for k, v in self._sigs.items() if any(t.id == k for t in tps)}
+        self.stale_ids = {t.id for t in tps if not self._sigs.get(t.id) or self._sigs[t.id] != self._signature(t)}
+        self.stale = bool(self.stale_ids)
+        return self.stale_ids
 
     def sheet_toolpaths(self, sheet: Sheet | None = None, enabled_only: bool = True):
         return sheet_toolpaths(self.project, self.results, sheet or self.sheet, enabled_only)

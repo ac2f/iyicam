@@ -194,6 +194,19 @@ names the files will get, and says which variable it does not know. What was wri
 a number is added when the name has no `{sheet_number}` or `{sheet_name}`, so no file overwrites another. In the desktop
 window a name typed over the proposed one in the file dialog is used as it is, as before.
 
+**A file with several toolpaths**: every toolpath in it counts. `{toolpath_name}`, `{tool_number}`, `{tool_name}`,
+`{tool_diameter}` and `{cut_depth}` are the values of all of them, each once, joined with `+` (`Outline+Holes`, `T1+2`);
+`{safe_z}` is the highest and `{toolpath_count}` how many there are. With *One file per tool* every file is named by its own
+toolpaths (`{toolpath_name}_T{tool_number}` gives `Outline_T1` and `Holes_T2`); when two files would get the same name the
+post's `_1_T1`, `_2_T2` ... is put after it.
+
+**Sums and number formats in the prefixes**: between the braces there can be a sum of variables and numbers
+(`{sheet_number + 100}`, `{sheet_width / 10}`) and, after a last `:`, how the number is written:
+- `{revision:03}` (or `{revision:3}`): at least three digits, zeros in front: 1 → `001`, 12 → `012`;
+- `{tool_diameter:.1}`: one decimal (6 → `6.0`); `{sheet_height/2:05.1}`: both;
+- a text variable with a width is filled with zeros in front as well.
+The desktop window, the page and the engine write the same name.
+
 The order of the blocks in a file is always: start of the file, first tool / tool change, start of a toolpath, its
 moves, end of a toolpath (and so on for every toolpath), end of the file.
 

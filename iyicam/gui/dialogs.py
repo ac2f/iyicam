@@ -336,6 +336,8 @@ class SheetDialog(QDialog):
             s.thickness = v["thickness"] if v["own_thickness"] else None
             if self.plain.isChecked():
                 s.outline = None
+        if self.ctrl.project.toolpaths:
+            self.ctrl.refresh_stale()
         self.ctrl.sheet_changed.emit()
         super().accept()
 
@@ -2101,23 +2103,17 @@ class ExportDialog(RemembersSize, QDialog):
         return self.revision.value()
 
     def name_values(self, index: int, sheet, tps) -> dict:
-        """The value of every variable of the file name (and of the folder inside) for the files of one sheet."""
+        """The value of every variable of the file name (and of the folder inside) for a file holding ``tps`` (every one of
+        them counts: names, tools and depths joined with +)."""
         from ..post import naming
         project = self.ctrl.project
         sheets = project.sheets if self.sheets.currentData() != "current" else [sheet]
-        t0 = tps[0] if tps else None
         group = self.group or next(iter({t.group for t in project.toolpaths if t.id in self.chosen() and t.group}), "")
-        d0 = project.toolpath(t0.def_id) if t0 is not None else None
-        return naming.values(project.name, sheet.name, index, len(sheets), self.current_post().name, group, len(tps),
-                             t0.tool.number if t0 else None, t0.tool.name if t0 else "", project.sheet_thickness(sheet),
-                             sheet.width, sheet.height, tool_diameter=t0.tool.diameter if t0 else None,
-                             toolpath_name=d0.name if d0 else "",
-                             safe_z=d0.safe_z if d0 is not None and d0.safe_z is not None else project.material.safe_z,
-                             cut_depth=d0.params.get("cut_depth") if d0 is not None else None, sheet_group=sheet.group,
-                             revision=self._revision_for(sheet))
+        return naming.values_for(project, sheet, index, len(sheets), self.current_post().name, group, tps,
+                                 revision=self._revision_for(sheet))
 
     def file_stem(self, index: int, sheet, tps) -> str | None:
-        """The name of the files of one sheet by the prefixes (``None``: the prefixes are not right: said in the box)."""
+        """The name of a file of one sheet holding ``tps`` by the prefixes."""
         from ..post import naming
         sheets = self.ctrl.project.sheets if self.sheets.currentData() != "current" else [sheet]
         parts, sep = naming.check(self.name_parts(), self.name_sep.text() or naming.DEFAULT_SEP)
@@ -2137,10 +2133,14 @@ class ExportDialog(RemembersSize, QDialog):
         post = self.current_post()
         names = []
         sheets = [self.ctrl.sheet] if self.sheets.currentData() == "current" else self.ctrl.project.sheets
+        from ..post.export import tool_groups
         for i, sh in enumerate(sheets, 1):
             tps = self.toolpaths(sh)
-            if tps:
-                names.append(f"{self.file_stem(i, sh, tps)}.{post.extension}")
+            groups = tool_groups(post, tps) if tps else []
+            stems = [self.file_stem(i, sh, g) for g in groups]
+            if len(set(x.lower() for x in stems)) < len(stems):        # (the same name for two files: the post's _1_T1 ... after it)
+                stems = [f"{x}_{k + 1}_T{g[0].tool.number}" for k, (x, g) in enumerate(zip(stems, groups))]
+            names += [f"{x}.{post.extension}" for x in stems]
         self.name_preview.setText("Files: " + (", ".join(names[:4]) + (" ..." if len(names) > 4 else "") if names else "(none)"))
 
     def _tick(self, wanted) -> None:
@@ -2226,7 +2226,6 @@ class ExportDialog(RemembersSize, QDialog):
         asked for). Nothing is written before this."""
         import datetime
         from ..post import naming
-        from ..post.export import write_gcode
         post = self.current_post()
         ctrl = self.ctrl
         sheets = [ctrl.sheet] if self.sheets.currentData() == "current" else ctrl.project.sheets
@@ -2240,31 +2239,43 @@ class ExportDialog(RemembersSize, QDialog):
             QMessageBox.information(self, "Save G-code", "Choose the folder first (Folder...), then press Save.")
             return
         base = Path(folder)
+        from ..post.export import named_files
         written = []
-        plan = []
-        for i, s in enumerate(sheets, 1):
-            tps_here = self.toolpaths(s)
-            if not tps_here:
-                continue
-            stem = self.file_stem(i, s, tps_here)
-            vals = self.name_values(i, s, tps_here)
-            sub = self.subfolder_name(vals)
-            plan.append((i, s, tps_here, (base / sub if sub else base) / f"{stem}.{post.extension}"))
+        plan = []                       # (sheet number, sheet, [(path, text)]): every file made before anything is written
+        try:
+            for i, s in enumerate(sheets, 1):
+                tps_here = self.toolpaths(s)
+                if not tps_here:
+                    continue
+                vals = self.name_values(i, s, tps_here)
+                sub = self.subfolder_name(vals)
+                folder_here = base / sub if sub else base
+                out = []
+                for tile, sheet, tps in self.jobs(s):
+                    for stem, text in named_files(ctrl.project, sheet, tps, post,
+                                                  lambda g, i=i, s=s, tile=tile: self.file_stem(i, s, g) + tile):
+                        out.append((folder_here / f"{stem}.{post.extension}", text))
+                plan.append((i, s, out))
+        except Exception as exc:
+            QMessageBox.warning(self, "Save G-code", f"{type(exc).__name__}: {exc}")
+            return
         if not plan:
             QMessageBox.information(self, "Save G-code", "There is nothing to save: no calculated toolpath on these sheets.")
             return
-        taken = [q for i, s, _t, p in plan for tile, _sh, _tp in self.jobs(s)
-                 for q in [p.with_name(p.stem + tile + p.suffix)] if q.exists()]            # (the files that will really be written)
+        taken = [p for _i, _s, out in plan for p, _t in out if p.exists()]
         if taken and QMessageBox.question(self, "Save G-code", f"{len(taken)} file(s) are there already ({taken[0].name} ...). "
                                           "Replace them?", QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
             return
-        for i, s, tps_here, path in plan:
-            try:
-                for tile, sheet, tps in self.jobs(s):
-                    written += write_gcode(path.with_name(path.stem + tile + path.suffix), ctrl.project, sheet, tps, post)
-            except Exception as exc:
-                QMessageBox.warning(self, "Save G-code", f"{type(exc).__name__}: {exc}")
-                return
+        for _i, _s, out in plan:
+            for path, text in out:
+                try:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    with open(path, "w", encoding="ascii", errors="replace", newline="") as fh:
+                        fh.write(text)
+                except Exception as exc:
+                    QMessageBox.warning(self, "Save G-code", f"{type(exc).__name__}: {exc}")
+                    return
+                written.append(path)
         ctrl.settings.last_post = post.id
         ctrl.settings.set_last_dir("gcode", folder)
         used = self.revision.value()
@@ -2272,7 +2283,7 @@ class ExportDialog(RemembersSize, QDialog):
                 "revision": used, "when": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")}
         r = self._revisions()
         up = 1 if self.rev_auto.isChecked() else 0                    # (counting up: the next save is the next revision)
-        for _i, s, _t, _p in plan:
+        for _i, s, _o in plan:
             rev = self._revision_for(s)
             if self.rev_scope.currentData() == "group" and s.group:
                 r["groups"][s.group] = rev + up
