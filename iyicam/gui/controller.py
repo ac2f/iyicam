@@ -41,7 +41,7 @@ class Controller(CutControl, QObject):
         super().__init__()
         self.registry = registry
         self.settings = settings or Settings()
-        self._units = Units(self.settings.units)
+        self._units = Units(self.settings.units, self.settings.feed_units)
         self.tools = tools if tools is not None else ToolLibrary.load_or_default(paths.tools_file())
         self.undo_stack = UndoStack()
         self.project = Project()
@@ -93,8 +93,8 @@ class Controller(CutControl, QObject):
 
     @property
     def units(self) -> Units:
-        if self._units.name != self.settings.units:       # (changed through the settings, perhaps in another tab)
-            self._units = Units(self.settings.units)
+        if self._units.name != self.settings.units or self._units.feed != self.settings.feed_units:
+            self._units = Units(self.settings.units, self.settings.feed_units)   # (changed through the settings, perhaps in another tab)
         return self._units
 
     @property

@@ -13,6 +13,7 @@ from ..core.params import Param
 @dataclass
 class Settings:
     units: str = "mm"                 # display units: mm | inch
+    feed_units: str = "min"           # feed rates shown per minute (mm/min) or per second (mm/s): min | s
     grid: float = 10.0
     snap_grid: bool = False
     snap_objects: bool = True
@@ -162,8 +163,9 @@ def _json_safe(v: Any) -> Any:
 class Units:
     """Conversion between internal millimetres and the display unit."""
 
-    def __init__(self, name: str = "mm"):
+    def __init__(self, name: str = "mm", feed: str = "min"):
         self.name = name
+        self.feed = feed if feed in ("min", "s") else "min"
 
     @property
     def factor(self) -> float:
@@ -182,6 +184,24 @@ class Units:
 
     def from_display(self, v: float) -> float:
         return v * self.factor
+
+    # feed rates are kept in mm/min; they are shown in mm/min, mm/s, in/min or in/s
+    @property
+    def feed_suffix(self) -> str:
+        return (" in" if self.name == "inch" else " mm") + ("/s" if self.feed == "s" else "/min")
+
+    @property
+    def feed_decimals(self) -> int:
+        return (3 if self.name == "inch" else 2) if self.feed == "s" else 1
+
+    def feed_to_display(self, v_mm_min: float) -> float:
+        return v_mm_min / self.factor / (60.0 if self.feed == "s" else 1.0)
+
+    def feed_from_display(self, v: float) -> float:
+        return v * self.factor * (60.0 if self.feed == "s" else 1.0)
+
+    def fmt_feed(self, v_mm_min: float) -> str:
+        return f"{self.feed_to_display(v_mm_min):.{self.feed_decimals}f}".rstrip("0").rstrip(".") + self.feed_suffix
 
     def fmt(self, v_mm: float) -> str:
         return f"{self.to_display(v_mm):.{self.decimals}f}".rstrip("0").rstrip(".") + self.suffix

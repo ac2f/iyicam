@@ -2892,6 +2892,9 @@ class PreferencesDialog(QDialog):
         self.setWindowTitle("Preferences")
         params = [
             Param("units", "Display units", "choice", s.units, choices=[("mm", "Millimetres"), ("inch", "Inches")]),
+            Param("feed_units", "Feed rates", "choice", s.feed_units,
+                  choices=[("min", "Per minute (mm/min)"), ("s", "Per second (mm/s)")],
+                  help="How feed and plunge rates are shown and typed; the G-code is always per minute (F)"),
             Param("theme", "Appearance", "choice", s.theme,
                   choices=[("system", "Follow the system"), ("light", "Light"), ("dark", "Dark")]),
             Param("grid", "Grid spacing (mm)", "float", s.grid, min=0.0),

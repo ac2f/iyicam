@@ -34,6 +34,20 @@ class OptionalNumber(QLineEdit):
         return calc.evaluate(self.text())
 
 
+def _show(u, kind: str, v):
+    """A value as the form shows it: lengths in the display unit, feed rates per minute or per second."""
+    if kind == "feed":
+        return u.feed_to_display(float(v))
+    return u.to_display(float(v)) if kind == "length" else float(v)
+
+
+def _keep(u, kind: str, v):
+    """What the form shows, back in millimetres (and mm/min)."""
+    if kind == "feed":
+        return u.feed_from_display(v)
+    return u.from_display(v) if kind == "length" else v
+
+
 class ParamForm(QWidget):
     """Edits a dict of values described by a list of params.  Emits ``changed``."""
 
@@ -84,22 +98,23 @@ class ParamForm(QWidget):
         u = self.units
         if k in ("float", "length", "angle", "feed", "percent"):
             conv = k in ("length", "feed")
-            suffix = {"angle": " °", "percent": " %",
-                      "feed": (" in/min" if u.name == "inch" else " mm/min")}.get(k, u.suffix if conv else "")
+            suffix = {"angle": " °", "percent": " %", "feed": u.feed_suffix}.get(k, u.suffix if conv else "")
             if v is None:
-                w = OptionalNumber(None if v is None else (u.to_display(v) if conv else v), suffix.strip())
+                w = OptionalNumber(None, suffix.strip())
                 w.textChanged.connect(self._emit)
                 return w
             w = QDoubleSpinBox()
-            w.setDecimals(u.decimals if conv else (1 if k == "feed" else max(0, min(4, p.decimals))))
+            w.setDecimals(u.feed_decimals if k == "feed" else u.decimals if conv else max(0, min(4, p.decimals)))
             lo = -1e6 if p.min is None else p.min
             hi = 1e6 if p.max is None else p.max
-            if conv:
+            if k == "feed":
+                lo, hi = u.feed_to_display(lo), u.feed_to_display(hi)
+            elif conv:
                 lo, hi = lo / u.factor, hi / u.factor
             w.setRange(lo, hi)
             w.setSuffix(suffix)
             w.setSingleStep(p.step or (1.0 if k != "length" else (0.1 if u.name == "inch" else 1.0)))
-            w.setValue(u.to_display(v) if conv else float(v))
+            w.setValue(_show(u, k, v))
             w.setKeyboardTracking(False)
             w.valueChanged.connect(self._emit)
             return w
@@ -168,12 +183,11 @@ class ParamForm(QWidget):
     def _read(self, p: Param) -> Any:
         w = self.widgets[p.name]
         u = self.units
-        conv = p.kind in ("length", "feed")
         if isinstance(w, OptionalNumber):
             v = w.value()
-            return None if v is None else (u.from_display(v) if conv else v)
+            return None if v is None else _keep(u, p.kind, v)
         if isinstance(w, QDoubleSpinBox):
-            return u.from_display(w.value()) if conv else w.value()
+            return _keep(u, p.kind, w.value())
         if isinstance(w, QSpinBox):
             return w.value()
         if isinstance(w, QCheckBox):
@@ -205,13 +219,12 @@ class ParamForm(QWidget):
             if w is None or p is None:
                 self._values[name] = v
                 continue
-            conv = p.kind in ("length", "feed")
             w.blockSignals(True)
             try:
                 if isinstance(w, OptionalNumber):
-                    w.set_value(None if v is None else (u.to_display(v) if conv else v))
+                    w.set_value(None if v is None else _show(u, p.kind, v))
                 elif isinstance(w, QDoubleSpinBox) and v is not None:
-                    w.setValue(u.to_display(float(v)) if conv else float(v))
+                    w.setValue(_show(u, p.kind, float(v)))
                 elif isinstance(w, QSpinBox) and v is not None:
                     w.setValue(int(v))
                 elif isinstance(w, QCheckBox):
