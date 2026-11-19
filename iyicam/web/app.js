@@ -734,6 +734,21 @@ function fieldText(f, vals) {
   const v = /NaN/.test(sub) ? NaN : calc(sub.replace(/:/g, "/"));
   return Number.isFinite(v) ? formatField(v, spec) : "";
 }
+/** the name of a toolpath with its {variables} and sums worked out (the engine's post/naming.toolpath_name) */
+function toolpathName(p, tp) {
+  const name = tp.name || "";
+  if (!name.includes("{")) return name;
+  const m = p.material || {}, tl = tp.tool || {}, prm = tp.params || {};
+  const sh = typeof activeSheet === "function" ? activeSheet() : null;
+  const thick = sh && sh.thickness != null ? sh.thickness : m.thickness;
+  const depth = prm.through ? (thick ?? 0) + (prm.overcut || 0) : prm.cut_depth;
+  const num = v => (v === undefined || v === null || v === "" ? "" : String(+(+v).toPrecision(12)));
+  const vals = { tool_name: tl.name || "", tool_number: num(tl.number), tool_diameter: num(tl.diameter), feed_rate: num(tl.feed_rate),
+    plunge_rate: num(tl.plunge_rate), spindle_speed: num(tl.spindle_speed), stepdown: num(tl.stepdown), cut_depth: num(depth),
+    allowance: num(prm.allowance), material_thickness: num(thick), safe_z: num(tp.safe_z ?? m.safe_z), operation: tp.op || "",
+    group: tp.group || "", sheet_group: tp.sheet_group || "" };
+  return name.replace(/\{([^{}]*)\}/g, (all, f) => (splitField(f)[0].match(/[A-Za-z_]\w*/g) || []).every(w => w in vals) ? fieldText(f, vals) : all);
+}
 function calcInput(attrs = {}) {
   const el = h("input", { ...attrs, type: "text", autocomplete: "off", autocapitalize: "off", spellcheck: "false" });
   Object.defineProperty(el, "valueAsNumber", { get() { return calc(el.value); }, configurable: true });
@@ -1427,7 +1442,7 @@ function viewPaths() {
     const cb = h("input", { type: "checkbox", checked: tp.enabled, title: t("paths.on"), "aria-label": t("paths.on") });
     cb.onchange = () => { tp.enabled = cb.checked; touch(); };
     items.push(h("div", { class: "item", style: tp.group ? "margin-left:14px" : "" }, cb,
-      h("div", { class: "grow" }, h("b", {}, tp.name), h("div", { class: "muted small" }, `${op ? op.label : tp.op} · ${tp.tool.name}`)),
+      h("div", { class: "grow" }, h("b", { title: tp.name }, toolpathName(p, tp)), h("div", { class: "muted small" }, `${op ? op.label : tp.op} · ${tp.tool.name}`)),
       h("button", { class: "small", title: t("paths.up"), "aria-label": t("paths.up"), onclick: () => moveToolpath(tp, -1) }, "↑"),
       h("button", { class: "small", title: t("paths.down"), "aria-label": t("paths.down"), onclick: () => moveToolpath(tp, 1) }, "↓"),
       h("button", { class: "small", title: t("paths.dup"), "aria-label": t("paths.dup"), onclick: () => { const c = JSON.parse(JSON.stringify(tp)); c.id = newId(); c.name = tp.name + " (2)"; if (c.sequence) delete c.sequence.order; p.toolpaths.splice(p.toolpaths.indexOf(tp) + 1, 0, c); changed(); } }, "⧉"),

@@ -499,13 +499,15 @@ class ToolpathsPanel(DocPanel):
                     st = st.merge(tp.stats(rate))
             if t.enabled:
                 total = total.merge(st)
-            it = QTreeWidgetItem([t.name, t.group, t.tool.name, format_time(st.time_s) if here and here.toolpaths else ""])
+            from ..post.naming import toolpath_name
+            shown = toolpath_name(self.ctrl.project, t, self.ctrl.sheet)
+            it = QTreeWidgetItem([shown, t.group, t.tool.name, format_time(st.time_s) if here and here.toolpaths else ""])
             it.setData(0, Qt.UserRole, t.id)
             it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
             it.setCheckState(0, Qt.Checked if t.enabled else Qt.Unchecked)
             op = self.ctrl.registry.operations.get(t.op)
             msgs = [r.error for r in res if r.error] + [w for r in res for w in r.warnings]
-            tip = f"{op.label if op else t.op}\n{t.tool.describe()}"
+            tip = f"{op.label if op else t.op}\n{t.tool.describe()}" + (f"\nName: {t.name}" if shown != t.name else "")
             if t.id in old_ids:
                 tip += "\n\nIts vectors or settings changed since it was calculated: F5 calculates it again."
                 it.setForeground(0, QColor("#c00000"))

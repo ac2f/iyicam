@@ -122,3 +122,37 @@ def test_the_list_stacks_toolpaths_by_group_and_columns_can_be_sized(rwin):
     assert c.settings.recall("toolpaths_panel")["widths"][1] == 150
     tree.collapseItem(tree.topLevelItem(0))
     assert "Letters" in c.settings.recall("toolpaths_panel")["folded"]
+
+
+def test_a_toolpath_name_with_variables_and_sums():
+    from iyicam.post.naming import toolpath_name, unknown
+    p, s, objs = make_project([[shapes.rectangle(10, 10, 100, 60)]], size=(500, 300))
+    t = add_tp(p, "profile", end_mill(6, feed_rate=4800, spindle_speed=18000), {"through": True}, objs)
+    t.name = "Profil Ø{tool_diameter} F{feed_rate/60:.1} S{spindle_speed} D{cut_depth} {nope}"
+    assert toolpath_name(p, t, s) == f"Profil Ø6 F80.0 S18000 D{p.sheet_thickness(s) + float(t.params.get('overcut') or 0):g} {{nope}}"
+    t.name = "Plain"
+    assert toolpath_name(p, t, s) == "Plain"
+    t.name = "Cut {tool_number:02}"
+    res = compute_all(p, REGISTRY)
+    tp = sheet_toolpaths(p, res, s)[0]
+    assert tp.name == "Cut 01"                                         # (what the G-code and the simulation say)
+    v = naming.values_for(p, s, 1, 1, "x", "", [tp])
+    assert v["toolpath_name"] == "Cut 01"
+
+
+def test_the_list_and_the_window_show_the_worked_out_name(rwin):
+    from gui_robot import process
+    from test_cutedit import parts
+    from iyicam.gui.dialogs import ToolpathDialog
+    win, _ = rwin
+    c, t, objs = parts(win, n=1, auto=False)
+    with c.edit("rename", geometry=False):
+        t.name = "Cut Ø{tool_diameter}"
+    c.toolpaths_changed.emit()
+    process()
+    row = next(win.toolpaths_panel._rows())
+    assert row.text(0) == "Cut Ø6" and "Cut Ø{tool_diameter}" in row.toolTip(0)
+    d = ToolpathDialog(c, t.op, t)
+    d.name.setText("X {feed_rate/60:.1}")
+    assert d.name_shown.text().startswith("→ X ")
+    d.close()

@@ -13,9 +13,9 @@ from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices, QFont, QFontDatabase, QGuiApplication
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QDialog, QDialogButtonBox,
                                 QFormLayout, QGroupBox, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit,
-                                QListWidget, QListWidgetItem, QMessageBox, QPlainTextEdit, QProgressDialog,
+                                QListWidget, QListWidgetItem, QMenu, QMessageBox, QPlainTextEdit, QProgressDialog,
                                 QPushButton, QRadioButton, QScrollArea, QSplitter, QTableWidget, QTableWidgetItem,
-                                QTabWidget, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
+                                QTabWidget, QToolButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 from .wheelguard import QComboBox, QDoubleSpinBox, QFontComboBox, QSpinBox
 
 from ..core import clip, paths
@@ -726,7 +726,28 @@ class ToolpathDialog(RemembersSize, QDialog):
         top = QFormLayout()
         n = sum(1 for t in ctrl.project.toolpaths if t.op == op_id) + 1
         self.name = QLineEdit(self.tdef.name if self.tdef else f"{self.op.label.split(' (')[0]} {n}")
-        top.addRow("Name", self.name)
+        self.name.setToolTip("The name may have {variables} of the toolpath and sums, as the file name prefixes: "
+                             "Profile Ø{tool_diameter} F{feed_rate/60:.1} -> Profile Ø6 F80.0")
+        nrow = QHBoxLayout()
+        nrow.addWidget(self.name, 1)
+        var_b = QToolButton()
+        var_b.setText("{…}")
+        var_b.setToolTip("Put a variable of the toolpath in the name (the speed, the tool, the depth ...)")
+        var_b.setPopupMode(QToolButton.InstantPopup)
+        vmenu = QMenu(var_b)
+        from ..post.naming import TOOLPATH_VARIABLES
+        for v in TOOLPATH_VARIABLES:
+            vmenu.addAction(f"{{{v['name']}}}  {v['text']['en']}",
+                            lambda n=v["name"]: (self.name.insert("{" + n + "}"), self.name.setFocus()))
+        vmenu.addSeparator()
+        vmenu.addAction("{feed_rate/60:.1}  Feed rate in mm/s, one decimal",
+                        lambda: (self.name.insert("{feed_rate/60:.1}"), self.name.setFocus()))
+        var_b.setMenu(vmenu)
+        nrow.addWidget(var_b)
+        top.addRow("Name", nrow)
+        self.name_shown = QLabel()
+        self.name_shown.setStyleSheet("color: gray")
+        top.addRow("", self.name_shown)
         prow = QHBoxLayout()
         self.preset_box = QComboBox()
         self.preset_box.setToolTip("Presets of toolpaths: what a toolpath was set to, kept under a name")
@@ -750,6 +771,7 @@ class ToolpathDialog(RemembersSize, QDialog):
         self.auto_new.setChecked(bool(ctrl.settings.rename_makes_new))
         self._first_name = self.name.text()
         self.name.textChanged.connect(self._name_edited)
+        self.name.textChanged.connect(self._show_name)
         if self.tdef is not None:                          # (a toolpath that is edited: the name can make a new one)
             top.addRow(self.keep_old)
             top.addRow(self.auto_new)
@@ -912,6 +934,21 @@ class ToolpathDialog(RemembersSize, QDialog):
             return None, None
         u = self.ctrl.units
         return u.from_display(self.safe_z.value()), u.from_display(self.clearance.value())
+
+    def _show_name(self, *_) -> None:
+        """What a name with {variables} becomes (nothing is shown for a plain name)."""
+        if not hasattr(self, "name_shown"):
+            return
+        text = self.name.text()
+        if "{" not in text:
+            self.name_shown.setText("")
+            return
+        from ..post.naming import toolpath_name
+        try:
+            t = self.toolpath()
+            self.name_shown.setText("→ " + toolpath_name(self.ctrl.project, t, self.ctrl.sheet))
+        except Exception:  # noqa: BLE001  (a form half filled in: nothing to show yet)
+            self.name_shown.setText("")
 
     def _remembered_tool(self, d) -> Tool | None:
         """The tool of the last toolpath of this kind (when it still fits the toolpath)."""

@@ -190,7 +190,54 @@ def values_for(project, sheet, index: int, count: int, post_name: str, group: st
                sheet.width, sheet.height, now=now, sheet_group=sheet.group, revision=revision, safe_z=max(safe))
     v.update({"tool_number": joined(t.tool.number for t in tps), "tool_name": joined(t.tool.name for t in tps),
               "tool_diameter": joined(float(t.tool.diameter) for t in tps),
-              "toolpath_name": joined(d.name if d is not None else t.name for d, t in zip(defs, tps)),
+              "toolpath_name": joined(toolpath_name(project, d, sheet) if d is not None else t.name for d, t in zip(defs, tps)),
               "cut_depth": joined(float(d.params["cut_depth"]) for d in defs
                                   if d is not None and isinstance(d.params.get("cut_depth"), (int, float)))})
     return v
+
+
+
+# ------------------------------------------------------------------------------------------------------------------
+# names of toolpaths: the same {variables}, sums and formats as the prefixes, with the toolpath's own values
+
+TOOLPATH_VARIABLES: list[dict] = [{"name": n, "text": {"en": en, "tr": tr}} for n, en, tr in [
+    ("tool_name", "Name of the tool", "Takımın adı"), ("tool_number", "Number of the tool", "Takımın numarası"),
+    ("tool_diameter", "Diameter of the tool", "Takımın çapı"),
+    ("feed_rate", "Feed rate (mm/min)", "İlerleme hızı (mm/dk)"), ("plunge_rate", "Plunge rate (mm/min)", "Dalma hızı (mm/dk)"),
+    ("spindle_speed", "Spindle speed (rpm)", "Devir (dev/dk)"), ("stepdown", "Stepdown", "Paso derinliği"),
+    ("cut_depth", "Cut depth", "Kesim derinliği"), ("allowance", "Allowance", "Pay"),
+    ("material_thickness", "Thickness of the material", "Malzeme kalınlığı"), ("safe_z", "Safe Z", "Güvenli Z"),
+    ("operation", "Kind of toolpath", "Takım yolu türü"), ("group", "Group", "Grup"), ("sheet_group", "Sheet group", "Sac grubu"),
+]]
+TOOLPATH_NAMES = {v["name"] for v in TOOLPATH_VARIABLES}
+
+
+def toolpath_values(project, tdef, sheet=None) -> dict:
+    """The value of every toolpath variable (as text); a feed rate per minute (``{feed_rate/60}`` is per second)."""
+    def num(v):
+        return "" if v is None else f"{float(v):g}"
+    t = tdef.tool
+    thick = project.sheet_thickness(sheet) if sheet is not None else project.material.thickness
+    depth = tdef.params.get("cut_depth")
+    if tdef.params.get("through"):
+        depth = thick + float(tdef.params.get("overcut") or 0.0)
+    return {"tool_name": t.name, "tool_number": str(t.number), "tool_diameter": num(t.diameter),
+            "feed_rate": num(t.feed_rate), "plunge_rate": num(t.plunge_rate), "spindle_speed": num(t.spindle_speed),
+            "stepdown": num(t.stepdown), "cut_depth": num(depth) if isinstance(depth, (int, float)) else "",
+            "allowance": num(tdef.params.get("allowance")) if isinstance(tdef.params.get("allowance"), (int, float)) else "",
+            "material_thickness": num(thick), "safe_z": num(tdef.safe_z if tdef.safe_z is not None else project.material.safe_z),
+            "operation": tdef.op, "group": tdef.group or "", "sheet_group": tdef.sheet_group or ""}
+
+
+def toolpath_name(project, tdef, sheet=None) -> str:
+    """The name of a toolpath as it is shown and written: ``{variables}``, sums and formats put in
+    (``Profile Ø{tool_diameter} F{feed_rate/60:.1}`` -> ``Profile Ø6 F80.0``). A name without braces is as it is."""
+    name = tdef.name or ""
+    if "{" not in name:
+        return name
+    try:
+        vals = toolpath_values(project, tdef, sheet)
+    except Exception:  # noqa: BLE001  (a name is never worth an error)
+        return name
+    return _ANY.sub(lambda m: field_text(m.group(1), vals) if all(n in TOOLPATH_NAMES for n in _IDENT.findall(_split(m.group(1))[0]))
+                    else m.group(0), name)

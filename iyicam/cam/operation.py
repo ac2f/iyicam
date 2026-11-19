@@ -87,7 +87,8 @@ class Operation:
     # -- helpers shared by strategies ----------------------------------------------
     def make_toolpath(self, ctx: OpContext, moves: list, tool: Tool | None = None,
                       suffix: str = "") -> Toolpath:
-        return Toolpath(ctx.tdef.name + suffix, tool or ctx.tool, moves, self.id, ctx.tdef.id,
+        from ..post.naming import toolpath_name
+        return Toolpath(toolpath_name(ctx.project, ctx.tdef, ctx.sheet) + suffix, tool or ctx.tool, moves, self.id, ctx.tdef.id,
                         ctx.sheet.id, ctx.safe_z)
 
 
