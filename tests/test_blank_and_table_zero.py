@@ -70,3 +70,17 @@ def test_save_gcode_warns_when_z_zero_is_the_table(rwin):
     process()
     assert d.zero_warning.isVisibleTo(d) and "table" in d.zero_warning.text()
     assert f"{c.project.material.thickness:g} mm" in d.zero_warning.text()
+
+
+def test_the_new_project_window_starts_blank_and_asks_the_first_sheet(rwin):
+    from gui_robot import process
+    from iyicam.gui.dialogs import SheetDialog
+    win, robot = rwin
+    win.ctrl.settings.remember("new_project_start", {"id": presets.BLANK})
+    asked = []
+    robot.hook = lambda d: asked.append(type(d).__name__) if isinstance(d, SheetDialog) else None
+    win.new_project()
+    process()
+    robot.hook = None
+    assert "SheetDialog" in asked and win.ctrl.has_sheet                # (the robot accepts: the first sheet is there)
+    assert win.ctrl.settings.recall("new_project_start")["id"] == presets.BLANK

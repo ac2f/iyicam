@@ -928,6 +928,8 @@ class MainWindow(QMainWindow):
         start = QComboBox()
         for t in presets.templates(self.ctrl.registry):
             start.addItem(t["label"], t["id"])
+        last = s.recall("new_project_start").get("id", "")       # (the way the last project was started; at first a sheet)
+        start.setCurrentIndex(max(0, start.findData(last if isinstance(last, str) else "")))
         lay.addWidget(QLabel("Start from"))
         lay.addWidget(start)
         desc = QLabel()
@@ -998,6 +1000,7 @@ class MainWindow(QMainWindow):
             v = form.values()
             s.remember("new_project", v, params)
             tid = start.currentData() or ""
+            s.remember("new_project_start", {"id": tid})
             extra = state["extra"].values() if state["extra"] is not None else {}
             if tid and state["extra"] is not None:
                 s.remember("new_project:" + tid, extra, state["extra"].params)
