@@ -94,6 +94,32 @@ DEFAULT_BLOCKS: dict[str, str] = {
     "inverse_time_off": "G94",
 }
 
+def check_arcs(lines: list[str], absolute: bool = False, radius_words: bool = False, step: float = 1e-4) -> str:
+    """The first arc of ``lines`` (G-code as written, XY plane) that a controller would cut elsewhere than meant: its centre
+    not as far from the end as from the start, or its end on its start (a full circle). ``""`` when every arc is right."""
+    x = y = None
+    mode = None
+    tol = max(10 * step, 0.002)
+    for ln in lines:
+        body = re.sub(r"\(.*?\)|;.*$", "", ln).upper()
+        for g in re.findall(r"G\s*0*(\d+)(?![\d.])", body):
+            if g in ("0", "1", "2", "3"):
+                mode = int(g)
+        w = {m.group(1): float(m.group(2)) for m in re.finditer(r"([XYIJR])\s*(-?\d*\.?\d+)", body)}
+        if not ("X" in w or "Y" in w):
+            continue
+        nx, ny = w.get("X", x), w.get("Y", y)
+        if mode in (2, 3) and x is not None and not radius_words and ("I" in w or "J" in w):
+            cx, cy = (w.get("I", 0.0), w.get("J", 0.0)) if absolute else (x + w.get("I", 0.0), y + w.get("J", 0.0))
+            r0, r1 = math.hypot(x - cx, y - cy), math.hypot(nx - cx, ny - cy)
+            if abs(r0 - r1) > tol:
+                return f"'{ln}': radius {r0:.4f} at the start, {r1:.4f} at the end"
+            if math.hypot(nx - x, ny - y) < step / 2:
+                return f"'{ln}': it ends where it starts, a full circle"
+        x, y = nx, ny
+    return ""
+
+
 def _drop_spindle_stop(text: str) -> str:
     """A block without its lines that only stop the spindle (``M5`` / ``M05``, with or without a comment)."""
     return "\n".join(ln for ln in text.split("\n")
@@ -313,6 +339,13 @@ class PostProcessor:
         if self._inverse:
             self.block("inverse_time_off", base)
         self.block("footer", base)
+        if not self.options["safe_arcs"] and self.options["arcs"] != "none" and not self._rotary:
+            bad = check_arcs(self.lines, self.options["ijk"] == "absolute", self.options["arcs"] == "r",
+                             10 ** -self.options["decimals"])
+            if bad:
+                # (a file the controller would read as a circle somewhere else is never written)
+                raise ValueError("G-code not written: an arc would not be cut where it is drawn (" + bad + "). "
+                                 "Turn on \"Arcs as short straight lines\" in the post.")
         lines = self.finalize(self.lines, job)
         text = self._join(lines)
         from ..core.registry import REGISTRY

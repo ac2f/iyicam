@@ -271,3 +271,21 @@ def test_arcs_are_straight_lines_by_default_and_the_ij_mode_is_on_every_arc_line
     assert arc_lines and all(l.startswith("G91.1 G") for l in arc_lines)
     plain = PostProcessor({"id": "b", "options": {"safe_arcs": False, "arc_mode_each": False}}).generate(PostJob([tp], p, s))
     assert "G91.1" not in plain
+
+
+def test_an_arc_that_would_be_cut_elsewhere_is_never_written():
+    from iyicam.post.engine import check_arcs
+    good = ["G21", "G0 X10 Y0", "G3 X-10 Y0 I-10 J0", "X10 Y0 I10 J0"]
+    assert check_arcs(good) == ""
+    assert "radius" in check_arcs(["G0 X10 Y0", "G3 X-10 Y0 I-9 J0"])
+    assert "full circle" in check_arcs(["G0 X10 Y0", "G2 X10 Y0 I-10 J0"])
+    assert "radius" in check_arcs(good, absolute=True)                 # (the same lines read with absolute I J: wrong)
+    p, s, _ = make_project([])
+    tp = Toolpath("t", end_mill(), [Rapid(10, 0, 5), Feed(10, 0, -1, 500), ArcMove(-10, 0, -1, 0, 0, False, 500)])
+    from iyicam.post.engine import PostJob
+    post = PostProcessor({"id": "a", "options": {"safe_arcs": False}})
+    post.generate(PostJob([tp], p, s))                                 # (right: written)
+    orig = post._coords
+    post._coords = lambda x, y, z, force_xy=False: {**orig(x, y, z, force_xy), **({"X": "X-9.5"} if abs(x + 10) < 1e-6 else {})}
+    with pytest.raises(ValueError, match="not written"):
+        post.generate(PostJob([tp], p, s))
