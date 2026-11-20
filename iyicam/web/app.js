@@ -60,8 +60,8 @@ const TXT = {
     "out.files": "G-code dosyaları", "out.download": "İndir", "out.view": "Göster", "out.hide": "Gizle",
     "out.lines": "{0} satır", "out.errors": "Hatalar", "out.warnings": "Uyarılar", "out.nogcode": "G-code üretilemedi.",
     "out.simdone": "Malzeme kaldırma, {0}", "out.stale": "Proje değişti; yeniden hesapla.",
-    "name.segTitle": "Takım yolu parçası ({segments})", "name.segHint": "{segments} dosyadaki her takım yolu için bir parça yazar; bir grubun benzer takım yolları tek parçada toplanır (m: kaç tane). [köşeli parantez] içindeki parça, içindeki değişken boşsa yazılmaz.",
-    "name.seg": "Parça", "name.together": "Bir grubun takım yolları art arda kesilsin", "name.stack": "Grubu tek parçada topla",
+    "name.segTitle": "Takım yolu parçası ({segments})", "name.segHint": "{segments} dosyadaki her takım yolu için bir parça yazar; takım yolunun adı rakamları olmadan yazılır, aynı ayarlı art arda gelen takım yolları tek parçada toplanır (m: kaç tane). [köşeli parantez] içindeki parça, içindeki değişken boşsa yazılmaz.",
+    "name.seg": "Parça", "name.together": "Bir grubun takım yolları art arda kesilsin", "name.stack": "İsimleri sıraya göre grupla (aynı ayarlı art arda olanlar: m = kaç tane)",
     "out.zeroTable": "⚠ Z sıfırı tabla (malzemenin altındaki zemin): G-code'daki Z0 zeminin üstü, boydan boya kesim onun hemen altında biter. Pasolar ve yükseklikler için kullanılan kalınlık: {0} mm. Makinedeki malzemenin kalınlığı bu mu, kontrol et (Malzeme ayarı).",
     "err.network": "Sunucuya ulaşılamıyor.", "err.session": "Oturum bitti; anahtarı yeniden gir.",
     "e.unsupported_file": "Bu dosya türü okunamıyor.", "e.empty_file": "Dosya boş.", "e.too_large": "Dosya çok büyük.",
@@ -140,8 +140,8 @@ const TXT = {
     "out.files": "G-code files", "out.download": "Download", "out.view": "View", "out.hide": "Hide",
     "out.lines": "{0} lines", "out.errors": "Errors", "out.warnings": "Warnings", "out.nogcode": "No G-code could be made.",
     "out.simdone": "Material removal, {0}", "out.stale": "The project changed; calculate again.",
-    "name.segTitle": "Part of a toolpath ({segments})", "name.segHint": "{segments} writes a part for every toolpath of the file; the alike toolpaths of a group are stacked into one part (m: how many). A piece in [brackets] is left out when a variable in it has no value.",
-    "name.seg": "Part", "name.together": "Cut the toolpaths of a group one after the other", "name.stack": "Stack a group in one part",
+    "name.segTitle": "Part of a toolpath ({segments})", "name.segHint": "{segments} writes a part for every toolpath of the file; the name of a toolpath is written without its digits, and toolpaths one after the other with the same settings are stacked into one part (m: how many). A piece in [brackets] is left out when a variable in it has no value.",
+    "name.seg": "Part", "name.together": "Cut the toolpaths of a group one after the other", "name.stack": "Group names by order (alike toolpaths one after the other: m = how many)",
     "out.zeroTable": "⚠ Z zero is the table (the board under the material): Z0 of the G-code is the top of that board, a through cut ends just under it. The thickness used for the passes and the heights: {0} mm. Check it is the thickness of the material on the machine (Material setup).",
     "err.network": "Cannot reach the server.", "err.session": "Signed out; enter the key again.",
     "e.unsupported_file": "This kind of file cannot be read.", "e.empty_file": "The file is empty.",
@@ -750,9 +750,14 @@ function groupOrder(list) {
   }
   return out;
 }
+/** the name of a toolpath in {segments}: without its digits (post/naming.name_without_digits) */
+function nameWithoutDigits(name) {
+  const out = String(name || "").replace(/\d+/g, "").replace(/[ _\-.]{2,}/g, m => m[0]).replace(/^[ _\-.]+|[ _\-.]+$/g, "");
+  return out || String(name || "");
+}
 /** {segments} of a file name, as the engine makes it (post/naming.segments) */
 function webSegments(p, sh, list, fn) {
-  const tpl = fn.segment || "{side}_{name}{depth}[s{step}]z{safe_z}[m{count}]";
+  const tpl = fn.segment || "{side}_{name}{depth}[a{allowance}][s{step}]z{safe_z}[m{count}]";
   const num = v => (v === undefined || v === null || v === "" || !Number.isFinite(+v) ? "" : String(+(+v).toPrecision(12)));
   const sides = { outside: "o", inside: "i", on: "a" }, opSide = { pocket: "p", drill: "d", vcarve: "v", engrave: "e", fluting: "f", inlay: "n" };
   const m = p.material || {}, thick = sh && sh.thickness != null ? sh.thickness : m.thickness;
@@ -765,18 +770,20 @@ function webSegments(p, sh, list, fn) {
     const depth = v.through ? thick : +(v.cut_depth || 0), fin = v.through ? thick + (+v.overcut || 0) : depth;
     const tool = tp.tool || {}, sd = +v.stepdown || Math.max(0.01, +tool.stepdown || fin || 1), start = +v.start_depth || 0;
     const passes = fin > start ? Math.max(1, Math.ceil((fin - start) / sd - 1e-9)) : 0;
-    const vals = { side: ("side" in v ? sides[v.side] : "") || opSide[tp.op] || (tp.op || "").slice(0, 1), name: toolpathName(p, tp),
+    const allow = "allowance" in v ? +v.allowance || 0 : 0;
+    const vals = { side: ("side" in v ? sides[v.side] : "") || opSide[tp.op] || (tp.op || "").slice(0, 1), name: nameWithoutDigits(toolpathName(p, tp)),
+      op: tp.op || "", allowance: Math.abs(allow) > 1e-9 ? num(allow) : "",
       depth: num(depth), final_depth: num(fin), stepdown: num(sd), step: passes > 1 ? num(sd) : "", passes: String(passes),
       safe_z: num(tp.safe_z ?? m.safe_z), count: "", tool_diameter: num(tool.diameter), tool_number: num(tool.number),
       group: tp.group || "", feed_rate: num(tool.feed_rate) };
-    const key = [vals.group, vals.side, vals.depth, vals.final_depth, vals.stepdown, vals.safe_z, vals.tool_diameter].join("|");
+    const key = ["op", "name", "side", "depth", "final_depth", "stepdown", "allowance", "safe_z", "tool_diameter", "tool_number"].map(k => vals[k]).join("|");
     const last = parts[parts.length - 1];
-    if (fn.stack !== false && vals.group && last && last.key === key) { last.n++; continue; }
+    if (fn.stack !== false && last && last.key === key) { last.n++; continue; }
     parts.push({ key, vals, n: 1 });
   }
   return parts.map(({ vals, n }) => {
     const v = { ...vals };
-    if (n > 1) { v.count = String(n); v.name = v.group || v.name; }
+    if (n > 1) v.count = String(n);
     const text = tpl.replace(/\[([^\[\]]*)\]/g, (_, inner) => [...inner.matchAll(/\{([^{}]*)\}/g)].flatMap(mm => splitField(mm[1])[0].match(/[A-Za-z_]\w*/g) || [])
       .every(nme => !["", "0"].includes(String(v[nme] ?? ""))) ? inner : "");
     return text.replace(/\{([^{}]*)\}/g, (_, f) => fieldText(f, v)).replace(/[^\w\-. ()+,=#@]+/g, "_").replace(/^[ ._]+|[ ._]+$/g, "");

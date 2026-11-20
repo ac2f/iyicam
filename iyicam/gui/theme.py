@@ -38,6 +38,10 @@ class Theme:
     grid_rgb: int       # 0: dark lines on a light sheet, 255: light lines on a dark one
     icon: str           # the colour of the drawn icons
     danger: str
+    selection: str = "#e31a1c"     # the outline of selected vectors on the drawing
+    handle_fill: str = "#ffffff"   # the handles round a selection
+    handle_edge: str = "#1f78b4"
+    grid_alpha: tuple = (22, 45)   # minor and major grid lines (0-255)
 
 
 LIGHT = Theme(
@@ -47,12 +51,16 @@ LIGHT = Theme(
     sheet_edge="#8a8f9c", ruler="#f2f4f8", ruler_tick="#8d95a6", ruler_text="#5b6477", grid_rgb=0,
     icon="#2b3a55", danger="#d92d20")
 
+# A dimmed dark theme, easy on the eyes: the canvas, the panels and the fields are close in tone (no near-black next to
+# bright panels), the text is a soft white, the accent and the selection are calmer, the grid is faint and the handles are
+# not white squares.
 DARK = Theme(
-    "dark", True, bg="#15171c", panel="#1d2027", panel_alt="#262a33", field="#14161b", border="#323743",
-    border_strong="#4a5163", text="#e6e9f0", muted="#98a2b3", accent="#4a7cf7", accent_soft="#26365f",
-    accent_text="#ffffff", hover="#2c313c", canvas="#101216", sheet="#2b303b", sheet_shadow="#1a1d23",
-    sheet_edge="#6b7384", ruler="#1d2027", ruler_tick="#6b7384", ruler_text="#98a2b3", grid_rgb=255,
-    icon="#d5dbe8", danger="#f97066")
+    "dark", True, bg="#1f2329", panel="#262b33", panel_alt="#2e343e", field="#22262d", border="#373e4a",
+    border_strong="#4b5363", text="#d9dee7", muted="#9aa3b3", accent="#6b97f2", accent_soft="#2f3e5e",
+    accent_text="#ffffff", hover="#333a46", canvas="#1b1e23", sheet="#2a2f38", sheet_shadow="#20242b",
+    sheet_edge="#6c7485", ruler="#23272e", ruler_tick="#5f6778", ruler_text="#959eb0", grid_rgb=255,
+    icon="#c8d0dd", danger="#f28b82", selection="#f08c8c", handle_fill="#2e343e", handle_edge="#8fb0f5",
+    grid_alpha=(11, 26))
 
 _current: Theme = LIGHT
 _asset_dir: Path | None = None
@@ -130,8 +138,11 @@ def _write_assets(d: Path, t: Theme) -> None:
     def up(p):
         p.drawPolyline([QPointF(4.5, 9.5), QPointF(8, 6), QPointF(11.5, 9.5)])
 
+    def check(p):
+        p.drawPolyline([QPointF(4, 8.5), QPointF(7, 11.5), QPointF(12.5, 5)])
+
     for name, draw, color in (("close", cross, t.muted), ("close_hover", cross, t.danger), ("down", down, t.muted),
-                              ("up", up, t.muted)):
+                              ("up", up, t.muted), ("check", check, t.accent_text)):
         if not _glyph(draw, color).save(str(d / f"{name}.png")):
             raise OSError(f"cannot write {name}.png")
 
@@ -262,7 +273,14 @@ QStatusBar {{ background: {t.panel}; color: {t.muted}; border-top: 1px solid {t.
 QStatusBar::item {{ border: 0; }}
 QSplitter::handle {{ background: {t.bg}; }}
 QLabel {{ background: transparent; }}
-"""
+""" + (f"""
+QCheckBox::indicator, QAbstractItemView::indicator {{ width: 14px; height: 14px; border: 1px solid {t.border_strong};
+    border-radius: 3px; background: {t.field}; }}
+QCheckBox::indicator:hover, QAbstractItemView::indicator:hover {{ border-color: {t.accent}; }}
+QCheckBox::indicator:checked, QAbstractItemView::indicator:checked {{ background: {t.accent}; border-color: {t.accent};
+    {img('check')} }}
+QCheckBox::indicator:disabled {{ background: {t.panel_alt}; border-color: {t.border}; }}
+""" if t.dark else "")
 
 
 def apply(app, name: str = "system") -> Theme:

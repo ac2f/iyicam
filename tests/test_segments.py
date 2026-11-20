@@ -49,7 +49,7 @@ def test_the_part_can_be_changed_and_stacking_switched_off():
     order = naming.group_order(p, tps)
     v = naming.values_for(p, s, 1, 1, "x", "", order, segment="{side}{name}D{final_depth}[P{passes}]", segment_sep="+",
                           stack=False)
-    assert v["segments"] == "ioyma01D2P2+ioyma02D2P2+ioyma03D2P2+okesimD4.1P1+akesimD4.1P1"
+    assert v["segments"] == "ioymaD2P2+ioymaD2P2+ioymaD2P2+okesimD4.1P1+akesimD4.1P1"   # (names without their digits)
     assert naming.render_segment("[m{count}]{name}", {"count": "", "name": "x"}) == "x"
     assert naming.unknown(["{segments}"]) == []
 
@@ -68,7 +68,40 @@ def test_the_engine_cuts_a_group_together_and_names_the_file_so():
     assert at == sorted(at) and at[2] < text.index("( kesim")            # (the group is cut before the next one)
     r = op_gcode({"project": project_to_dict(p), "post": "mach3", "name_parts": ["{segments}"], "together": False,
                   "stack": False})
-    assert r["files"][0]["name"].startswith("i_oyma012s1z10-i_oyma022s1z10-o_kesim4z10-i_oyma03")
+    assert r["files"][0]["name"].startswith("i_oyma2s1z10-i_oyma2s1z10-o_kesim4z10-i_oyma2s1z10")
+
+
+def _named(specs):
+    """``{segments}`` of toolpaths made from ``(name, side, depth, allowance, group)``, in this order, with grouping by order."""
+    ensure_registered(REGISTRY)
+    p, s, objs = make_project([[shapes.rectangle(10 + i * 60, 10, 40, 40)] for i in range(len(specs))], size=(600, 300))
+    p.material.thickness, p.material.safe_z = 4.0, 10.0
+    for (name, side, depth, allowance, group), o in zip(specs, objs):
+        t = add_tp(p, "profile", end_mill(4, stepdown=1.0),
+                   {"side": side, "through": False, "cut_depth": depth, "allowance": allowance}, [o])
+        t.name, t.group = name, group
+    tps = sheet_toolpaths(p, compute_all(p, REGISTRY), s)
+    return naming.values_for(p, s, 1, 1, "x", "", tps)["segments"]
+
+
+def test_names_lose_their_digits_and_alike_toolpaths_in_a_row_are_stacked_without_a_group():
+    assert naming.name_without_digits("oyma01") == "oyma" and naming.name_without_digits("harf 3 dis") == "harf dis"
+    assert naming.name_without_digits("12") == "12"
+    assert _named([("oyma01", "inside", 2.0, 0.0, ""), ("oyma02", "inside", 2.0, 0.0, ""),
+                   ("oyma03", "inside", 2.0, 0.0, "")]) == "i_oyma2s1z10m3"
+
+
+def test_a_different_allowance_or_depth_is_a_part_of_its_own_and_shows():
+    # the case of the user: the same side, one with another allowance, one with another depth: nothing is stacked into
+    # what it is not, and the part says what differs
+    assert _named([("oyma1", "inside", 2.0, 0.0, "g"), ("oyma2", "inside", 2.0, 0.2, "g"), ("oyma3", "inside", 3.0, 0.0, "g"),
+                   ("oyma4", "inside", 3.0, 0.0, "g")]) == "i_oyma2s1z10-i_oyma2a0.2s1z10-i_oyma3s1z10m2"
+    assert _named([("kesim", "outside", 2.0, -0.1, "")]) == "o_kesim2a-0.1s1z10"
+
+
+def test_only_toolpaths_in_a_row_are_stacked_the_order_decides():
+    assert _named([("oyma", "inside", 2.0, 0.0, ""), ("kesim", "outside", 2.0, 0.0, ""),
+                   ("oyma", "inside", 2.0, 0.0, "")]) == "i_oyma2s1z10-o_kesim2s1z10-i_oyma2s1z10"
 
 
 pytest.importorskip("PySide6.QtWidgets")
@@ -97,6 +130,41 @@ def test_the_save_window_names_and_orders_the_same_way(rwin):
     assert [t.name for t in d.toolpaths(c.sheet)][:3] == ["oyma01", "oyma02", "oyma03"]
     d.stack.setChecked(False)
     process()
-    assert "i_oyma012s1z10-i_oyma022s1z10-i_oyma032s1z10" in d.name_preview.text()
+    assert "i_oyma2s1z10-i_oyma2s1z10-i_oyma2s1z10" in d.name_preview.text()
     d.together.setChecked(False)
     assert [t.name for t in d.toolpaths(c.sheet)] == ["oyma01", "oyma02", "kesim", "oyma03", "kesim"]
+
+
+def test_the_save_window_reorders_the_toolpaths_and_the_project_and_name_follow(rwin):
+    from PySide6.QtCore import QModelIndex
+    from gui_robot import process
+    from iyicam.gui.dialogs import ExportDialog
+    win, _ = rwin
+    c = win.ctrl
+    p, s, _ = job()
+    c._replace(p)
+    c.recalculate()
+    process()
+    d = ExportDialog(c, win)
+    d._name_rows.itemAt(0).layout().itemAt(0).widget().setText("{segments}")
+    d.together.setChecked(False)
+    process()
+    names = lambda: [t.name for t in c.project.toolpaths]          # noqa: E731
+    assert names() == ["oyma01", "oyma02", "kesim", "oyma03", "kesim"]
+    # ▼ on the first kesim: the third oyma comes before it, so the three oyma are in a row and stack
+    d.list.setCurrentRow(2)
+    d.move_selected(1)
+    process()
+    assert names() == ["oyma01", "oyma02", "oyma03", "kesim", "kesim"]
+    assert [t.name for t in d.toolpaths(c.sheet)][:3] == ["oyma01", "oyma02", "oyma03"]
+    assert "i_oyma2s1z10m3-o_kesim4z10-a_kesim4z10" in d.name_preview.text()
+    gcode = d.text.toPlainText()
+    assert gcode.index("( oyma03") < gcode.index("( kesim")
+    # dragging (a row moved in the list) does the same: the last kesim first
+    d.list.model().moveRow(QModelIndex(), 4, QModelIndex(), 0)
+    process()
+    assert names()[0] == "kesim" and d.order()[0] == c.project.toolpaths[0].id
+    assert d.name_preview.text().count("a_kesim4z10") == 1 and "a_kesim4z10-i_oyma2s1z10m3" in d.name_preview.text()
+    # one undo step per change
+    c.undo()
+    assert names() == ["oyma01", "oyma02", "oyma03", "kesim", "kesim"]

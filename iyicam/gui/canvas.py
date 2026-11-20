@@ -372,7 +372,7 @@ class Canvas(QWidget):
             if layer is not None and layer.locked:
                 color.setAlpha(110)
             if o.id in sel:
-                pen = QPen(QColor("#e31a1c"), 2.0)
+                pen = QPen(QColor(theme.get().selection), 2.0)
                 pen.setStyle(Qt.DashLine)
             elif o.id == self.hover_id:
                 pen = QPen(color.lighter(130), 2.4)
@@ -529,9 +529,9 @@ class Canvas(QWidget):
         if x1 <= x0 or y1 <= y0:
             return
         g0 = theme.get().grid_rgb
-        dark = theme.get().dark
-        minor = QPen(QColor(g0, g0, g0, 16 if dark else 22), 1)
-        major = QPen(QColor(g0, g0, g0, 36 if dark else 45), 1)
+        a_minor, a_major = theme.get().grid_alpha
+        minor = QPen(QColor(g0, g0, g0, a_minor), 1)
+        major = QPen(QColor(g0, g0, g0, a_major), 1)
         minor.setCosmetic(True)
         major.setCosmetic(True)
         i0, i1 = math.ceil(x0 / g), math.floor(x1 / g)

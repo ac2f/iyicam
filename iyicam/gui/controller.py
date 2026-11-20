@@ -603,6 +603,20 @@ class Controller(CutControl, QObject):
             tps[i], tps[i + delta] = tps[i + delta], tps[i]
         self.toolpaths_changed.emit()
 
+    def set_toolpath_order(self, ids: list[str]) -> bool:
+        """Put the toolpaths in the order of ``ids`` (the ones not listed keep their places after them); one undo step.
+        The order is the order they are cut in and named by. Whether it changed."""
+        tps = self.project.toolpaths
+        by_id = {t.id: t for t in tps}
+        new = [by_id[i] for i in ids if i in by_id]
+        new += [t for t in tps if t.id not in set(ids)]
+        if [t.id for t in new] == [t.id for t in tps]:
+            return False
+        with self.edit("Reorder toolpaths", geometry=False):
+            self.project.toolpaths[:] = new
+        self.toolpaths_changed.emit()
+        return True
+
     def recalculate(self, only: set[str] | None = None, force_smart: set[str] | None = None,
                     apply_starts: bool = True) -> dict:
         """Calculate the toolpaths. A calculation that takes more than a moment runs in a thread: the program

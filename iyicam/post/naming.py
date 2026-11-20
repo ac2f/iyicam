@@ -253,18 +253,21 @@ def toolpath_name(project, tdef, sheet=None) -> str:
 # ------------------------------------------------------------------------------------------------------------------
 # a file name made of the toolpaths of the file: {segments}
 #
-# Every toolpath is a part of the name (``i_oyma2s1z10``); the toolpaths of a group that are alike (same side, depths, safe
-# Z, tool) are stacked into one part with how many there are (``i_oyma2s1z10m3``). A part is written by the part template:
-# its {variables} and its [optional pieces], a piece in brackets being left out when a variable in it has no value
-# (``[s{step}]`` only when the cut takes more than one pass, ``[m{count}]`` only for more than one toolpath).
+# Every toolpath is a part of the name (``i_oyma2s1z10``). The name of the toolpath is written without its digits
+# (``oyma01`` -> ``oyma``), so the numbers of a part start with its depth. Toolpaths that come one after the other with the
+# same settings (name, side, depths, allowance, safe Z, tool) are stacked into one part with how many there are
+# (``i_oyma2s1z10m3``): grouping by order, on by default. A part is written by the part template: its {variables} and its
+# [optional pieces], a piece in brackets being left out when a variable in it has no value (``[s{step}]`` only when the cut
+# takes more than one pass, ``[a{allowance}]`` only with an allowance, ``[m{count}]`` only for more than one toolpath).
 
-DEFAULT_SEGMENT = "{side}_{name}{depth}[s{step}]z{safe_z}[m{count}]"
+DEFAULT_SEGMENT = "{side}_{name}{depth}[a{allowance}][s{step}]z{safe_z}[m{count}]"
 DEFAULT_SEGMENT_SEP = "-"
 SEGMENT_VARIABLES: list[dict] = [{"name": n, "text": {"en": en, "tr": tr}} for n, en, tr in [
     ("side", "i inside, o outside, a along the line (p pocket, d drill, v v-carve, e engrave ...)",
      "i iç, o dış, a çizgi üstü (p cep, d delik, v v-oyma, e gravür ...)"),
-    ("name", "Name of the toolpath (of the group, for a stack)", "Takım yolunun adı (yığında grubun adı)"),
+    ("name", "Name of the toolpath, without its digits (oyma01: oyma)", "Takım yolunun adı, rakamları olmadan (oyma01: oyma)"),
     ("depth", "Depth (a cut through: the thickness)", "Derinlik (boydan boya: kalınlık)"),
+    ("allowance", "Allowance, only when it is not 0 (+ bigger, - smaller)", "Pay, 0 değilse (+ büyük, - küçük)"),
     ("final_depth", "Depth the tool goes to (with the cut below the bottom)", "Takımın indiği derinlik (alt taşma ile)"),
     ("step", "Depth of a pass, only when there is more than one", "Paso derinliği, birden fazla paso varsa"),
     ("stepdown", "Depth of a pass", "Paso derinliği"), ("passes", "How many passes", "Kaç paso"),
@@ -276,6 +279,14 @@ SEGMENT_VARIABLES: list[dict] = [{"name": n, "text": {"en": en, "tr": tr}} for n
 SEGMENT_NAMES = {v["name"] for v in SEGMENT_VARIABLES}
 _SIDE_OF_OP = {"pocket": "p", "drill": "d", "vcarve": "v", "engrave": "e", "fluting": "f", "inlay": "n"}
 _OPTIONAL = re.compile(r"\[([^\[\]]*)\]")
+_DIGITS = re.compile(r"\d+")
+
+
+def name_without_digits(name: str) -> str:
+    """The name of a toolpath for {segments}: its digits are left out (``oyma01`` -> ``oyma``, ``kesim_2`` -> ``kesim``),
+    so the numbers of a part are its depths; a name of digits only stays as it is."""
+    out = re.sub(r"[ _\-.]{2,}", lambda m: m.group(0)[0], _DIGITS.sub("", name or "")).strip(" _-.")
+    return out or (name or "")
 
 
 def group_order(project, tps: list) -> list:
@@ -313,8 +324,10 @@ def _segment_values(project, sheet, tdef, tp) -> dict:
     side = {"outside": "o", "inside": "i", "on": "a"}.get(v.get("side"), "") if "side" in v else ""
     side = side or _SIDE_OF_OP.get(tdef.op if tdef is not None else "", (tdef.op[:1] if tdef is not None else ""))
     safe = tdef.safe_z if tdef is not None and tdef.safe_z is not None else project.material.safe_z
-    return {"side": side, "name": toolpath_name(project, tdef, sheet) if tdef is not None else (tp.name if tp else ""),
-            "depth": num(depth), "final_depth": num(final), "stepdown": num(sd), "step": num(sd) if passes > 1 else "",
+    allowance = float(v.get("allowance") or 0.0) if "allowance" in v else 0.0
+    name = toolpath_name(project, tdef, sheet) if tdef is not None else (tp.name if tp else "")
+    return {"side": side, "name": name_without_digits(name), "op": tdef.op if tdef is not None else "",
+            "allowance": num(allowance) if abs(allowance) > 1e-9 else "", "depth": num(depth), "final_depth": num(final), "stepdown": num(sd), "step": num(sd) if passes > 1 else "",
             "passes": str(passes), "safe_z": num(safe), "count": "", "tool_diameter": num(tool.diameter),
             "tool_number": str(tool.number), "group": (tdef.group if tdef is not None else "") or "",
             "feed_rate": num(tool.feed_rate)}
@@ -336,16 +349,20 @@ def render_segment(template: str, vals: dict) -> str:
     return _ANY.sub(lambda m: field_text(m.group(1), vals), text)
 
 
+STACK_KEYS = ("op", "name", "side", "depth", "final_depth", "stepdown", "allowance", "safe_z", "tool_diameter", "tool_number")
+
+
 def segments(project, sheet, tps: list, template: str = DEFAULT_SEGMENT, sep: str = DEFAULT_SEGMENT_SEP,
              stack: bool = True) -> str:
-    """The parts of the toolpaths ``tps`` (in their order) joined by ``sep``; with ``stack`` the toolpaths of a group that
-    are alike and come one after the other are one part, named by the group, with their number (``count``)."""
-    parts: list[tuple[str, dict, int]] = []         # (key of what is alike, values, how many)
+    """The parts of the toolpaths ``tps`` (in their order) joined by ``sep``. With ``stack`` (grouping by order) toolpaths
+    that come one after the other with the same settings (:data:`STACK_KEYS`: name without digits, side, depths, allowance,
+    safe Z, tool) are one part with their number (``count``); one that differs in anything starts a part of its own."""
+    parts: list[tuple[tuple, dict, int]] = []       # (key of what is alike, values, how many)
     for tp in tps:
         d = project.toolpath(tp.def_id)
         v = _segment_values(project, sheet, d, tp)
-        key = (v["group"], v["side"], v["depth"], v["final_depth"], v["stepdown"], v["safe_z"], v["tool_diameter"])
-        if stack and v["group"] and parts and parts[-1][0] == key:
+        key = tuple(v[k] for k in STACK_KEYS)
+        if stack and parts and parts[-1][0] == key:
             k, pv, n = parts[-1]
             parts[-1] = (k, pv, n + 1)
             continue
@@ -354,6 +371,6 @@ def segments(project, sheet, tps: list, template: str = DEFAULT_SEGMENT, sep: st
     for _k, v, n in parts:
         v = dict(v)
         if n > 1:
-            v["count"], v["name"] = str(n), v["group"] or v["name"]
+            v["count"] = str(n)
         out.append(clean(render_segment(template, v)))
     return (sep if sep is not None else DEFAULT_SEGMENT_SEP).join(x for x in out if x)

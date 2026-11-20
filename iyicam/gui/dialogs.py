@@ -2014,9 +2014,12 @@ class ExportDialog(RemembersSize, QDialog):
         lay.addWidget(self.desc)
         lay.addWidget(self._name_box(mem))
         lay.addWidget(self._where_box(mem))
-        lay.addWidget(QLabel("Toolpaths in this file (in machining order):"))
+        lay.addWidget(QLabel("Toolpaths in this file, in machining order (▲ ▼ or drag to change it: the project's order "
+                             "changes too, and the name follows):"))
         pick = QHBoxLayout()
         self.list = QListWidget()
+        self.list.setDragDropMode(QListWidget.InternalMove)          # (drag a toolpath to where it is to be cut)
+        self.list.setDefaultDropAction(Qt.MoveAction)
         for t in ctrl.project.toolpaths:
             it = QListWidgetItem(f"{t.name}  —  T{t.tool.number} {t.tool.name}" + (f"   [{t.group}]" if t.group else ""))
             it.setData(Qt.UserRole, t.id)
@@ -2025,10 +2028,17 @@ class ExportDialog(RemembersSize, QDialog):
             it.setCheckState(Qt.Checked if on else Qt.Unchecked)
             self.list.addItem(it)
         self.list.itemChanged.connect(self.preview)
-        self.list.setMaximumHeight(140)
+        self.list.model().rowsMoved.connect(lambda *_: QTimer.singleShot(0, self._order_changed))
+        self.list.setMaximumHeight(160)
         for text, fn in (("All", lambda: self._tick(lambda t: True)), ("None", lambda: self._tick(lambda t: False))):
             b = QPushButton(text)
             b.clicked.connect(fn)
+            pick.addWidget(b)
+        for text, delta, tip in (("▲", -1, "Cut the selected toolpath earlier"), ("▼", 1, "Cut the selected toolpath later")):
+            b = QPushButton(text)
+            b.setToolTip(tip)
+            b.setFixedWidth(34)
+            b.clicked.connect(lambda _c=False, d=delta: self.move_selected(d))
             pick.addWidget(b)
         self.by_group = QComboBox()
         self.by_group.addItem("Only the group...", None)
@@ -2120,8 +2130,9 @@ class ExportDialog(RemembersSize, QDialog):
         self.together.setToolTip("The toolpaths of a group are cut together, where the first of them is (the order of the "
                                  "file); off: in the order of the Toolpaths panel")
         self.together.setChecked(mem.get("together", True) is not False)
-        self.stack = QCheckBox("Stack a group in one part (m = how many)")
-        self.stack.setToolTip("The alike toolpaths of a group are one part of {segments}, named by the group, with their number")
+        self.stack = QCheckBox("Group names by order (m = how many)")
+        self.stack.setToolTip("Toolpaths one after the other with the same settings (name without digits, side, depths, "
+                              "allowance, safe Z, tool) are one part of {segments}, with their number: i_oyma2z10m3")
         self.stack.setChecked(mem.get("stack", True) is not False)
         for w in (self.together, self.stack):
             w.toggled.connect(self._name_changed)
@@ -2348,6 +2359,29 @@ class ExportDialog(RemembersSize, QDialog):
 
     def current_post(self):
         return self.ctrl.registry.posts[self.post.currentData()]
+
+    # -- the order of the toolpaths ----------------------------------------------------------------------------
+    def order(self) -> list[str]:
+        return [self.list.item(i).data(Qt.UserRole) for i in range(self.list.count())]
+
+    def move_selected(self, delta: int) -> None:
+        """▲ / ▼: the selected toolpath one place earlier / later."""
+        row = self.list.currentRow()
+        to = row + delta
+        if row < 0 or not 0 <= to < self.list.count():
+            return
+        self.list.blockSignals(True)
+        it = self.list.takeItem(row)
+        self.list.insertItem(to, it)
+        self.list.setCurrentRow(to)
+        self.list.blockSignals(False)
+        self._order_changed()
+
+    def _order_changed(self) -> None:
+        """The list was put in another order: the project's toolpaths follow (one undo step), then the G-code and the name."""
+        self.ctrl.set_toolpath_order(self.order())
+        self._name_changed()
+        self.preview()
 
     def chosen(self) -> set[str]:
         return {self.list.item(i).data(Qt.UserRole) for i in range(self.list.count())

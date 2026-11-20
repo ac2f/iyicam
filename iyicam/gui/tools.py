@@ -388,15 +388,16 @@ class SelectTool(CanvasTool):
             return
         box = self._screen_box()
         if box is not None:                      # (the box shows the selection also when the handles are off)
-            p.setPen(QPen(QColor("#1f78b4"), 1, Qt.DotLine))
+            p.setPen(QPen(QColor(theme.get().handle_edge), 1, Qt.DotLine))
             p.setBrush(Qt.NoBrush)
             p.drawRect(box)
         hs = self._handles()
         if hs:
-            p.setPen(QPen(QColor("#1f78b4"), 1, Qt.DotLine))
+            p.setPen(QPen(QColor(theme.get().handle_edge), 1, Qt.DotLine))
             p.drawLine(QPointF(box.center().x(), box.top()), hs["rot"])
-            p.setPen(QPen(QColor("#1f78b4"), 1))
-            p.setBrush(QBrush(QColor("white")))
+            t = theme.get()
+            p.setPen(QPen(QColor(t.handle_edge), 1))
+            p.setBrush(QBrush(QColor(t.handle_fill)))
             for k, q in hs.items():
                 if k == "rot":
                     p.drawEllipse(q, self.HANDLE, self.HANDLE)
