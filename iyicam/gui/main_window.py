@@ -472,12 +472,12 @@ class MainWindow(QMainWindow):
         sub = menu.addMenu("&Arrow Key Step")
         group = QActionGroup(self)
         self.nudge_actions = {}
-        self.nudge_actions["auto"] = self._act(sub, "&Automatic (follows the zoom)", lambda: self.set_nudge("auto"),
+        self.nudge_actions["auto"] = self._act(sub, "&Automatic (follows the zoom)", lambda _on=True: self.set_nudge("auto"),
                                                None, True)
         sub.addSeparator()
         for mm in self.NUDGE_PRESETS:
-            self.nudge_actions[mm] = self._act(sub, f"{mm:g} mm", lambda v=mm: self.set_nudge("fixed", v), None, True)
-        self.nudge_actions["custom"] = self._act(sub, "&Custom...", self._custom_nudge, None, True)
+            self.nudge_actions[mm] = self._act(sub, f"{mm:g} mm", lambda _on=True, v=mm: self.set_nudge("fixed", v), None, True)
+        self.nudge_actions["custom"] = self._act(sub, "&Custom...", lambda _on=True: self._custom_nudge(), None, True)
         for a in self.nudge_actions.values():
             group.addAction(a)
         self.sync_edit_options()

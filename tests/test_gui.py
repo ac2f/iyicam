@@ -988,7 +988,7 @@ def test_the_arrow_key_step_follows_the_zoom_or_is_fixed(win):
     x = o.bbox().xmin
     QTest.keyClick(cv, Qt.Key_Right, Qt.ShiftModifier)
     assert o.bbox().xmin - x == pytest.approx(10 * near)
-    win.set_nudge("fixed", 1.0)
+    win.nudge_actions[1.0].trigger()                                   # (from the menu, as a click does)
     x = o.bbox().xmin
     QTest.keyClick(cv, Qt.Key_Left)
     assert x - o.bbox().xmin == pytest.approx(1.0) and win.nudge_actions[1.0].isChecked()
@@ -996,8 +996,8 @@ def test_the_arrow_key_step_follows_the_zoom_or_is_fixed(win):
     y = o.bbox().ymin
     QTest.keyClick(cv, Qt.Key_Up)
     assert o.bbox().ymin - y == pytest.approx(5.0)
-    win.set_nudge("auto")
-    assert win.nudge_actions["auto"].isChecked()
+    win.nudge_actions["auto"].trigger()
+    assert ctrl.settings.nudge_mode == "auto" and win.nudge_actions["auto"].isChecked()
 
 
 def test_nice_steps():
