@@ -125,10 +125,20 @@ checked against the plate: a plate that is not a rectangle, with parts fixed on 
 strip to a place that is on the plate). Squeezing and polishing are not used for strips; several attempts only try other
 orders of the parts.
 
-**Free nesting in one direction.** *Pack towards* chooses where the free nesting gathers the parts (left: filling along Y;
-bottom: along X; smallest area; shortest along X or Y; the lower left corner). Normally the other directions are tried as well
-when there are several attempts and the best layout is kept; **Try only this direction** (`--gravity-only`, `gravity_only`) keeps it to
-the one chosen.
+**Free nesting in one direction.** *Direction* (Strategy) says how the free nesting fills the sheet:
+
+| Direction | The parts | What is left |
+|---|---|---|
+| **Along X** (default) | across the sheet first, the layout grows upwards | one strip across the whole width, on top |
+| **Along Y** | up the sheet first, the layout grows to the right | one strip along the whole height, on the right |
+| **Automatic** | every direction is tried, the layout with the least area is kept | wherever that layout leaves it |
+| Smallest area / Lower left corner | gathered into the smallest rectangle / towards the corner | |
+
+A direction chosen is **kept**: only it is tried, and of its layouts the one that is shortest along it wins (then the
+least area), also when the best layout is polished, so the leftover strip is as big as it can be. With *Automatic* the
+layouts are judged by their area only and any direction may win. On the command line `--direction along_x` (the older
+`--gravity` / `--gravity-only` still work); in the engine `gravity` + `gravity_only` (`nesting.nest.DIRECTIONS`).
+Settings saved before *Direction* existed are read as Along X, or as the direction they were kept to.
 
 ## Speed, progress and cancelling
 
@@ -165,15 +175,16 @@ attempts*, fewer outline points. On the command line: `--max-points N`.
 
 Nesting places the parts one by one at the best place of the feasible area. What "best" is and in which
 order the parts come decides how much of the sheet is used, so several layouts are made and the best one
-is kept: **Optimisation attempts** (default 8; 1 is one quick pass).
+is kept: **Optimisation attempts** (default 30; 1 is one quick pass).
 
-* The first attempt puts the biggest parts first towards the side chosen in *Pack towards*. The following ones
-  try the other directions (left, bottom, smallest area, shortest layout along X or Y) and other orders of
+* The first attempt puts the biggest parts first in the *Direction* chosen. The following ones
+  try (with *Automatic* only) the other directions (left, bottom, smallest area, shortest layout along X or Y) and other orders of
   the parts (by area, longest side, height, width). After those the best order is shuffled a little.
 * A layout is better when it places more parts, then uses fewer (cheaper) sheets, then uses less of the last
-  sheet (the rectangle round the parts on it), then reaches less far.
+  sheet: with a direction chosen it is shorter along it, otherwise the rectangle round the parts on it is smaller.
 * The best layout is polished: the parts that set its extent are taken out and put back where they fit best,
-  while the others stay; a move is kept when the rectangle round everything gets smaller.
+  while the others stay; a move is kept when the layout gets shorter along the direction chosen (Automatic: when the
+  rectangle round everything gets smaller).
 * The work is shared between the attempts (the no-fit polygons are made once), so ten attempts cost a lot
   less than ten times one. The result is the same every time for the same settings.
 

@@ -57,7 +57,14 @@ with Python plugins.
   between crossings)
 - Rulers and draggable guide lines; snapping to nodes, midpoints, arc centres, sheet corners,
   guides and the grid
-- Selection with move / scale / rotate handles, window and crossing selection, nudging
+- Selection with move / scale / rotate handles, window and crossing selection, nudging. A selection is dragged from
+  anywhere inside its box (a rectangle's empty middle too); the handles stand just outside it, and a small selection has
+  only its corner handles. **Vectors ▸ Edit ▸ Resize Handles (Mouse)** switches the handles off (drag only). The arrow keys
+  move a selection by an **automatic** step that follows the zoom (a round number of about 10 pixels: far moves more, close
+  finer) or a **fixed** one (**Vectors ▸ Edit ▸ Arrow Key Step**, also in Preferences); Shift ×10, Ctrl ÷10; with
+  snapping to the grid on, the fixed step is the grid's
+- A new toolpath starts from the default settings every time (allowance, depths, passes ...); only the tool chosen last
+  for that kind of toolpath is kept
 - **Node editing**: drag nodes and bezier handles, insert / delete nodes, convert spans
   (line / arc / bezier), set the start point, break, close, reverse
 - Vector commands: offset (round / sharp), weld, subtract, intersect, join with tolerance,

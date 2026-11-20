@@ -102,6 +102,25 @@ class NestSettings:
 
 
 GRAVITIES = ("left", "bottom", "compact", "reach_x", "reach_y", "diag")
+
+# The directions offered in the nesting window: ``(gravity, gravity_only)``. A direction chosen is tried alone, so the
+# layout keeps it (with the others tried too the one with the least area wins, whatever was chosen).
+DIRECTIONS = {
+    "along_x": ("bottom", True),     # the parts fill the width first; the leftover is a strip across the top
+    "along_y": ("left", True),       # the parts fill the height first; the leftover is on the right
+    "auto": ("bottom", False),       # every direction is tried, the least area is kept
+    "compact": ("compact", True),    # the smallest rectangle round the parts
+    "diag": ("diag", True),          # towards the lower left corner
+}
+DEFAULT_DIRECTION = "along_x"
+
+
+def direction_of(gravity: str | None, gravity_only: bool | None) -> str:
+    """The direction of the window for settings stored before it had one (``gravity`` / ``gravity_only``)."""
+    if not gravity_only:
+        return DEFAULT_DIRECTION
+    return {"bottom": "along_x", "reach_y": "along_x", "left": "along_y", "reach_x": "along_y",
+            "compact": "compact", "diag": "diag"}.get(gravity or "", DEFAULT_DIRECTION)
 STOCK_ORDERS = ("leftovers", "listed", "largest", "best")
 ARRANGEMENTS = ("free", "rows", "columns")
 CORNERS = ("bl", "br", "tl", "tr")
@@ -1195,17 +1214,32 @@ class Nester:
                 out.append((order, g))
         return out
 
+    def growth_axis(self) -> int | None:
+        """The axis the layout grows along when one direction was chosen (``gravity_only``): 1 (Y) when the parts
+        fill the width first (``bottom``, ``reach_y``: the leftover is a strip across the top), 0 (X) when they fill
+        the height first (``left``, ``reach_x``: the leftover is on the right); ``None``: any direction."""
+        if not self.st.gravity_only or self.st.arrange != "free":
+            return None
+        return {"bottom": 1, "reach_y": 1, "left": 0, "reach_x": 0}.get(self.st.gravity)
+
+    def _extent_cost(self, x0: float, y0: float, x1: float, y1: float) -> tuple[float, float]:
+        """How much of the plate a layout takes (smaller is better): along the direction chosen its length there,
+        then its area; with no direction its area, then its reach."""
+        area = (x1 - x0) * (y1 - y0)
+        axis = self.growth_axis()
+        if axis == 1:
+            return round(y1, 1), round(area, 1)
+        if axis == 0:
+            return round(x1, 1), round(area, 1)
+        return round(area, 1), round(x1 + y1, 1)
+
     def quality(self, r: NestResult) -> tuple:
-        """What is better: everything placed, then fewer (cheaper) plates, then the least area used on the
-        last plate (the rectangle round the parts on it), then the shorter reach."""
+        """What is better: everything placed, then fewer (cheaper) plates, then the least of the last plate used:
+        with a direction chosen the shortest layout along it (the biggest leftover strip), else the least area
+        (the rectangle round the parts on it), then the shorter reach."""
         cost = sum(self.boxes[i].material for i in r.stock if not self.boxes[i].c.leftover)
-        if r.used:
-            x0, y0, x1, y1 = r.used[-1]
-            area, reach = (x1 - x0) * (y1 - y0), x1 + y1
-        else:
-            area = reach = 0.0
-        return (len(r.unplaced), cost, r.sheets, -sum(r.utilization[:-1]) if r.sheets > 1 else 0.0,
-                round(area, 1), round(reach, 1))
+        ext = self._extent_cost(*r.used[-1]) if r.used else (0.0, 0.0)
+        return (len(r.unplaced), cost, r.sheets, -sum(r.utilization[:-1]) if r.sheets > 1 else 0.0) + ext
 
     # -- polishing ----------------------------------------------------------------------
     def _bbox_of(self, items: list[tuple]):
@@ -1229,7 +1263,7 @@ class Nester:
             return 0
 
         def cost(bb):
-            return ((bb[2] - bb[0]) * (bb[3] - bb[1]), bb[2] + bb[3])
+            return self._extent_cost(*bb)
         cur = cost(self._bbox_of(items))
         saved, kept = self.gravity, 0
         self.gravity = "compact"  # put a part where the rectangle round everything grows least
@@ -1261,7 +1295,8 @@ class Nester:
                 if not ok:
                     continue
                 new = cost(self._bbox_of(new_rest))
-                if new[0] < cur[0] * (1 - 1e-9) - 1e-6 or (abs(new[0] - cur[0]) <= 1e-6 * cur[0] and new[1] < cur[1] - 1):
+                if new[0] < cur[0] * (1 - 1e-9) - 1e-6 or (abs(new[0] - cur[0]) <= 1e-6 * max(cur[0], 1.0)
+                                                           and new[1] < cur[1] * (1 - 1e-9) - 1):
                     items, cur, kept = new_rest, new, kept + 1
         finally:
             self.gravity = saved

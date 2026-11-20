@@ -96,7 +96,14 @@ def test_scale_and_rotate_handles(win):
     ctrl.settings.snap_objects = False
     ctrl.add_vectors([VectorObject([shapes.rectangle(100, 100, 100, 50)], ctrl.layer_id)])
     o = ctrl.sheet.vectors[0]
-    drag(cv, (200, 150), (300, 200))  # NE corner, proportional
+    # the NE handle stands a little outside the corner; dragging it by (100, 50) mm moves the corner as much (proportional)
+    pa = cv.tool._handles()["ne"].toPoint()
+    d = at(cv, 300, 200) - at(cv, 200, 150)
+    QTest.mousePress(cv, Qt.LeftButton, Qt.NoModifier, pa)
+    for t in (0.5, 1.0):
+        QTest.mouseMove(cv, QPoint(int(pa.x() + d.x() * t), int(pa.y() + d.y() * t)))
+    QTest.mouseRelease(cv, Qt.LeftButton, Qt.NoModifier, pa + d)
+    QApplication.processEvents()
     bb = o.bbox()
     assert bb.width == pytest.approx(200, abs=3) and bb.xmin == pytest.approx(100, abs=1)
     handles = cv.tool._handles()
@@ -916,3 +923,95 @@ def test_plates_with_quantities_then_the_reserve_in_the_nesting_dialog(win):
     nd.qty[0].setValue(120)
     out = nd.run()
     assert out.unplaced > 0 and len(out.sheets) == 3
+
+
+# -- dragging a small selection, the handles switch, the arrow key step -----------------------------------------------
+def _small_rect(win, w=20.0, h=12.0):
+    ctrl = win.ctrl
+    ctrl.settings.snap_objects = False
+    ctrl.settings.snap_align = False
+    ctrl.add_vectors([VectorObject([shapes.rectangle(100, 100, w, h)], ctrl.layer_id)])
+    win.canvas.zoom_extents()
+    QApplication.processEvents()
+    return ctrl.sheet.vectors[-1]
+
+
+def test_a_small_selected_rectangle_is_dragged_from_inside_or_its_edge_not_resized(win):
+    cv = win.canvas
+    o = _small_rect(win)
+    r = cv.tool._screen_box()
+    assert r.width() < cv.tool.SMALL                  # small on the screen: only the corner handles, outside the box
+    hs = cv.tool._handles()
+    assert set(hs) == {"nw", "ne", "se", "sw", "rot"}
+    assert not any(r.contains(q) for k, q in hs.items())
+    drag(cv, (110, 106), (160, 136))                 # from the empty middle
+    bb = o.bbox()
+    assert (bb.xmin, bb.ymin) == (pytest.approx(150, abs=1.5), pytest.approx(130, abs=1.5))
+    assert (bb.width, bb.height) == (pytest.approx(20, abs=0.01), pytest.approx(12, abs=0.01))
+    drag(cv, (160, 130), (180, 130))                 # from the middle of its bottom edge: moved, not resized
+    bb = o.bbox()
+    assert bb.xmin == pytest.approx(170, abs=1.5) and bb.width == pytest.approx(20, abs=0.01)
+
+
+def test_resize_handles_can_be_switched_off_in_vectors_edit(win):
+    cv, ctrl = win.canvas, win.ctrl
+    o = _small_rect(win, 200.0, 120.0)
+    assert set(cv.tool._handles()) >= {"n", "e", "s", "w"}          # big enough: middle handles too
+    vec = next(a.menu() for a in win.menuBar().actions() if a.text().replace("&", "") == "Vectors")
+    edit = next(a.menu() for a in vec.actions() if a.menu() and a.text().replace("&", "") == "Edit")
+    act = next(a for a in edit.actions() if "Resize Handles" in a.text().replace("&", ""))
+    act.trigger()
+    assert ctrl.settings.resize_handles is False and cv.tool._handles() == {}
+    QTest.mousePress(cv, Qt.LeftButton, Qt.NoModifier, at(cv, 300, 220))  # the corner itself: a drag, not a resize
+    QTest.mouseMove(cv, at(cv, 320, 220))
+    QTest.mouseRelease(cv, Qt.LeftButton, Qt.NoModifier, at(cv, 320, 220))
+    QApplication.processEvents()
+    bb = o.bbox()
+    assert bb.width == pytest.approx(200, abs=0.01) and bb.xmin == pytest.approx(120, abs=1.5)
+    act.trigger()
+    assert ctrl.settings.resize_handles is True
+
+
+def test_the_arrow_key_step_follows_the_zoom_or_is_fixed(win):
+    from iyicam.gui.tools import nice_step, nudge_step
+    cv, ctrl = win.canvas, win.ctrl
+    o = _small_rect(win)
+    ctrl.settings.nudge_mode = "auto"
+    far = nudge_step(ctrl.settings, cv.px(1.0))
+    x = o.bbox().xmin
+    QTest.keyClick(cv, Qt.Key_Right)
+    assert o.bbox().xmin - x == pytest.approx(far)
+    assert far == nice_step(far) and far == pytest.approx(10 * cv.px(1.0), rel=0.6)   # a round number of about 10 px
+    cv.scale *= 20                                                                     # much closer
+    near = nudge_step(ctrl.settings, cv.px(1.0))
+    assert near < far
+    x = o.bbox().xmin
+    QTest.keyClick(cv, Qt.Key_Right, Qt.ShiftModifier)
+    assert o.bbox().xmin - x == pytest.approx(10 * near)
+    win.set_nudge("fixed", 1.0)
+    x = o.bbox().xmin
+    QTest.keyClick(cv, Qt.Key_Left)
+    assert x - o.bbox().xmin == pytest.approx(1.0) and win.nudge_actions[1.0].isChecked()
+    ctrl.settings.snap_grid, ctrl.settings.grid = True, 5.0          # snapping to the grid: the fixed step is the grid
+    y = o.bbox().ymin
+    QTest.keyClick(cv, Qt.Key_Up)
+    assert o.bbox().ymin - y == pytest.approx(5.0)
+    win.set_nudge("auto")
+    assert win.nudge_actions["auto"].isChecked()
+
+
+def test_nice_steps():
+    from iyicam.gui.tools import nice_step
+    assert [nice_step(v) for v in (0.0004, 0.013, 0.7, 1.4, 3.3, 7.5, 40.0, 5000.0)] == \
+        [0.001, 0.01, 0.5, 1.0, 5.0, 10.0, 50.0, 1000.0]
+
+
+def test_preferences_set_the_handles_and_the_step(win):
+    from iyicam.gui.dialogs import PreferencesDialog
+    ctrl = win.ctrl
+    dlg = PreferencesDialog(ctrl, win)
+    dlg.form.set_values({"resize_handles": False, "nudge_mode": "fixed", "nudge_step": 2.5})
+    dlg.accept()
+    s = ctrl.settings
+    assert (s.resize_handles, s.nudge_mode, s.nudge_step) == (False, "fixed", pytest.approx(2.5))
+    assert not win.handles_action.isChecked() and win.nudge_actions["custom"].isChecked()

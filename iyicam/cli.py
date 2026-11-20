@@ -266,6 +266,9 @@ def cmd_nest(a) -> int:
         except ValueError as e:
             print(f"--rotate-layer: {e}", file=sys.stderr)
             return 2
+    if a.direction:
+        from .nesting.nest import DIRECTIONS
+        a.gravity, a.gravity_only = DIRECTIONS[a.direction]
     st = NestSettings(a.width, a.height, a.margin, a.spacing, rots, a.gravity, iterations=a.iterations,
                       time_limit=a.time_limit, max_points=a.max_points, squeeze_angle=a.squeeze_angle,
                       squeeze_margin=a.squeeze_margin,
@@ -411,6 +414,9 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--gravity", default="left", choices=["left", "bottom", "compact", "reach_x", "reach_y", "diag"])
     s.add_argument("--gravity-only", action="store_true",
                    help="free nesting: try only the --gravity direction (not the other directions as well)")
+    s.add_argument("--direction", choices=["along_x", "along_y", "auto", "compact", "diag"],
+                   help="free nesting, as in the window: along_x fills the width first (the leftover is a strip on top), "
+                        "along_y the height first; a direction is kept. Overrides --gravity / --gravity-only")
     s.add_argument("--arrange", default="free", choices=["free", "rows", "columns"],
                    help="free: the parts interlock (default); rows: lined up along X, a row at a time; "
                         "columns: lined up along Y, a column at a time")

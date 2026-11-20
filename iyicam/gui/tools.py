@@ -79,12 +79,41 @@ def _sel_bbox(objs) -> BBox:
 # selection / transform
 # ---------------------------------------------------------------------------
 
+NUDGE_PX = 10.0          # the automatic arrow key step is about this many pixels on the screen
+_NICE = (1.0, 2.0, 5.0)
+
+
+def nice_step(mm: float) -> float:
+    """The round number (1, 2 or 5 times a power of ten, 0.001 to 1000 mm) nearest ``mm`` on a log scale."""
+    mm = min(1000.0, max(0.001, mm))
+    best, bd = 1.0, math.inf
+    for e in range(-3, 4):
+        for m in _NICE:
+            v = m * 10.0 ** e
+            d = abs(math.log(v) - math.log(mm))
+            if d < bd:
+                best, bd = v, d
+    return round(best, 6)
+
+
+def nudge_step(settings, mm_per_px: float) -> float:
+    """The step of the arrow keys (mm): fixed, or (auto) a round number of about NUDGE_PX pixels at this zoom, so a far
+    view moves a lot and a close one finely. Snapping to the grid makes the fixed step the grid's."""
+    if getattr(settings, "nudge_mode", "auto") == "fixed":
+        if settings.snap_grid and settings.grid > 0:
+            return float(settings.grid)
+        return max(1e-6, float(getattr(settings, "nudge_step", 1.0) or 1.0))
+    return nice_step(NUDGE_PX * mm_per_px)
+
+
 class SelectTool(CanvasTool):
     name = "select"
     prompt = ("Click to select (Shift: add, Ctrl: toggle). Drag to move (Ctrl+drag: copy), handles to "
               "scale/rotate, double-click to edit nodes. Arrows nudge. B: start points. Transform panel: Alt+F7..F11.")
     cursor = Qt.ArrowCursor
     HANDLE = 5.0
+    GAP = 3.0             # the handles stand this many pixels outside the selection: its outline stays free to grab
+    SMALL = 44.0          # a side shorter than this on the screen has no middle handle (the corners would cover it)
 
     def __init__(self, canvas):
         super().__init__(canvas)
@@ -105,18 +134,37 @@ class SelectTool(CanvasTool):
         self.copying = False
         self.unselect_on_click = None
 
-    def _handles(self) -> dict[str, QPointF]:
+    def _screen_box(self) -> QRectF | None:
+        """The selection's box on the screen (``None``: nothing editable selected)."""
         objs = [o for o in self.ctrl.selected_objects() if self.ctrl.editable(o)]
         if not objs:
-            return {}
+            return None
         bb = _sel_bbox(objs)
-        x0, y0, x1, y1 = bb.xmin, bb.ymin, bb.xmax, bb.ymax
-        xm, ym = (x0 + x1) / 2, (y0 + y1) / 2
-        h = {"sw": (x0, y0), "se": (x1, y0), "ne": (x1, y1), "nw": (x0, y1),
-             "s": (xm, y0), "e": (x1, ym), "n": (xm, y1), "w": (x0, ym)}
-        out = {k: self.s(v) for k, v in h.items()}
-        out["rot"] = self.s((xm, y1)) + QPointF(0, -26)
+        return QRectF(self.s((bb.xmin, bb.ymax)), self.s((bb.xmax, bb.ymin))).normalized()
+
+    def _handles(self) -> dict[str, QPointF]:
+        """The handles on the screen, a little outside the selection's box; none when they are switched off
+        (Vectors > Edit > Resize Handles), no middle ones on a side too short to have room for them."""
+        if not getattr(self.ctrl.settings, "resize_handles", True):
+            return {}
+        r = self._screen_box()
+        if r is None:
+            return {}
+        d = self.HANDLE + self.GAP
+        x0, y0, x1, y1 = r.left() - d, r.top() - d, r.right() + d, r.bottom() + d   # (screen: y grows downwards)
+        xm, ym = r.center().x(), r.center().y()
+        out = {"nw": QPointF(x0, y0), "ne": QPointF(x1, y0), "se": QPointF(x1, y1), "sw": QPointF(x0, y1)}
+        if r.width() >= self.SMALL:
+            out["n"], out["s"] = QPointF(xm, y0), QPointF(xm, y1)
+        if r.height() >= self.SMALL:
+            out["w"], out["e"] = QPointF(x0, ym), QPointF(x1, ym)
+        out["rot"] = QPointF(xm, y0 - 26)
         return out
+
+    def _in_selection_box(self, pos: QPointF) -> bool:
+        """Whether the pointer is inside the box of the selection (a selected rectangle is dragged from inside it)."""
+        r = self._screen_box()
+        return r is not None and r.adjusted(-1, -1, 1, 1).contains(pos)
 
     def _handle_at(self, pos: QPointF) -> str | None:
         for k, q in self._handles().items():
@@ -136,9 +184,22 @@ class SelectTool(CanvasTool):
         if h is not None:
             self.mode = "rotate" if h == "rot" else "scale:" + h
             self.bb = _sel_bbox([o for o in self.ctrl.selected_objects() if self.ctrl.editable(o)])
+            # the handle stands a little outside the box: what it moves is the box's edge, so the pointer's distance
+            # to that edge is kept (no jump when it is taken)
+            bb = self.bb
+            ex = bb.xmin if "w" in h else bb.xmax if "e" in h else w[0]
+            ey = bb.ymin if "s" in h else bb.ymax if "n" in h else w[1]
+            self.grab_off = (ex - w[0], ey - w[1])
             return
         obj = self.canvas.hit(w)
         mods = ev.modifiers()
+        if obj is None and not (mods & (Qt.ShiftModifier | Qt.ControlModifier)) and self._in_selection_box(ev.position()):
+            # inside the box of what is selected (a rectangle's empty middle): it is dragged, the selection stays
+            self.mode = "move"
+            self.anchor = w
+            self.src, self.grab = self.canvas.move_sources(
+                [o for o in self.ctrl.selected_objects() if self.ctrl.editable(o)], w)
+            return
         if obj is not None:
             if mods & Qt.ShiftModifier:
                 self.ctrl.select([obj.id], "add")
@@ -174,7 +235,7 @@ class SelectTool(CanvasTool):
                 cv.setCursor(Qt.SizeVerCursor)
             elif h in ("e", "w"):
                 cv.setCursor(Qt.SizeHorCursor)
-            elif o is not None and o.id in self.ctrl.selection:
+            elif o is not None and o.id in self.ctrl.selection or o is None and self._in_selection_box(ev.position()):
                 cv.setCursor(Qt.SizeAllCursor)
             else:
                 cv.setCursor(Qt.ArrowCursor)
@@ -208,7 +269,8 @@ class SelectTool(CanvasTool):
             self.preview = Transform.rotate(math.radians(deg), c)
             self.say(f"Rotate {deg:.1f}° (Shift: 15° steps)")
         elif self.mode and self.mode.startswith("scale:"):
-            self.preview = self._scale_transform(self.mode[6:], cv.snap(w), ev.modifiers())
+            off = getattr(self, "grab_off", (0.0, 0.0))
+            self.preview = self._scale_transform(self.mode[6:], cv.snap((w[0] + off[0], w[1] + off[1])), ev.modifiers())
         elif self.mode == "band":
             cv.snap_done()
 
@@ -285,7 +347,7 @@ class SelectTool(CanvasTool):
             return True
         steps = {Qt.Key_Left: (-1, 0), Qt.Key_Right: (1, 0), Qt.Key_Up: (0, 1), Qt.Key_Down: (0, -1)}
         if k in steps and self.ctrl.selection:
-            g = self.ctrl.settings.grid if self.ctrl.settings.grid > 0 else 1.0
+            g = nudge_step(self.ctrl.settings, self.canvas.px(1.0))
             if ev.modifiers() & Qt.ShiftModifier:
                 g *= 10
             elif ev.modifiers() & Qt.ControlModifier:
@@ -295,6 +357,9 @@ class SelectTool(CanvasTool):
                 for o in self.ctrl.selected_objects():
                     if self.ctrl.editable(o):
                         o.transform(Transform.translate(dx * g, dy * g))
+            auto = getattr(self.ctrl.settings, "nudge_mode", "auto") != "fixed"
+            self.say(f"Nudged {self.ctrl.units.fmt(g)} ({'automatic step, follows the zoom' if auto else 'fixed step'}; "
+                     "Shift x10, Ctrl /10)")
             return True
         return False
 
@@ -321,12 +386,15 @@ class SelectTool(CanvasTool):
                 p.drawPath(cv.obj_path(o))
             p.restore()
             return
+        box = self._screen_box()
+        if box is not None:                      # (the box shows the selection also when the handles are off)
+            p.setPen(QPen(QColor("#1f78b4"), 1, Qt.DotLine))
+            p.setBrush(Qt.NoBrush)
+            p.drawRect(box)
         hs = self._handles()
         if hs:
             p.setPen(QPen(QColor("#1f78b4"), 1, Qt.DotLine))
-            p.setBrush(Qt.NoBrush)
-            p.drawRect(QRectF(hs["nw"], hs["se"]).normalized())
-            p.drawLine(hs["n"], hs["rot"])
+            p.drawLine(QPointF(box.center().x(), box.top()), hs["rot"])
             p.setPen(QPen(QColor("#1f78b4"), 1))
             p.setBrush(QBrush(QColor("white")))
             for k, q in hs.items():

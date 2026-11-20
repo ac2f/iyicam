@@ -20,6 +20,9 @@ class Settings:
     snap_align: bool = True           # level with a node (same X or same Y) when no point is near, with a dotted line
     snap_edges: bool = False          # any point on a vector (not only nodes, middles, centres and crossings)
     snap_radius: float = 10.0         # how near (screen pixels) the pointer has to be for something to catch it
+    resize_handles: bool = True       # the handles round a selection scale and rotate it with the mouse (off: drag only)
+    nudge_mode: str = "auto"          # arrow keys move by: auto (about NUDGE_PX on the screen, a round number) | fixed
+    nudge_step: float = 1.0           # mm, the step of the arrow keys when nudge_mode is fixed
     show_toolpaths: bool = True
     show_tool_width: bool = False
     show_directions: bool = False

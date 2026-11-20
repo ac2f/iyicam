@@ -23,7 +23,7 @@ from ..core.document import XY_ORIGINS, Selection, ToolpathDef
 from ..core.params import Param
 from ..core.stock import StockItem, load_stock, save_stock
 from ..core.tooling import TOOL_TYPES, Tool
-from ..nesting.nest import NestCancelled, NestSettings
+from ..nesting.nest import DEFAULT_DIRECTION, DIRECTIONS, NestCancelled, NestSettings, direction_of
 from ..nesting.parts import (ROTATION_MODES, RULE_USES_VALUE, apply_nesting, parse_angles, prepare_nesting,
                              run_nesting, squeeze_lines)
 from ..nesting.stock import leftover_of_sheet, stock_from_vectors, use_up
@@ -924,9 +924,10 @@ class ToolpathDialog(RemembersSize, QDialog):
         for p in params:
             if p.name == "cut_depth" and not self.tdef and self.op.id == "profile":
                 p.default = ctrl.project.material.thickness
-        # a new toolpath starts with the settings of the last one of its kind, but its depth is the material's
+        # a new toolpath starts from the default settings every time (allowance, depths, passes ...: nothing is carried
+        # over from the last one, which could cut a part too big or too small unnoticed); the tool chosen last is kept
         self.params = [p for p in params if not (p.name == "cut_depth" and self.op.id == "profile")]
-        values = dict(self.tdef.params) if self.tdef else ctrl.settings.recall(self.memory_key + ":params", self.params)
+        values = dict(self.tdef.params) if self.tdef else {}
         self.form = ParamForm(params, values, ctrl.units, ctrl.tools, collapse=True)
         settings_tab = QWidget()
         sl = QVBoxLayout(settings_tab)
@@ -1029,7 +1030,7 @@ class ToolpathDialog(RemembersSize, QDialog):
 
     def _remember(self) -> None:
         s = self.ctrl.settings
-        s.remember(self.memory_key + ":params", self.form.values(), self.params, save=False)
+        s.memory.pop(self.memory_key + ":params", None)      # (settings are not carried over to new toolpaths)
         s.remember(self.memory_key, {"tool": self.tool_editor.tool().to_dict(),
                                      "all_sheets": self.all_sheets.isChecked()})
 
@@ -1565,17 +1566,15 @@ class NestingDialog(RemembersSize, QDialog):
                   choices=[("bl", "Bottom left"), ("br", "Bottom right"), ("tl", "Top left"), ("tr", "Top right")],
                   group="Strategy", visible={"arrange": ["rows", "columns"]},
                   help="The first row (or column) starts here"),
-            Param("gravity", "Pack towards", "choice", "left",
-                  choices=[("left", "Left (X min)"), ("bottom", "Bottom (Y min)"), ("compact", "Smallest area"),
-                           ("reach_x", "Shortest layout along X"), ("reach_y", "Shortest layout along Y"),
-                           ("diag", "Lower left corner (diagonal)")],
+            Param("direction", "Direction", "choice", DEFAULT_DIRECTION,
+                  choices=[("along_x", "Along X (fill the width, the leftover is a strip on top)"),
+                           ("along_y", "Along Y (fill the height, the leftover is on the right)"),
+                           ("auto", "Automatic (try every direction, keep the least area)"),
+                           ("compact", "Smallest area"), ("diag", "Lower left corner (diagonal)")],
                   group="Strategy", visible={"arrange": "free"},
-                  help="The first layout is made this way; with more attempts the other "
-                  "ways are tried too and the one that uses the least of the sheet is kept"),
-            Param("gravity_only", "Try only this direction", "bool", False, group="Strategy",
-                  visible={"arrange": "free"},
-                  help="Off: the other directions are tried too (more attempts needed). On: only the one above"),
-            Param("iterations", "Optimisation attempts", "int", 8, min=1, max=200, group="Strategy",
+                  help="Along X: the parts are put across the sheet first and the layout grows upwards, so what is "
+                  "left is one strip across the whole width. A direction chosen is kept; Automatic tries them all"),
+            Param("iterations", "Optimisation attempts", "int", 30, min=1, max=200, group="Strategy",
                   help="1: one quick pass. More: other orders of the parts and other directions are tried, "
                        "the best layout (fewest sheets, least area used on the last) is kept and polished"),
             Param("time_limit", "Time limit of the search (seconds)", "int", 30, min=0, max=3600, group="Strategy",
@@ -1617,6 +1616,12 @@ class NestingDialog(RemembersSize, QDialog):
         l1.addWidget(presets)
         # everything is remembered but the sheet size, which is the current sheet's unless it is changed here
         self.memo = [p for p in params if p.name not in ("width", "height")]
+        mem = ctrl.settings.recall("nesting")
+        if "direction" not in mem and ("gravity" in mem or "gravity_only" in mem):   # (stored before Direction)
+            mem = dict(mem, direction=direction_of(mem.get("gravity"), mem.get("gravity_only")))
+            if mem.get("iterations") == 8:          # (the old default: the new one finds tighter layouts)
+                mem["iterations"] = 30
+            ctrl.settings.remember("nesting", mem, save=False)
         self.form = ParamForm(params, ctrl.settings.recall("nesting", self.memo), ctrl.units)
         self._grouped = False
         self._memory: dict = {"qty": {}, "rules": {}, "layer_rules": {}}   # what was set for parts that left the table
@@ -1844,9 +1849,10 @@ class NestingDialog(RemembersSize, QDialog):
         """Nest; the outcome, or ``None`` when cancelled (nothing is changed then)."""
         v = self.form.values()
         squeezing = v["squeeze"] != "off"
-        st = NestSettings(v["width"], v["height"], v["margin"], v["spacing"], self.rotations(v), v["gravity"],
+        gravity, only = DIRECTIONS.get(v["direction"], DIRECTIONS[DEFAULT_DIRECTION])
+        st = NestSettings(v["width"], v["height"], v["margin"], v["spacing"], self.rotations(v), gravity,
                           iterations=v["iterations"], time_limit=float(v["time_limit"]), tolerance=v["tolerance"],
-                          max_points=v["max_points"], gravity_only=bool(v["gravity_only"]), arrange=v["arrange"],
+                          max_points=v["max_points"], gravity_only=only, arrange=v["arrange"],
                           corner=v["corner"], stock_order=v["plate_order"], reserve_quantity=int(v["reserve_quantity"]),
                           squeeze_angle=v["squeeze_angle"] if squeezing else 0.0,
                           squeeze_margin=v["squeeze_margin"] if squeezing else 0.0,
@@ -3083,6 +3089,12 @@ class PreferencesDialog(QDialog):
             Param("snap_edges", "Snap to any point on a vector", "bool", s.snap_edges),
             Param("snap_radius", "Snap reach (pixels)", "float", s.snap_radius, min=2.0, max=60.0,
                   help="How near the pointer has to be for something to catch it; the same at every zoom"),
+            Param("resize_handles", "Resize handles round a selection (mouse)", "bool", s.resize_handles,
+                  help="Off: a selection is only dragged, from anywhere inside it (also Vectors > Edit)"),
+            Param("nudge_mode", "Arrow key step", "choice", s.nudge_mode,
+                  choices=[("auto", "Automatic (follows the zoom: far moves more, close finer)"), ("fixed", "Fixed")]),
+            Param("nudge_step", "Fixed arrow key step", "length", s.nudge_step, min=0.001, visible={"nudge_mode": "fixed"},
+                  help="Shift: 10 times, Ctrl: a tenth"),
             Param("auto_recalculate", "Recalculate toolpaths automatically after every edit", "bool", s.auto_recalculate),
             Param("calculate_on_open", "Calculate the toolpaths of a project when it is opened", "bool", s.calculate_on_open),
             Param("show_directions", "Show direction arrows", "bool", s.show_directions),
@@ -3105,6 +3117,8 @@ class PreferencesDialog(QDialog):
         self.ctrl.set_units(v["units"])
         if hasattr(window, "sync_snap"):
             window.sync_snap()
+        if hasattr(window, "sync_edit_options"):
+            window.sync_edit_options()
         if hasattr(window, "set_theme"):
             window.set_theme(v["theme"])
         else:

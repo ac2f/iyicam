@@ -169,7 +169,7 @@ def test_new_project_and_material_setup_are_remembered(sess):
 
 
 # -- toolpaths ----------------------------------------------------------------------------------------------
-def test_toolpath_settings_and_tool_are_remembered_per_kind(sess):
+def test_toolpath_tool_is_remembered_per_kind_but_settings_start_from_the_defaults(sess):
     from conftest import end_mill
     win, robot, c = sess.win, sess.robot, sess.ctrl
     obj = VectorObject([shapes.rectangle(10, 10, 100, 60)], c.layer_id)
@@ -202,8 +202,12 @@ def test_toolpath_settings_and_tool_are_remembered_per_kind(sess):
     win.new_toolpath("profile")
     v = made["values"]
     assert made["tool"].diameter == 8.0 and made["tool"].feed_rate == 4321 and made["all_sheets"] is False
-    assert (v["side"], v["overcut"], v["allowance"], v["tabs"], v["tab_count"], v["through"]) == \
-        ("outside", 0.7, 0.4, True, 6, False)          # (inside / outside starts at outside every time)
+    # every value of a new toolpath is the default again (an allowance left from the last one cut parts wrong)
+    from iyicam.core.registry import REGISTRY
+    defaults = {p.name: p.default for p in REGISTRY.operations["profile"].params()}
+    for k in ("side", "overcut", "allowance", "tabs", "tab_count", "through"):
+        assert v[k] == pytest.approx(defaults[k]) if isinstance(defaults[k], float) else v[k] == defaults[k], k
+    assert v["allowance"] == pytest.approx(0.0) and v["tabs"] is False
     # the depth of a cut follows the material of the project, not what was typed last time
     assert v["cut_depth"] == pytest.approx(c.project.material.thickness)
     assert made["name"] != "My cut"                      # names are not remembered
@@ -248,7 +252,7 @@ def test_nesting_settings_are_remembered_but_the_sheet_size_follows_the_sheet(se
     objs = [VectorObject([shapes.rectangle(0, 0, 100, 60)], c.layer_id, f"P{i}") for i in range(3)]
     c.add_vectors(objs, select=False)
     nd = NestingDialog(c, sess.win)
-    set_form(nd, spacing=11.0, margin=7.0, rotation="45", gravity="reach_x", iterations=5, group_inner=True,
+    set_form(nd, spacing=11.0, margin=7.0, rotation="45", direction="along_y", iterations=5, group_inner=True,
              fill_holes=True, squeeze="ask", squeeze_angle=4.0, tolerance=0.3, width=999.0)
     nd.qty[0].setValue(3)
     nd.accept()
@@ -258,11 +262,26 @@ def test_nesting_settings_are_remembered_but_the_sheet_size_follows_the_sheet(se
     c.add_vectors([VectorObject([shapes.rectangle(0, 0, 100, 60)], c.layer_id, "P")], select=False)
     nd = NestingDialog(c, sess.win)
     v = nd.form.values()
-    assert (v["spacing"], v["margin"], v["rotation"], v["gravity"], v["iterations"]) == (11.0, 7.0, "45", "reach_x", 5)
+    assert (v["spacing"], v["margin"], v["rotation"], v["direction"], v["iterations"]) == (11.0, 7.0, "45", "along_y", 5)
     assert v["group_inner"] and v["fill_holes"] and v["squeeze"] == "ask" and v["squeeze_angle"] == 4.0
     assert v["tolerance"] == pytest.approx(0.3)
     assert v["width"] == c.sheet.width            # the size of the sheet, not the one typed last time
     assert sess.robot.problems() == []
+
+
+def test_nesting_direction_is_along_x_at_first_and_old_settings_are_read(sess):
+    from iyicam.gui.dialogs import NestingDialog
+    c = sess.ctrl
+    c.add_vectors([VectorObject([shapes.rectangle(0, 0, 100, 60)], c.layer_id, "P")], select=False)
+    v = NestingDialog(c, sess.win).form.values()
+    assert v["direction"] == "along_x" and v["iterations"] == 30
+    # settings kept before the window had Direction: the direction they were kept to (or Along X), the old default
+    # number of attempts becomes the new one
+    c.settings.remember("nesting", {"gravity": "left", "gravity_only": True, "iterations": 8})
+    assert NestingDialog(c, sess.win).form.values()["direction"] == "along_y"
+    c.settings.remember("nesting", {"gravity": "reach_x", "gravity_only": False, "iterations": 8})
+    v = NestingDialog(c, sess.win).form.values()
+    assert v["direction"] == "along_x" and v["iterations"] == 30
 
 
 def test_part_quantities_stay_with_the_project(sess):

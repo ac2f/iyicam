@@ -459,6 +459,70 @@ class MainWindow(QMainWindow):
         self._toggle(key, bool(value))
         self.sync_snap()
 
+    NUDGE_PRESETS = (0.1, 1.0, 10.0)
+
+    def _edit_options(self, menu: QMenu) -> None:
+        """Vectors > Edit: the resize handles on or off, and the step of the arrow keys."""
+        s = self.ctrl.settings
+        menu.addSeparator()
+        self.handles_action = self._act(menu, "Resize &Handles (Mouse)", self.set_resize_handles, None, True,
+                                        s.resize_handles)
+        self.handles_action.setToolTip("On: the handles round a selection scale and rotate it with the mouse. Off: a "
+                                       "selection is only dragged, from anywhere inside it (the Transform panel still scales)")
+        sub = menu.addMenu("&Arrow Key Step")
+        group = QActionGroup(self)
+        self.nudge_actions = {}
+        self.nudge_actions["auto"] = self._act(sub, "&Automatic (follows the zoom)", lambda: self.set_nudge("auto"),
+                                               None, True)
+        sub.addSeparator()
+        for mm in self.NUDGE_PRESETS:
+            self.nudge_actions[mm] = self._act(sub, f"{mm:g} mm", lambda v=mm: self.set_nudge("fixed", v), None, True)
+        self.nudge_actions["custom"] = self._act(sub, "&Custom...", self._custom_nudge, None, True)
+        for a in self.nudge_actions.values():
+            group.addAction(a)
+        self.sync_edit_options()
+
+    def set_resize_handles(self, on: bool) -> None:
+        self.ctrl.settings.resize_handles = bool(on)
+        self.ctrl.settings.save()
+        self.canvas.update()
+        self.statusBar().showMessage("Resize handles " + ("on" if on else "off: drag a selection from anywhere inside it"),
+                                     5000)
+
+    def set_nudge(self, mode: str, step: float | None = None) -> None:
+        s = self.ctrl.settings
+        s.nudge_mode = mode
+        if step is not None:
+            s.nudge_step = float(step)
+        s.save()
+        self.sync_edit_options()
+        self.statusBar().showMessage("Arrow keys: " + ("automatic step (about 10 pixels, a round number)" if mode == "auto"
+                                                       else f"{self.ctrl.units.fmt(s.nudge_step)} per press"), 5000)
+
+    def _custom_nudge(self) -> None:
+        from PySide6.QtWidgets import QInputDialog
+        s, u = self.ctrl.settings, self.ctrl.units
+        v, ok = QInputDialog.getDouble(self, "Arrow Key Step", f"Step ({u.name}):", u.to_display(s.nudge_step),
+                                       0.001, 10000.0, 3)
+        if ok and v > 0:
+            self.set_nudge("fixed", u.from_display(v))
+        else:
+            self.sync_edit_options()
+
+    def sync_edit_options(self) -> None:
+        s = self.ctrl.settings
+        if getattr(self, "handles_action", None) is not None and self.handles_action.isChecked() != s.resize_handles:
+            self.handles_action.setChecked(s.resize_handles)
+        acts = getattr(self, "nudge_actions", None)
+        if not acts:
+            return
+        if s.nudge_mode != "fixed":
+            key = "auto"
+        else:
+            key = next((mm for mm in self.NUDGE_PRESETS if abs(mm - s.nudge_step) < 1e-9), "custom")
+        acts[key].setChecked(True)
+        acts["custom"].setText("&Custom..." if key != "custom" else f"&Custom ({self.ctrl.units.fmt(s.nudge_step)})...")
+
     def sync_snap(self) -> None:
         s = self.ctrl.settings
         for key, a in getattr(self, "snap_actions", {}).items():
@@ -586,6 +650,7 @@ class MainWindow(QMainWindow):
         subs = self._command_menus(m, "Vectors")
         if "/Transform" in subs:
             self._transform_panel_actions(subs["/Transform"])
+        self._edit_options(subs.get("/Edit") or m.addMenu("Edit"))
 
         m = mb.addMenu("&Toolpaths")
         new = m.addMenu("&New Toolpath")
