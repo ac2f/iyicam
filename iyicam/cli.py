@@ -451,7 +451,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--no-project-stock", action="store_true", help="ignore the stock saved in the project")
     s.add_argument("--no-new-sheets", action="store_true", help="only use the leftovers and stock plates")
     s.add_argument("--keep-stock", action="store_true", help="do not take the plates used out of the project's stock")
-    s.add_argument("--max-points", type=int, default=40,
+    s.add_argument("--max-points", type=int, default=300,
                    help="points per part outline; more are simplified (much faster, a little looser), 0 = no limit")
     s.add_argument("--angles", metavar="LIST", help="any angles in degrees, e.g. 0,22.5,90 (instead of --rotation)")
     s.add_argument("--rotate-layer", action="append", metavar="LAYER=RULE",

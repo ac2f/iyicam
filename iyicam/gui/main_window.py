@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import html
 import json
+import math
 import traceback
 from pathlib import Path
 
@@ -1092,9 +1093,16 @@ class MainWindow(QMainWindow):
         """Open a project in a new tab (in the open one when that has never been used); one that is open
         already is shown instead."""
         if not path:
+            reg = self.ctrl.registry
+            exts = sorted({e for imp in reg.importers.values() for e in imp.extensions})
+            draw = " ".join(f"*.{e}" for e in exts)
             path = open_file(self, self.ctrl.settings, "project", "Open project",
-                             "iyiCAM project (*.icam);;All files (*)")
+                             f"Projects and drawings (*.icam {draw});;iyiCAM project (*.icam);;Drawings ({draw});;"
+                             "All files (*)")
         if not path:
+            return
+        if not str(path).lower().endswith(".icam") and self.ctrl.registry.importer_for(Path(path).suffix) is not None:
+            self.open_drawing(path)
             return
         same = self.tab_of_path(path)
         if same is not None:
@@ -1111,6 +1119,43 @@ class MainWindow(QMainWindow):
         if not fresh:
             self._attach(c)
         self._doc_changed(c)
+
+    def open_drawing(self, path: str) -> list[VectorObject]:
+        """A drawing (CorelDRAW, DXF, SVG, PLT ...) opened as a new project in a new tab (in the open one when that has
+        never been used), named after the file. The drawing sits on the sheet from its lower left corner, and the sheet
+        is the size of the drawing's page (CorelDRAW), or of the drawing when that is bigger than the sheet."""
+        from ..core.geom import BBox, Transform
+        fresh = self.ctrl.pristine
+        c = self.ctrl if fresh else Controller(self.ctrl.registry, self.ctrl.settings, self.ctrl.tools)
+        c.busy_parent = self
+        if not fresh:
+            self._attach(c)
+        c.project.name = Path(path).stem
+        objs = self.import_vectors(path, {})
+        if not objs:
+            if not fresh and not any(s.vectors for s in c.project.sheets):
+                self.close_tab(self._index_of(c))
+            return []
+        bb = BBox()
+        for o in objs:
+            bb = bb.union(o.bbox())
+        if bb.xmin < -1e-6 or bb.ymin < -1e-6:          # (a drawing off the corner of the sheet is moved onto it)
+            T = Transform.translate(-min(bb.xmin, 0.0), -min(bb.ymin, 0.0))
+            for o in objs:
+                o.transform(T)
+            bb = BBox()
+            for o in objs:
+                bb = bb.union(o.bbox())
+        page = getattr(self.last_import_report, "page", None)
+        s = c.sheet
+        w, h = page if page and bb.xmax <= page[0] + 1.0 and bb.ymax <= page[1] + 1.0 else (s.width, s.height)
+        s.width, s.height = max(w, math.ceil(bb.xmax - 1e-6)), max(h, math.ceil(bb.ymax - 1e-6))
+        c.undo_stack.clear()                    # (a document that was just opened has nothing to undo)
+        c.dirty = False
+        c.changed.emit()
+        self.canvas.zoom_extents()
+        self._doc_changed(c)
+        return objs
 
     def restore_tabs(self) -> None:
         """Open the projects that were open when the program was closed."""

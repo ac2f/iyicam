@@ -19,6 +19,7 @@ class ImportReport:
     errors: list[str] = field(default_factory=list)     # things that failed (one line each)
     notes: list[str] = field(default_factory=list)      # things worth knowing that are not faults
     via: str = ""                                       # how a file was read when it took a converter ("CorelDRAW X3 (builtin)")
+    page: tuple[float, float] | None = None             # the size of the drawing's page (mm), when the file has one
 
     @property
     def clean(self) -> bool:

@@ -20,7 +20,7 @@ from iyicam.formats import cdr, cdr_native as N
 from iyicam.formats.cdr import CdrError, import_cdr, sniff
 from iyicam.formats.report import ImportReport
 
-NEWER = [1900, 2000, 2100, 2200, 2300, 2400, 2500, 2600, 2700, 2800, 3500]        # 2017 ... 2026, and 'Z'
+NEWER = [1900, 2000, 2100, 2200, 2300, 2400, 2500, 2600, 2700, 2800, 3500]        # 2017 ... 28, and 'Z' (2026 is 29: test_cdr2026)
 
 
 def T(tx, ty, s=1.0):
@@ -63,7 +63,7 @@ def test_a_file_of_a_newer_version_is_read_with_the_rules_of_x8_and_said_to_be_n
 def test_the_import_says_what_it_is_and_asks_to_check_it(tmp_path, compress):
     f = make(tmp_path, 2800, compress=compress)
     p, objs, rep = read(f)
-    assert len(objs) == 2 and rep.via == "CorelDRAW 2026 (builtin)"
+    assert len(objs) == 2 and rep.via == "CorelDRAW 28 (builtin)"
     note = " ".join(rep.notes)
     assert "newer than CorelDRAW X8" in note and "CHECK THE SIZE" in note and "X8" in note
     _, _, x8 = read(make(tmp_path, 1800, "x8.cdr", compress=compress))
@@ -140,7 +140,7 @@ def test_a_newer_file_that_is_all_zeros_after_its_header_is_refused_with_the_adv
     with pytest.raises(CdrError) as e:
         read(f)
     assert e.value.code == "cdr_version" and e.value.params["version"] == 28 and "Save As" in str(e.value)
-    assert "2026" in str(e.value)
+    assert "CorelDRAW 28" in str(e.value)
 
 
 def test_a_version_character_no_corel_draw_has_used_is_refused(tmp_path):
@@ -209,7 +209,7 @@ def test_a_compression_that_python_cannot_read_is_said_with_its_name(tmp_path):
 def test_diagnose_tells_what_a_file_is_made_of_and_nothing_of_the_drawing(tmp_path):
     f = make(tmp_path, 2800, external=True, compress=False)
     d = N.diagnose(f)
-    assert d["container"] == "zip" and d["version"] == 2800 and d["version_name"] == "2026" and d["newer_than_x8"]
+    assert d["container"] == "zip" and d["version"] == 2800 and d["version_name"] == "28" and d["newer_than_x8"]
     assert d["form"] == "CDRS" and d["main"] == "content/root.dat" and d["external_streams"] >= 1
     assert d["scan"]["ok"] and d["scan"]["lists"]["page"] >= 1 and d["scan"]["lists"]["obj "] >= 2
     assert d["scan"]["chunks_in_other_streams"] > 0 and 2800 in d["scan"]["file_versions"]

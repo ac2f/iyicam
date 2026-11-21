@@ -18,6 +18,7 @@ What cannot be read (bitmaps, text) is said, never dropped silently; a file newe
 """
 from __future__ import annotations
 
+import math
 import os
 import re
 import shlex
@@ -45,7 +46,7 @@ LAST_READ_VERSION = 18           # CorelDRAW X8: the newest version libcdr reads
 
 VERSION_NAMES = {5: "5", 6: "6", 7: "7", 8: "8", 9: "9", 10: "10", 11: "11", 12: "12", 13: "X3", 14: "X4", 15: "X5", 16: "X6",
                  17: "X7", 18: "X8", 19: "2017", 20: "2018", 21: "2019", 22: "2020", 23: "2021", 24: "2022",
-                 25: "2023", 26: "2024", 27: "2025", 28: "2026"}
+                 25: "2023", 26: "2024", 27: "2025", 28: "28", 29: "2026"}
 
 INSTALL_HINT = ("Nothing has to be installed for most files. For the others LibreOffice (libreoffice.org) or, on Linux, the "
                 "libcdr tools (apt install libcdr-tools) are used when they are on the computer. Or export the drawing from "
@@ -390,6 +391,33 @@ def _native_objects(drawing, project: Project, sheet: Sheet, layer_id: str | Non
     return objs
 
 
+def _page_of(path, scale: float) -> tuple[float, float] | None:
+    """The size of the first page (mm), when the built-in reader can tell it."""
+    try:
+        d = cdr_native.read(path)
+        return d.page.width * scale, d.page.height * scale
+    except Exception:  # noqa: BLE001  (the page is only a help)
+        return None
+
+
+def _onto_sheet(objs: list[VectorObject], page: tuple[float, float] | None, tol: float = 1.0) -> None:
+    """A drawing on its page keeps its place (the lower left corner of the page is the corner of the sheet); a drawing
+    that is not on the page (drawn beside a small page, as sign makers often do) is moved so that its own lower left
+    corner is there: it is never put off the sheet."""
+    from ..core.geom import BBox, Transform
+    bb = BBox()
+    for o in objs:
+        bb = bb.union(o.bbox())
+    if bb.empty:
+        return
+    w, h = page if page else (math.inf, math.inf)
+    if bb.xmin >= -tol and bb.ymin >= -tol and bb.xmax <= w + tol and bb.ymax <= h + tol:
+        return
+    T = Transform.translate(-bb.xmin, -bb.ymin)
+    for o in objs:
+        o.transform(T)
+
+
 def _finite(drawing) -> bool:
     for sh in drawing.page.shapes:
         for c in sh.contours:
@@ -447,6 +475,8 @@ def import_cdr(path: str | Path, project: Project, sheet: Sheet, layer_id: str |
                     failures.append("builtin: the file holds coordinates that make no sense")
                     continue
                 objs = _native_objects(drawing, project, sheet, layer_id, scale)
+                report.page = (drawing.page.width * scale, drawing.page.height * scale)
+                _onto_sheet(objs, report.page)
                 report.read["SHAPE"] += len(objs)
                 for kind, n in drawing.skipped.items():
                     report.skip(kind, n)
@@ -460,7 +490,7 @@ def import_cdr(path: str | Path, project: Project, sheet: Sheet, layer_id: str |
                                         f"on every page).")
                 if len(drawing.pages) > 1:
                     report.notes.append(f"The drawing has {len(drawing.pages)} pages: only the first was read.")
-                if drawing.newer:
+                if drawing.newer and drawing.unverified:
                     report.notes.append(
                         f"This {label} file is newer than CorelDRAW {version_name(cdr_native.LAST_VERSION // 100)}, the "
                         f"newest one libcdr (and so every program that reads CorelDRAW) has rules for. It was read with the "
@@ -491,6 +521,8 @@ def import_cdr(path: str | Path, project: Project, sheet: Sheet, layer_id: str |
             if not objs:
                 failures.append(f"{conv.name}: the drawing it wrote is empty")
                 continue
+            report.page = _page_of(path, scale)
+            _onto_sheet(objs, report.page)
             report.read.update(sub.read)
             report.skipped.update(sub.skipped)
             report.errors.extend(sub.errors)

@@ -36,11 +36,12 @@ EPS = 1e-6                        # libcdr's CDR_EPSILON (inches): "the same poi
 FIRST_VERSION = 500               # CorelDRAW 5
 LAST_VERSION = 1800               # CorelDRAW X8: the newest version whose rules libcdr has (it has none for later ones)
 MAX_TRIED_VERSION = 3500          # a newer file is tried with the rules of X6 and later, up to version 35 ('Z')
-VERIFIED = (1300,)                # versions compared with libcdr's own output on a real file (X3)
+VERIFIED = (1300, 2900)          # versions compared with libcdr's own output on a real file (X3, 2026: tests/data)
 
 VERSION_NAMES = {500: "5", 600: "6", 700: "7", 800: "8", 900: "9", 1000: "10", 1100: "11", 1200: "12", 1300: "X3",
                  1400: "X4", 1500: "X5", 1600: "X6", 1700: "X7", 1800: "X8", 1900: "2017", 2000: "2018", 2100: "2019",
-                 2200: "2020", 2300: "2021", 2400: "2022", 2500: "2023", 2600: "2024", 2700: "2025", 2800: "2026"}
+                 2200: "2020", 2300: "2021", 2400: "2022", 2500: "2023", 2600: "2024", 2700: "2025", 2800: "28", 2900: "2026"}
+# (a CorelDRAW 2026 drawing says 29 ('T'): the names of 25 ... 28 are what the years suggest, 28 is not known)
 
 
 class Unsupported(Exception):

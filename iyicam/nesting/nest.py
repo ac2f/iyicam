@@ -87,7 +87,8 @@ class NestSettings:
     time_limit: float = 0.0        # seconds after which no further attempt is started (0 = no limit)
     seed: int = 1
     tolerance: float = 0.5         # outline simplification (parts get this much extra spacing at most)
-    max_points: int = 40           # a part outlined with more points is simplified more: faster, a little looser
+    max_points: int = 300          # a part outlined with more points is simplified more: faster, a little looser
+    #                               (40, the old default, made the letters of a text up to 6 mm fatter on every side)
     containers: list[Container] | None = None  # the stock; None = unlimited sheets of the size above
     stock_order: str = "leftovers"  # leftovers (leftovers first, then the plates small to large) | listed (as listed) |
     #                               largest (the plates large to small) | best (the order of the plates that uses the least
@@ -102,6 +103,10 @@ class NestSettings:
 
 
 GRAVITIES = ("left", "bottom", "compact", "reach_x", "reach_y", "diag")
+# the same directions judged by the far edge of the part (where it reaches up / right), not by the near one: of the angles
+# of a part the one that keeps the layout lowest (narrowest) wins. Tried next to ``bottom`` / ``left``, the better
+# layout is kept (each is better for some parts: letters lie down, rectangles keep their columns).
+FAR = {"bottom": "bottom_far", "left": "left_far"}
 
 # The directions offered in the nesting window: ``(gravity, gravity_only)``. A direction chosen is tried alone, so the
 # layout keeps it (with the others tried too the one with the least area wins, whatever was chosen).
@@ -764,7 +769,8 @@ class Nester:
         It is where the part ends up that counts (the lower left of its bounding box), not where its
         reference is, so that angles can be compared; equal ones keep the first angle.
 
-        * ``left`` / ``bottom``: the leftmost / lowest place
+        * ``left`` / ``bottom``: the place where the part reaches least far right / up (its far edge lowest: a tall
+          part lies down when that keeps the layout lower), then the lowest / leftmost
         * ``compact``: the place that makes the rectangle round all the parts smallest
         * ``reach_x`` / ``reach_y``: the place that makes the layout least longer (wider), then the lowest / leftmost
         * ``diag``: the place nearest the lower left corner (x + y)"""
@@ -773,6 +779,10 @@ class Nester:
         x, y = V[:, 0], V[:, 1]
         if g == "bottom":
             return y + by0, x + bx0
+        if g == "bottom_far":
+            return y + by1, x + bx0
+        if g == "left_far":
+            return x + bx1, y + by0
         if g == "compact":
             if used_bbox is None:
                 w = np.full(len(V), bx1 - bx0, float)
@@ -1200,9 +1210,14 @@ class Nester:
             return out
         gravs = [g0] if self.st.gravity_only else \
             [g0] + [g for g in ("reach_x", "left", "reach_y", "bottom", "compact") if g != g0]
-        plan = [("area", g) for g in gravs] + [("side", g) for g in gravs] + [
-            ("height", gravs[0]), ("width", gravs[0]), ("perimeter", gravs[0])] + (
-            [] if len(gravs) < 2 else [("height", gravs[1]), ("width", gravs[1]), ("perimeter", gravs[1])])
+        far = FAR.get(g0)
+        if far is None:
+            plan = [("area", g) for g in gravs] + [("side", g) for g in gravs] + [
+                ("height", gravs[0]), ("width", gravs[0]), ("perimeter", gravs[0])] + (
+                [] if len(gravs) < 2 else [("height", gravs[1]), ("width", gravs[1]), ("perimeter", gravs[1])])
+        else:   # the direction by its near edge first (the plain layout), then mostly by the far edge
+            plan = [("area", g0), ("area", far)] + [(how, g) for how in ("side", "height", "width", "perimeter")
+                                                    for g in (far, g0)] + [(how, g) for g in gravs[1:] for how in ("area", "side")]
         out, seen = [], set()
         for how, g in plan:
             if len(out) >= max(1, count):
@@ -1250,10 +1265,15 @@ class Nester:
             bb = nb if bb is None else (min(bb[0], nb[0]), min(bb[1], nb[1]), max(bb[2], nb[2]), max(bb[3], nb[3]))
         return bb
 
-    def polish(self, res: NestResult, trials: int, rng: random.Random, deadline: float | None = None) -> int:
-        """Shrink the area used on the last plate: parts that set its extent (and some others) are taken out and
-        put back where they fit best, the others staying where they are. A move is kept when the
-        rectangle round all the parts gets smaller. Returns the number of moves that were kept."""
+    def polish(self, res: NestResult, trials: int, rng: random.Random, deadline: float | None = None,
+               patience: int | None = None) -> int:
+        """Ruin and recreate on the last plate: a few parts are taken out (the ones that set its extent, or a part and its
+        neighbours) and put back where they fit best now, the others staying where they are. A change is kept when the
+        layout gets shorter along the direction chosen (its area without one), or as short and its parts lower down:
+        parts sink step by step into the gaps, which makes room that a later step uses to get shorter.
+
+        ``trials`` changes are tried at least; with a ``deadline`` the search goes on until then, or until ``patience``
+        changes in a row brought nothing. Returns the number of changes that were kept."""
         if not res.layout or not res.used:
             return 0
         k = len(res.layout) - 1
@@ -1261,43 +1281,80 @@ class Nester:
         items = list(res.layout[k])
         if len(items) < 2:
             return 0
+        axis = self.growth_axis()
+        if patience is None:
+            patience = max(150, 8 * len(items))
 
-        def cost(bb):
-            return self._extent_cost(*bb)
-        cur = cost(self._bbox_of(items))
-        saved, kept = self.gravity, 0
-        self.gravity = "compact"  # put a part where the rectangle round everything grows least
+        def centre(it):
+            b = self._variant(it[2], it[3]).bbox
+            return it[4] + (b[0] + b[2]) / 2, it[5] + (b[1] + b[3]) / 2
+
+        def potential(its) -> float:
+            """How high (far right, far from the corner) the parts are, by their area: less is better."""
+            tot = 0.0
+            for it in its:
+                cx, cy = centre(it)
+                tot += self.areas[it[0]] * (cy if axis == 1 else cx if axis == 0 else cx + cy)
+            return tot
+
+        def cost(its):
+            return self._extent_cost(*self._bbox_of(its)), potential(its)
+
+        def better(new, cur) -> bool:
+            (n0, n1), np_ = new
+            (c0, c1), cp = cur
+            if n0 < c0 * (1 - 1e-9) - 1e-6:
+                return True
+            if n0 > c0 + 1e-6:
+                return False
+            if n1 < c1 * (1 - 1e-9) - 1:
+                return True
+            return n1 <= c1 + 1 and np_ < cp * (1 - 1e-6)
+
+        gravities = {1: ("bottom", "bottom_far"), 0: ("left", "left_far")}.get(axis, ("compact",))
+        cur = cost(items)
+        saved, kept, fails, t = self.gravity, 0, 0, 0
         try:
-            for t in range(trials):
+            while t < trials or (deadline is not None and fails < patience):
+                t += 1
                 self._check()
                 if deadline is not None and time.perf_counter() > deadline:
                     break
+                n = len(items)
                 bb = self._bbox_of(items)
                 tol = 1e-6 * self.st.sheet_width * clip.SCALE
-                edge = [i for i, (_, _, c, ang, x, y) in enumerate(items)
-                        if (lambda b: x + b[2] >= bb[2] - tol or y + b[3] >= bb[3] - tol)(self._variant(c, ang).bbox)]
-                n_out = 1 if t % 4 else rng.choice([1, 2, 3])
-                pool = edge if (edge and rng.random() < 0.75) else list(range(len(items)))
-                out = set(rng.sample(pool, min(n_out, len(pool))))
+                if rng.random() < 0.4:        # the parts that set the extent
+                    edge = [i for i, (_, _, c, ang, x, y) in enumerate(items)
+                            if (lambda b: x + b[2] >= bb[2] - tol or y + b[3] >= bb[3] - tol)(self._variant(c, ang).bbox)]
+                    pool = edge or list(range(n))
+                    out = set(rng.sample(pool, min(rng.choice([1, 1, 2, 3]), len(pool))))
+                else:                         # a part and the ones next to it
+                    cx, cy = centre(items[rng.randrange(n)])
+                    near = sorted(range(n), key=lambda i: math.hypot(centre(items[i])[0] - cx, centre(items[i])[1] - cy))
+                    out = set(near[:rng.choice([1, 2, 2, 3, 4])])
                 rest = [it for i, it in enumerate(items) if i not in out]
-                taken = sorted((items[i] for i in out), key=lambda it: -self.areas[it[0]])
+                taken = [items[i] for i in out]
+                if rng.random() < 0.7:
+                    taken.sort(key=lambda it: -self.areas[it[0]])
+                else:
+                    rng.shuffle(taken)
+                self.gravity = rng.choice(gravities)
                 new_rest = list(rest)
                 ok = True
                 for si, ci, c, ang, x, y in taken:
                     placed = [(c2, a2, x2, y2) for _, _, c2, a2, x2, y2 in new_rest]
-                    ub = self._bbox_of(new_rest)
-                    cand = self._try_sheet(box, placed, si, ub)
+                    cand = self._try_sheet(box, placed, si, self._bbox_of(new_rest))
                     if cand is None:
                         ok = False
                         break
                     _, a, px, py = cand
                     new_rest.append((si, ci, self.cls[si], a, px, py))
-                if not ok:
-                    continue
-                new = cost(self._bbox_of(new_rest))
-                if new[0] < cur[0] * (1 - 1e-9) - 1e-6 or (abs(new[0] - cur[0]) <= 1e-6 * max(cur[0], 1.0)
-                                                           and new[1] < cur[1] * (1 - 1e-9) - 1):
-                    items, cur, kept = new_rest, new, kept + 1
+                if ok:
+                    new = cost(new_rest)
+                    if better(new, cur):
+                        items, cur, kept, fails = new_rest, new, kept + 1, 0
+                        continue
+                fails += 1
         finally:
             self.gravity = saved
         if kept:
@@ -1361,7 +1418,29 @@ def nest(shapes: Sequence[NestShape], settings: NestSettings, progress: Callable
         if best is None or n.quality(r) < n.quality(best):
             best, order, grav = r, cand, g
     if tries > 1 and settings.arrange == "free" and not out_of_time():     # (strips are tidy: nothing to polish)
-        n.polish(best, 12 * tries, rng, None if settings.time_limit <= 0 else t0 + settings.time_limit)
+        deadline = None if settings.time_limit <= 0 else t0 + settings.time_limit
+        n.polish(best, 12 * tries, rng, deadline)
+        # the time that is left: the best order shaken up more and more (a few parts swapped, then more), laid out and
+        # polished again; kept when it is better (iterated local search). Stops at the time limit.
+        gravs = sorted({g for _, g in plan}) or [grav]
+        shake = stale = 0
+        while deadline is not None and len(order) > 2 and time.perf_counter() < deadline - 0.05 \
+                and stale < max(30, 3 * len(order)):        # (nothing better for long: it is as good as it gets)
+            n._check()
+            shake += 1
+            stale += 1
+            cand = list(order)
+            for _ in range(1 + (shake % max(2, len(cand) // 3))):
+                i = rng.randrange(len(cand))
+                j = rng.randrange(len(cand)) if rng.random() < 0.3 else min(len(cand) - 1, i + rng.randint(1, 4))
+                cand[i], cand[j] = cand[j], cand[i]
+            g = grav if rng.random() < 0.6 else rng.choice(gravs)
+            r = n.run_order(cand, None, cancel, gravity=g)
+            if n.quality(r)[:3] > n.quality(best)[:3]:
+                continue
+            n.polish(r, 20, rng, deadline, patience=max(40, 2 * len(cand)))
+            if n.quality(r) < n.quality(best):
+                best, order, grav, stale = r, cand, g, 0
     if settings.arrange == "free" and not squeezing and (best.unplaced or best.sheets > 1 or len(shapes) > 1):
         # rectangles on rectangular plates: a rectangle packer, taken when it does better than the free-form layout
         from . import rects

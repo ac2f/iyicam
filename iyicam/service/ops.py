@@ -946,7 +946,7 @@ def op_nest(payload: dict, ctl: JobControl | None = None) -> dict:
                       gravity_only=bool(s.get("gravity_only")), arrange=str(s.get("arrange", "free")),
                       corner=str(s.get("corner", "bl")),
                       iterations=int(_num(s, "iterations", 8, 1, 200)), time_limit=_num(s, "time_limit", 0.0, 0.0),
-                      max_points=int(_num(s, "max_points", 40, 0)), squeeze_angle=_num(s, "squeeze_angle", 0.0, 0.0),
+                      max_points=int(_num(s, "max_points", 300, 0)), squeeze_angle=_num(s, "squeeze_angle", 0.0, 0.0),
                       squeeze_margin=_num(s, "squeeze_margin", 0.0, 0.0), squeeze_step=_num(s, "squeeze_step", 2.0, 0.1))
     stock = [] if s.get("no_project_stock") else list(p.stock)
     for d in s.get("stock") or []:

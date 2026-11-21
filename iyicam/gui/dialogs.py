@@ -1588,7 +1588,7 @@ class NestingDialog(RemembersSize, QDialog):
                        "are only drawn (engraved), as their material is not cut away"),
             Param("tolerance", "Outline tolerance", "length", 0.5, min=0.01, group="Strategy",
                   help="Outlines are simplified this much; parts may end up this much further apart"),
-            Param("max_points", "Outline points per part", "int", 40, min=0, max=5000, group="Strategy",
+            Param("max_points", "Outline points per part", "int", 300, min=0, max=5000, group="Strategy",
                   help="A part with more points is simplified further, which makes the nesting much faster "
                        "(complex outlines: seconds instead of minutes) and leaves it a little further from its "
                        "neighbours. 0 = no limit"),
@@ -1623,6 +1623,8 @@ class NestingDialog(RemembersSize, QDialog):
             if mem.get("iterations") == 8:          # (the old default: the new one finds tighter layouts)
                 mem["iterations"] = 30
             ctrl.settings.remember("nesting", mem, save=False)
+        if mem.get("max_points") == 40:              # (the old default: it made curved parts up to 6 mm fatter on every side)
+            ctrl.settings.remember("nesting", dict(mem, max_points=300), save=False)
         self.form = ParamForm(params, ctrl.settings.recall("nesting", self.memo), ctrl.units)
         self._grouped = False
         self._memory: dict = {"qty": {}, "rules": {}, "layer_rules": {}}   # what was set for parts that left the table

@@ -125,7 +125,7 @@ def main(argv: list[str] | None = None) -> int:
         if f.lower().endswith(".icam"):
             win.open_project(f)
         else:
-            win.import_vectors(f, {})
+            win.open_drawing(f)        # (a drawing: a new project of its own)
     if splash is not None:
         splash.step("Ready")
     win.show()

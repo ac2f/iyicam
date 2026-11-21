@@ -146,12 +146,12 @@ Nesting runs in the background: the program stays alive, a progress window count
 parts placed, and **Cancel** works at once (within a fraction of a second) and changes
 nothing. What keeps it fast:
 
-* **Outline points per part** (default 40, 0 = no limit): a part whose outline has more
+* **Outline points per part** (default 300, 0 = no limit): a part whose outline has more
   points is simplified further before it is nested. Outlines from DXF files, text or traced
-  curves can have hundreds of points, and the work grows with the square of that (25 organic
-  parts: about 190 seconds without a limit, 2 seconds with 40 points, the same number of
-  sheets and the same usage). The price is that such parts end up up to a millimetre or two
-  further from their neighbours. Plain parts (rectangles, rounded corners, L shapes) are not
+  curves can have hundreds of points, and the work grows with the square of that. The price is that such parts end
+  up further from their neighbours: the old default of 40 made the letters of a text up to 6 mm fatter on every side,
+  and 14 sets of texts in many fonts and sizes used 4 % more sheet than with 300 (in about the same time, the search
+  having a time limit). A setting of 40 remembered from before is raised to 300. Plain parts (rectangles, rounded corners, L shapes) are not
   touched. *Outline tolerance* is the least that is simplified.
 * Parts with the same outline (copies drawn separately, anywhere on the sheet) share their
   work; outlines that look the same when turned (a rectangle at 0° and 180°, a square at every
@@ -177,14 +177,22 @@ Nesting places the parts one by one at the best place of the feasible area. What
 order the parts come decides how much of the sheet is used, so several layouts are made and the best one
 is kept: **Optimisation attempts** (default 30; 1 is one quick pass).
 
-* The first attempt puts the biggest parts first in the *Direction* chosen. The following ones
-  try (with *Automatic* only) the other directions (left, bottom, smallest area, shortest layout along X or Y) and other orders of
+* The first attempt puts the biggest parts first in the *Direction* chosen. With *Along X* / *Along Y* the following
+  ones also judge a place by the far edge of the part (where it reaches up / right) instead of its near edge, so of
+  its angles the one that keeps the layout lowest wins (letters lie down); the better layout of the two is kept.
+  The following ones try (with *Automatic* only) the other directions (left, bottom, smallest area, shortest layout along X or Y) and other orders of
   the parts (by area, longest side, height, width). After those the best order is shuffled a little.
 * A layout is better when it places more parts, then uses fewer (cheaper) sheets, then uses less of the last
   sheet: with a direction chosen it is shorter along it, otherwise the rectangle round the parts on it is smaller.
-* The best layout is polished: the parts that set its extent are taken out and put back where they fit best,
-  while the others stay; a move is kept when the layout gets shorter along the direction chosen (Automatic: when the
-  rectangle round everything gets smaller).
+* The best layout is polished (ruin and recreate): a few parts are taken out (the ones that set its extent, or a part
+  and its neighbours) and put back where they fit best now, while the others stay; a change is kept when the layout
+  gets shorter along the direction chosen (Automatic: when the rectangle round everything gets smaller), or as short
+  with its parts lower down: the parts sink into the gaps step by step, and the room they leave lets a later step
+  shorten the layout.
+* With a *Time limit* the time that is left is used: the best order is shaken up (a few parts swapped, then more),
+  laid out and polished again, and kept when it is better. The search stops early when nothing better came for a
+  long while. On 14 sets of texts (3 to 7 words in 11 fonts, 40 to 400 mm, with bars, stars and L shapes) all this
+  together used about 6 % less sheet than before.
 * The work is shared between the attempts (the no-fit polygons are made once), so ten attempts cost a lot
   less than ten times one. The result is the same every time for the same settings.
 
