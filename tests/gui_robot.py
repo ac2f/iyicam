@@ -143,14 +143,14 @@ def release_keys(widget) -> None:
 
 
 def hover(widget, pos) -> None:
-    """Move the pointer onto ``pos`` of ``widget``, surely. Qt drops a mouse move to where it last saw the pointer,
-    and that place outlives the window: a test that moves onto a point at which a test before it (in the same
-    process, on a window of the same layout) left the pointer would get no move at all. A step aside first makes
-    the move onto ``pos`` a real one."""
-    from PySide6.QtCore import QPoint
-    from PySide6.QtTest import QTest
-    QTest.mouseMove(widget, pos + QPoint(1, 1))
-    QTest.mouseMove(widget, pos)
+    """Move the pointer onto ``pos`` of ``widget``, surely. ``QTest.mouseMove`` moves the cursor of the screen, and
+    the move goes to the first window under it, not to ``widget``: a window left open by a test before (in the same
+    process) takes it, and a move to where the cursor already is goes nowhere. The event is given to the widget."""
+    from PySide6.QtCore import QEvent, QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+    p = QPointF(pos)
+    QApplication.sendEvent(widget, QMouseEvent(QEvent.Type.MouseMove, p, QPointF(widget.mapToGlobal(p)),
+                                               Qt.NoButton, Qt.NoButton, Qt.NoModifier))
     QApplication.processEvents()
 
 
@@ -164,11 +164,13 @@ def rwin_gen(tmp_path, monkeypatch):
     w.show()
     process()
     release_keys(w)                       # (no key left held by a test that ran before in this process)
-    yield w, robot
-    for c in w.documents():
-        c.dirty = False
-    w.close()
-    release(w)
+    try:
+        yield w, robot
+    finally:                              # (also when a test closes the generator itself: gen.close())
+        for c in w.documents():
+            c.dirty = False
+        w.close()
+        release(w)
 
 
 def release(window) -> None:
