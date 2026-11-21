@@ -126,10 +126,26 @@ Whatever strategy or manual order is chosen:
 4. A toolpath that machines inside parts an **earlier toolpath** has already cut
    free (e.g. drilling after the cut-out) is reported with the toolpath to move.
 
+## Big parts last
+
+Cutting a big part takes away a lot of the sheet round it, and the small parts next to it lose their hold. So an
+automatic order (*Smart order* on) cuts a big part **after**:
+
+* the smaller parts that lie **between its arms** (at least half of the small part in the convex hull of the big one:
+  the mouth of a C, the space under a swoosh), and
+* the smaller parts **beside it** (closer than 3 tool diameters; 12 mm when the tool is not known).
+
+A part is big next to another with **2.5 times its area** or more. The big part waits; the rest keep the places the
+strategy gave them. Holes and inner pieces are not moved (they are cut first anyway), and the rules of *Rules that always
+hold* still have the last word. **Big parts last (parts beside and between them first)** on the panel switches it off; a
+frozen order and the orders with a purpose of their own (smallest first, from the centre, from the edges) are left as
+they are.
+
 ## Strategies
 
 | Strategy | |
 |---|---|
+| **Auto: chosen for the vectors** (the default) | columns, rows and the smart route are each made with all the rules, and the one that travels least is taken. The panel says which (*Auto chose: Columns: bottom left → top right*); choose it, or any other, in the list to change it |
 | **Smart: shortest route** | the nearest vector next, then the route is shortened by 2-opt (reverse stretches of the route while that makes it shorter); never longer than nearest next, inner pieces first as always. The preview says what it saves |
 | Shortest travel | the nearest vector next |
 | Rows (4 corners) | rows from the chosen corner, every row in the same direction |
@@ -310,9 +326,9 @@ the tool now arrives from). Everything before it stays exactly as it was.
 
 ## The short way
 
-Columns (**bottom → top, then the next column to the right**) are the default order of a new toolpath, and smart
-start points are on: the support is kept whatever the order is (see *Rules that always hold*). The strategy list
-shows the four orders that are used (columns, rows, smart, nearest) first. On the panel, row size, inner pieces,
+**Auto** (columns, rows or the smart route, whichever suits the vectors) is the default order of a new toolpath, with
+big parts last: the support is kept whatever the order is (see *Rules that always hold*). The strategy list
+shows Auto first, then the orders that are used (columns, rows, smart, nearest). On the panel, row size, inner pieces,
 direction, clear-of-cuts, what is drawn and the start point of one cut are behind **More options**; in the toolpath
 dialogs the rarely changed settings (start depth, overcut, entry and lead, finish pass ...) are behind **More options**
 too, on the desktop and on the page. Nothing is removed: the button shows them.

@@ -116,6 +116,7 @@ def results_to_dict(project: Project, results: dict) -> dict:
     for (tid, sid), r in results.items():
         items.append({
             "toolpath": tid, "sheet": sid, "error": r.error, "warnings": list(r.warnings), "order": r.order,
+            "strategy": r.strategy,
             "start_updates": {k: [_r(q[0]), _r(q[1])] for k, q in (r.start_updates or {}).items()},
             "toolpaths": [{"name": tp.name, "tool": tp.tool.to_dict(), "op": tp.op, "def_id": tp.def_id, "sheet_id": tp.sheet_id,
                            "safe_z": tp.safe_z, "color": tp.color, "warnings": list(tp.warnings),
@@ -134,7 +135,7 @@ def results_from_dict(d: dict) -> dict:
             tps.append(tp)
         out[(it["toolpath"], it["sheet"])] = ComputeResult(
             tps, list(it.get("warnings", [])), it.get("error"), it.get("order"),
-            {k: tuple(q) for k, q in (it.get("start_updates") or {}).items()})
+            {k: tuple(q) for k, q in (it.get("start_updates") or {}).items()}, it.get("strategy"))
     return out
 
 

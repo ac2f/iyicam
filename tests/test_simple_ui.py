@@ -47,16 +47,16 @@ def test_the_cut_order_panel_keeps_the_rarely_used_settings_behind_more_options(
     process()
     p = win.cutorder_panel
     assert not p.band.isVisibleTo(p) and not p.margin.isVisibleTo(p) and not p._more_boxes[0].isVisibleTo(p)
-    assert p.strategy.itemData(0) is None and p.strategy.itemData(1) == "cols_bl" and p.strategy.isVisibleTo(p) and p.smart.isVisibleTo(p)
+    assert p.strategy.itemData(0) is None and p.strategy.itemData(1) == "auto" and p.strategy.isVisibleTo(p) and p.smart.isVisibleTo(p)
     p.more.setChecked(True)
     assert p.band.isVisibleTo(p) and p.margin.isVisibleTo(p) and p._more_boxes[1].isVisibleTo(p)
 
 
-def test_the_common_strategies_come_first_and_columns_are_the_default():
-    names = [k for k, _ in seq.strategy_list()]                     # (group by group: columns, rows, routes, ...)
-    assert names[:1] == ["cols_bl"] and names.index("rows_bl") < names.index("smart") < names.index("zigzag_up")
+def test_the_common_strategies_come_first_and_auto_is_the_default():
+    names = [k for k, _ in seq.strategy_list()]                     # (group by group: auto, columns, rows, routes, ...)
+    assert names[:2] == ["auto", "cols_bl"] and names.index("rows_bl") < names.index("smart") < names.index("zigzag_up")
     assert sorted(names) == sorted(k for k, _ in seq.STRATEGIES)
-    assert seq.settings(None)["strategy"] == "cols_bl"
+    assert seq.settings(None)["strategy"] == "auto"
 
 
 def test_the_post_specs_say_which_options_and_blocks_are_common():

@@ -32,6 +32,7 @@ from .pathutil import PathWalker
 from .startpoints import DEFAULT_HOLD, EDGE_HOLD, _span_distance, closing_zone, corners, sample
 
 STRATEGIES: list[tuple[str, str]] = [
+    ("auto", "Auto: chosen for the vectors (the shortest of columns, rows and the route)"),
     ("smart", "Smart: shortest route (optimised)"),
     ("nearest", "Shortest travel (nearest next)"),
     ("follow", "Follow on: the next start point nearest the end of the last cut"),
@@ -60,6 +61,7 @@ COMMON_STRATEGIES = ("cols_bl", "rows_bl", "smart", "nearest")      # what peopl
 
 #: the strategies in groups (the lists show them under these headings, the groups in this order)
 STRATEGY_GROUPS: list[tuple[str, tuple[str, ...]]] = [
+    ("Automatic", ("auto",)),
     ("Columns", ("cols_bl", "cols_br", "cols_tl", "cols_tr")),
     ("Rows", ("rows_bl", "rows_br", "rows_tl", "rows_tr")),
     ("Route (shortest travel)", ("smart", "nearest", "follow")),
@@ -68,6 +70,7 @@ STRATEGY_GROUPS: list[tuple[str, tuple[str, ...]]] = [
     ("Other", ("small_first", "centre_out", "edges_in")),
 ]
 ROUTE_STRATEGIES = ("nearest", "smart", "follow")   # no sweep: the next cut is the one nearest the tool
+AUTO_CANDIDATES = ("cols_bl", "rows_bl", "smart")   # what "auto" tries: the one with the shortest route is taken
 
 
 def strategy_group(key: str) -> str:
@@ -105,7 +108,8 @@ DIRECTIONS: list[tuple[str, str]] = [
 
 DEFAULTS: dict = {
     "auto_order": True,        # re-order with the strategy on every calculation
-    "strategy": "cols_bl",
+    "strategy": "auto",       # see STRATEGIES; "auto" picks one of AUTO_CANDIDATES for the vectors
+    "big_last": True,          # a big part after the smaller parts beside it and between its arms (big_last_constraints)
     "grouping": "depth",
     "band": 0.0,               # row / column width for the row strategies (0 = automatic)
     "order": [],               # the current (or frozen) order of item keys
@@ -529,7 +533,7 @@ def descendants(key: str, items: dict[str, SeqItem]) -> set[str]:
 
 
 def sequence(items: list[SeqItem], cfg: dict, pos: Pt = (0.0, 0.0),
-             sheet: BBox | None = None, zones: bool = False) -> tuple[list[str], list[str]]:
+             sheet: BBox | None = None, zones: bool = False, info: dict | None = None) -> tuple[list[str], list[str]]:
     """The cutting order of ``items`` for the settings ``cfg`` and notes for the user.
 
     Automatic: the strategy decides. Frozen: the stored order is kept, new items
@@ -545,18 +549,44 @@ def sequence(items: list[SeqItem], cfg: dict, pos: Pt = (0.0, 0.0),
     """
     s = settings(cfg)
     by_key = {it.key: it for it in items}
+    if s["strategy"] == "auto":
+        # the strategy that suits the vectors: every candidate is made (with all the rules), the shortest route is taken
+        cands = AUTO_CANDIDATES if len(items) <= SMART_LIMIT else tuple(c for c in AUTO_CANDIDATES if c not in ROUTE_STRATEGIES)
+        best = None
+        for c in cands:
+            got: dict = {}
+            o, n = sequence(items, {**s, "strategy": c}, pos, sheet, zones, got)
+            length = route_length([by_key[k] for k in o if k in by_key], pos)
+            if best is None or length < best[0] - 1e-6:
+                best = (length, c, o, n, got)
+        if info is not None:
+            info.update(best[4])
+        return list(best[2]), list(best[3])
+    if info is not None:
+        info["strategy"] = s["strategy"]
+        info["big_last"] = []
     containment(items)
     notes: list[str] = []
     sig = _signature(items, s, pos, sheet, zones)
     hit = _ORDER_CACHE.get(sig)
     if hit is not None:
         _ORDER_CACHE.move_to_end(sig)
+        if info is not None:
+            info["big_last"] = list(hit[2])
         return list(hit[0]), list(hit[1])
     islands = island_constraints(items, sheet)
     loose_fixed: list[str] = []
+    # an automatic order cuts a big part after the smaller parts beside it and between its arms (a frozen order and the
+    # orders with a purpose of their own are left as they are)
+    big = (big_last_constraints(items, strategy=s["strategy"], sheet=sheet) if s["big_last"] and (s["auto_order"] or not s["order"])
+           and s["strategy"] not in POLICY_STRATEGIES else [])
+    if info is not None:
+        info["big_last"] = list(big)
 
     def settle(order: list[str]) -> tuple[list[str], bool, list[str]]:
         order, changed = repair(order, by_key)
+        if big:
+            order = apply_before(order, big, by_key)
         order, moved = apply_islands(order, islands, by_key)
         return order, changed, moved
 
@@ -629,13 +659,13 @@ def sequence(items: list[SeqItem], cfg: dict, pos: Pt = (0.0, 0.0),
     bad = gouges(items)
     if bad:
         notes.append(f"{len(bad)} cut(s) run into neighbouring parts: the parts are closer than the tool allows")
-    _ORDER_CACHE[sig] = (list(order), list(notes))
+    _ORDER_CACHE[sig] = (list(order), list(notes), list(big))
     while len(_ORDER_CACHE) > 8:
         _ORDER_CACHE.popitem(last=False)
     return order, notes
 
 
-_ORDER_CACHE: "OrderedDict[tuple, tuple[list[str], list[str]]]" = OrderedDict()
+_ORDER_CACHE: "OrderedDict[tuple, tuple[list[str], list[str], list]]" = OrderedDict()
 
 
 def _signature(items: list[SeqItem], s: dict, pos: Pt, sheet: BBox | None, zones: bool) -> tuple:
@@ -643,7 +673,7 @@ def _signature(items: list[SeqItem], s: dict, pos: Pt, sheet: BBox | None, zones
     its outline it starts: moving the start points does not change the order)."""
     sh = None if sheet is None else (round(sheet.xmin, 3), round(sheet.ymin, 3), round(sheet.xmax, 3), round(sheet.ymax, 3),
                                      repr(getattr(sheet, "region", None)))
-    cfg = (s["strategy"], s["grouping"], s["band"], s["auto_order"], () if s["auto_order"] else tuple(s["order"]),
+    cfg = (s["strategy"], s["grouping"], s["band"], s["auto_order"], bool(s["big_last"]), () if s["auto_order"] else tuple(s["order"]),
            s["corner_distance"], s["start_margin"], bool(zones))   # (an automatic order does not depend on the one made last time)
     rows = tuple((it.key, round(it.bbox.xmin, 3), round(it.bbox.ymin, 3), round(it.bbox.xmax, 3), round(it.bbox.ymax, 3),
                   round(it.area, 0), it.frees, round(it.radius, 3), None if it.fixed is None else tuple(round(v, 3) for v in it.fixed),
@@ -651,6 +681,160 @@ def _signature(items: list[SeqItem], s: dict, pos: Pt, sheet: BBox | None, zones
                   hash(tuple((round(sg.a[0], 3), round(sg.a[1], 3), round(sg.b[0], 3), round(sg.b[1], 3), round(getattr(sg, "bulge", 0.0), 6))
                              for sg in it.contour.segs))) for it in items)     # (the shape too: two shapes with the same box are not the same order)
     return (cfg, sh, tuple(round(v, 3) for v in pos), rows)
+
+
+# ---------------------------------------------------------------------------
+# big parts last
+# ---------------------------------------------------------------------------
+
+BIG_RATIO = 2.5        # a part is "big" next to another one with at least this many times its area
+NEAR_TOOLS = 3.0       # "beside": closer than this many tool diameters (NEAR_GAP when the tool is not known)
+NEAR_GAP = 12.0
+HULL_SHARE = 0.5       # "between its arms": at least this share of the smaller part lies in the convex hull of the big one
+
+
+def _samples(poly: list, most: int = 600) -> np.ndarray:
+    """Points along a closed polygon, at most ``most`` of them, no further apart than 2 mm (or what ``most`` allows)."""
+    P = np.asarray(poly, float)
+    if len(P) < 2:
+        return P
+    Q = np.vstack([P[1:], P[:1]])
+    seg = np.hypot(*(Q - P).T)
+    step = max(2.0, float(seg.sum()) / most)
+    out = [P]
+    for k in np.flatnonzero(seg > step):
+        n = int(seg[k] // step)
+        t = (np.arange(1, n + 1) / (n + 1))[:, None]
+        out.append(P[k] + t * (Q[k] - P[k]))
+    pts = np.vstack(out)
+    if len(pts) > most * 2:
+        pts = pts[:: int(math.ceil(len(pts) / (most * 2)))]
+    return pts
+
+
+def _hull(pts: np.ndarray) -> np.ndarray:
+    """Convex hull, counter-clockwise (monotone chain)."""
+    P = np.unique(pts, axis=0)
+    if len(P) < 3:
+        return P
+
+    def half(seq):
+        h: list = []
+        for p in seq:
+            while len(h) >= 2 and (h[-1][0] - h[-2][0]) * (p[1] - h[-2][1]) - (h[-1][1] - h[-2][1]) * (p[0] - h[-2][0]) <= 0:
+                h.pop()
+            h.append(p)
+        return h
+    lower, upper = half(P), half(P[::-1])
+    return np.array(lower[:-1] + upper[:-1])
+
+
+def _in_hull(pts: np.ndarray, hull: np.ndarray) -> np.ndarray:
+    if len(hull) < 3:
+        return np.zeros(len(pts), bool)
+    A, B = hull, np.roll(hull, -1, axis=0)
+    cross = ((B[:, 0] - A[:, 0])[None, :] * (pts[:, 1:2] - A[:, 1][None, :])
+             - (B[:, 1] - A[:, 1])[None, :] * (pts[:, 0:1] - A[:, 0][None, :]))
+    return (cross >= -1e-9).all(axis=1)
+
+
+def _min_dist(a: np.ndarray, b: np.ndarray) -> float:
+    best = math.inf
+    for i in range(0, len(a), 256):
+        d = a[i:i + 256, None, :] - b[None, :, :]
+        best = min(best, float(np.sqrt((d * d).sum(axis=2)).min()))
+    return best
+
+
+def _on_hold_side(a: BBox, b: BBox, hold: Pt, step: float = 1.0) -> bool:
+    """Whether box ``a`` stands on the hold side of box ``b``: its centre lies that way, or it is wholly beyond ``b`` in
+    one of the directions the hold points to (right / up for columns from the bottom left)."""
+    hx, hy = hold
+    if (a.center[0] - b.center[0]) * hx + (a.center[1] - b.center[1]) * hy > 0:
+        return True
+    return ((hx > 1e-9 and a.xmin >= b.xmax - step) or (hx < -1e-9 and a.xmax <= b.xmin + step)
+            or (hy > 1e-9 and a.ymin >= b.ymax - step) or (hy < -1e-9 and a.ymax <= b.ymin + step))
+
+
+def big_last_constraints(items: list[SeqItem], ratio: float = BIG_RATIO, strategy: str | None = None,
+                         sheet: BBox | None = None) -> list[tuple[str, str]]:
+    """``(small, big)``: the smaller part is cut before the big one, because cutting the big part first takes the sheet
+    away round the smaller one. It is so when the smaller part lies (mostly) between the arms of the big one (in its convex
+    hull) or beside it (closer than :data:`NEAR_TOOLS` tool diameters) and the big one has ``ratio`` times its area.
+
+    A part beside the big one on the side where the sheet still holds it (the side the sweep of ``strategy`` has not
+    reached: up and right for columns from the bottom left) keeps that hold when the big one is cut first, so it is not
+    moved: the order of the sweep stays. Between the arms it is moved wherever it is.
+
+    Only parts cut through (not holes, not open cuts, not one inside the other) count; ``containment`` must have been run.
+    Every pair goes from a smaller area to a bigger one, so the rules never wait for each other in a ring."""
+    by_key = {it.key: it for it in items}
+    parts = [it for it in items if it.closed and it.frees and it.area > 0 and it.depth % 2 == 0 and len(it.poly) >= 3]
+    if len(parts) < 2:
+        return []
+    bb = np.array([[it.bbox.xmin, it.bbox.ymin, it.bbox.xmax, it.bbox.ymax] for it in parts])
+    area = np.array([it.area for it in parts])
+    rad = np.array([it.radius for it in parts])
+    lineage = {it.key: ancestors(it, by_key) for it in parts}
+    pts: dict[int, np.ndarray] = {}
+    hulls: dict[int, np.ndarray] = {}
+
+    def P(i):
+        if i not in pts:
+            pts[i] = _samples(parts[i].poly)
+        return pts[i]
+
+    def H(i):
+        if i not in hulls:
+            hulls[i] = _hull(np.asarray(parts[i].poly, float))
+        return hulls[i]
+
+    out = []
+    for j, big in enumerate(parts):
+        r = max(float(rad[j]), 0.0)
+        gap = NEAR_TOOLS * 2 * r if r > 0 else NEAR_GAP
+        cand = np.flatnonzero((area * ratio <= area[j]) & (bb[:, 0] <= bb[j, 2] + gap) & (bb[:, 2] >= bb[j, 0] - gap)
+                              & (bb[:, 1] <= bb[j, 3] + gap) & (bb[:, 3] >= bb[j, 1] - gap))
+        for i in cand:
+            small = parts[i]
+            if big.key in lineage[small.key] or small.key in lineage[big.key]:
+                continue
+            q = P(i)
+            overlap = (bb[i, 0] < bb[j, 2]) & (bb[i, 2] > bb[j, 0]) & (bb[i, 1] < bb[j, 3]) & (bb[i, 3] > bb[j, 1])
+            if overlap and _in_hull(q, H(j)).mean() >= HULL_SHARE:
+                out.append((small.key, big.key))
+            elif _min_dist(q, P(j)) < gap:
+                if strategy and _on_hold_side(small.bbox, big.bbox, hold_direction(strategy, big.center, sheet) or DEFAULT_HOLD):
+                    continue                    # (on the side the sheet still holds: it stays held)
+                out.append((small.key, big.key))
+    return out
+
+
+def apply_before(order: list[str], pairs: list[tuple[str, str]], items: dict[str, SeqItem]) -> list[str]:
+    """``order`` changed as little as can be so that every ``(a, b)`` of ``pairs`` has ``a`` before ``b`` (and what lies
+    inside a cut stays before it): of the cuts that may come next, the one that was first in ``order`` comes."""
+    import heapq
+    at = {k: i for i, k in enumerate(order)}
+    after: dict[str, list[str]] = defaultdict(list)
+    need = dict.fromkeys(order, 0)
+    edges = {(a, b) for a, b in pairs if a in at and b in at and a != b}
+    edges |= {(k, items[k].parent) for k in order if items[k].parent in at}
+    for a, b in edges:
+        after[a].append(b)
+        need[b] += 1
+    ready = [(at[k], k) for k in order if need[k] == 0]
+    heapq.heapify(ready)
+    out = []
+    while ready:
+        _, k = heapq.heappop(ready)
+        out.append(k)
+        for b in after[k]:
+            need[b] -= 1
+            if need[b] == 0:
+                heapq.heappush(ready, (at[b], b))
+    if len(out) < len(order):          # (a ring, which the areas do not allow: the order is kept)
+        return list(order)
+    return out
 
 
 # ---------------------------------------------------------------------------

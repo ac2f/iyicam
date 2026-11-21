@@ -23,6 +23,7 @@ class OpContext:
     previous: list = field(default_factory=list)  # toolpaths machined before this one on the sheet
     force_smart: bool = False                      # pick smart start points for this calculation
     order: list[str] | None = None                 # out: the cut order (vector contour keys)
+    strategy: str | None = None                    # out: the order strategy used ("auto" made concrete)
     start_updates: dict | None = field(default_factory=dict)  # out: better vector start points
 
     @property

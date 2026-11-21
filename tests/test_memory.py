@@ -403,6 +403,7 @@ def test_gcode_export_options_and_folder_are_remembered(sess, tmp_path):
     out = tmp_path / "nc"
     out.mkdir()
     dlg = ExportDialog(c, sess.win)
+    dlg._tick(lambda t: t.enabled)      # (it opens with nothing ticked)
     dlg.sheets.setCurrentIndex(dlg.sheets.findData("all"))
     dlg.tile.setChecked(True)
     dlg.tile_axis.setCurrentIndex(dlg.tile_axis.findData("x"))
@@ -416,6 +417,7 @@ def test_gcode_export_options_and_folder_are_remembered(sess, tmp_path):
     c.add_toolpath(ToolpathDef("p", "profile", end_mill(6), {"through": True},
                                Selection("layers", [], [c.layer_id])))
     dlg = ExportDialog(c, sess.win)
+    dlg._tick(lambda t: t.enabled)      # (it opens with nothing ticked)
     assert dlg.sheets.currentData() == "all" and dlg.tile.isChecked() and dlg.tile_axis.currentData() == "x"
     assert dlg.tile_len.value() == pytest.approx(75.0)
     assert dlg.folder.text() == str(out)                       # the folder chosen last time, and what was saved
@@ -480,6 +482,7 @@ def test_dialogs_open_at_the_size_they_were_closed_with(sess):
     again = NestingDialog(win.ctrl, win)
     assert (again.width(), again.height()) == (w, h) != first
     other = ExportDialog(win.ctrl, win)           # each dialog has its own size
+    other._tick(lambda t: t.enabled)      # (it opens with nothing ticked)
     assert (other.width(), other.height()) != (w, h)
     again.accept()
     # nonsense in the file is ignored: the dialog opens at its usual size

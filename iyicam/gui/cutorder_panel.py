@@ -260,9 +260,20 @@ class CutOrderPanel(DocPanel):
         self._advanced.append((form, self.auto))
         self.strategy = _combo()
         fill_strategies(self.strategy)                         # (in groups: columns, rows, routes, ...)
-        self.strategy.setToolTip("Smart: the shortest route between the cuts (nearest next, then improved), "
-                                 "inner pieces first. The others sweep the sheet from a corner, by rows, ...")
+        self.strategy.setToolTip("Auto: the strategy that suits the vectors (columns, rows or the shortest route, whichever "
+                                 "travels least), shown below; choose another one to change it. Smart: the shortest route "
+                                 "between the cuts. The others sweep the sheet from a corner, by rows, ...")
         form.addRow("Strategy", self.strategy)
+        self.chosen = QLabel()
+        self.chosen.setWordWrap(True)
+        self.chosen.setToolTip("The strategy Auto chose for the vectors of this sheet: choose it (or another one) in the "
+                               "list to keep it")
+        form.addRow(self.chosen)
+        self.big_last = QCheckBox("Big parts last (parts beside and between them first)")
+        self.big_last.setToolTip("A big part is cut after the smaller parts next to it and between its arms: cutting it "
+                                 "first would take away the sheet that holds them. A part is big with 2.5 times the area; "
+                                 "next to it: closer than 3 tool diameters. Not for a frozen order.")
+        form.addRow(self.big_last)
         self.grouping = _combo()
         for k, label in seq.GROUPINGS:
             self.grouping.addItem(label, k)
@@ -464,6 +475,7 @@ class CutOrderPanel(DocPanel):
     def _wire(self) -> None:
         self.tp.currentIndexChanged.connect(self._toolpath_changed)
         self.auto.toggled.connect(lambda v: self._set_now(auto_order=v))
+        self.big_last.toggled.connect(lambda v: self._change(big_last=v))
         self.strategy.currentIndexChanged.connect(lambda: self._change(strategy=self.strategy.currentData()))
         self.grouping.currentIndexChanged.connect(lambda: self._change(grouping=self.grouping.currentData()))
         self.band.editingFinished.connect(lambda: self._change(band=self.ctrl.units.from_display(self.band.value())))
@@ -577,7 +589,8 @@ class CutOrderPanel(DocPanel):
                 i = w.findData(v)
                 w.setCurrentIndex(i if i >= 0 else w.findData(seq.DEFAULTS["strategy"]) if w is self.strategy else 0)
                 w.blockSignals(False)
-            for w, v in ((self.auto, bool(shown["auto_order"])), (self.smart, bool(shown["smart_starts"]))):
+            for w, v in ((self.auto, bool(shown["auto_order"])), (self.smart, bool(shown["smart_starts"])),
+                         (self.big_last, bool(shown["big_last"]))):
                 w.blockSignals(True)
                 w.setChecked(v)
                 w.blockSignals(False)
@@ -589,7 +602,8 @@ class CutOrderPanel(DocPanel):
                 w.setDecimals(u.decimals)
                 w.setSuffix(u.suffix)
             enabled = self.tid is not None
-            for w in (self.tp, self.auto, self.strategy, self.grouping, self.band, self.direction, self.all_dirs,
+            self._show_chosen(shown)
+            for w in (self.tp, self.auto, self.big_last, self.strategy, self.grouping, self.band, self.direction, self.all_dirs,
                       self.preview_order, self.reorder, self.smart, self.margin, self.corner, self.preview_starts,
                       self.now, self.release, self.tool, self.list, self.up, self.down, self.start_at, self.pick, self.pick_mode):
                 w.setEnabled(enabled)
@@ -600,6 +614,17 @@ class CutOrderPanel(DocPanel):
             self._loading = False
         self._row_state()
         ctrl.set_focus_cut(self.focus_key())
+
+    def _show_chosen(self, shown: dict) -> None:
+        """Under the list: what Auto chose for the vectors of the sheet (nothing for the other strategies)."""
+        text = ""
+        if shown.get("strategy") == "auto" and self.tid is not None:
+            r = self.ctrl.results.get((self.tid, self.ctrl.sheet.id))
+            used = getattr(r, "strategy", None) if r is not None else None
+            text = (f"Auto chose: {dict(seq.STRATEGIES).get(used, used)}" if used and used != "auto"
+                    else "Auto: chosen when the toolpath is calculated")
+        self.chosen.setText(text)
+        self.chosen.setVisible(bool(text))
 
     def _fill_list(self) -> None:
         ctrl = self.ctrl

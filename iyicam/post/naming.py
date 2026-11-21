@@ -38,6 +38,16 @@ NAMES = {v["name"] for v in VARIABLES}
 _FIELD = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
 # a field: a variable or a sum of variables and numbers, with a format after the last ":" (``{revision:03}``: three digits with
 # zeros in front, ``{tool_diameter:.1}``: one decimal, ``{sheet_number + 100}``, ``{sheet_height/10:.0}``)
+#: what can be written in a {field}: (example, what it gives) — the Save G-code window lists them under "Formats"
+FORMATS: list[tuple[str, str]] = [
+    ("{revision:03}", "zeros in front up to 3 digits: 7 -> 007 (any width: {sheet_number:04} -> 0002)"),
+    ("{tool_diameter:.1}", "this many decimals: 6 -> 6.0 ({feed_rate/60:.0}: no decimals)"),
+    ("{cut_depth:05.1}", "both: 7 -> 007.0"),
+    ("{sheet_number + 100}", "a sum: + - * / and brackets with numbers and variables (sheet 2 -> 102)"),
+    ("{sheet_height/10:.0}", "a sum with a format: 3050 -> 305"),
+    ("{project_name:08}", "a text: zeros in front up to the width (only the width counts)"),
+    ("[a{allowance}]", "toolpath part ({segments}) only: the piece in brackets is left out when its variable is empty or 0"),
+]
 _ANY = re.compile(r"\{([^{}]*)\}")
 _SPEC = re.compile(r"^(0?)(\d{1,2})?(?:\.(\d))?$")
 _IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")

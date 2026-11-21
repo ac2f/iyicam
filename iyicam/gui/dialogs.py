@@ -1,6 +1,7 @@
 """Dialogs: commands, sheets, material, tools, toolpaths, nesting, export, plugins, posts, text."""
 from __future__ import annotations
 
+import html
 import copy
 import json
 import math
@@ -2024,7 +2025,7 @@ class ExportDialog(RemembersSize, QDialog):
             it = QListWidgetItem(f"{t.name}  —  T{t.tool.number} {t.tool.name}" + (f"   [{t.group}]" if t.group else ""))
             it.setData(Qt.UserRole, t.id)
             it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
-            on = t.id in only if only is not None else t.enabled
+            on = only is not None and t.id in only          # (from the menu nothing is ticked: tick what is to be saved)
             it.setCheckState(Qt.Checked if on else Qt.Unchecked)
             self.list.addItem(it)
         self.list.itemChanged.connect(self.preview)
@@ -2057,6 +2058,7 @@ class ExportDialog(RemembersSize, QDialog):
         bb = QDialogButtonBox()
         save = bb.addButton("Save", QDialogButtonBox.AcceptRole)       # (nothing is written before this is pressed)
         save.clicked.connect(self.save)
+        self.save_button = save
         cp = bb.addButton("Copy", QDialogButtonBox.ActionRole)
         cp.clicked.connect(lambda: QApplication.clipboard().setText(self.text.toPlainText()))
         bb.addButton(QDialogButtonBox.Close).clicked.connect(self.reject)
@@ -2095,7 +2097,10 @@ class ExportDialog(RemembersSize, QDialog):
         self.name_sep.setMaximumWidth(48)
         self.name_sep.setToolTip("Put between the prefixes")
         self.name_sep.textChanged.connect(self._name_changed)
-        for w in (add, self.name_var):
+        formats = QPushButton("Formats...")
+        formats.setToolTip("What can be written in a {variable}: 3 digits with zeros in front ({revision:03}), decimals, sums")
+        formats.clicked.connect(self._show_formats)
+        for w in (add, self.name_var, formats):
             row.addWidget(w)
         row.addWidget(QLabel("between:"))
         row.addWidget(self.name_sep)
@@ -2173,6 +2178,7 @@ class ExportDialog(RemembersSize, QDialog):
         self.rev_scope = QComboBox()
         self.rev_scope.addItem("of the project", "project")
         self.rev_scope.addItem("of the sheet group (each group counts for itself)", "group")
+        self.rev_scope.addItem("of the sheet (each sheet counts for itself)", "sheet")
         i = self.rev_scope.findData(mem.get("rev_scope"))
         self.rev_scope.setCurrentIndex(max(0, i))
         self.rev_auto = QCheckBox("count up after saving")
@@ -2180,7 +2186,12 @@ class ExportDialog(RemembersSize, QDialog):
         self.revision.setValue(self._next_revision())
         self.revision.valueChanged.connect(self._name_changed)
         self.rev_scope.currentIndexChanged.connect(lambda *_: (self.revision.setValue(self._next_revision()), self._name_changed()))
-        for w in (QLabel("Revision"), self.revision, self.rev_scope, self.rev_auto):
+        self.rev_sheets = QPushButton("Sheets...")
+        self.rev_sheets.setToolTip("Set the revision number of every sheet")
+        self.rev_sheets.clicked.connect(self._sheet_revisions)
+        self.rev_sheets.setVisible(self.rev_scope.currentData() == "sheet")
+        self.rev_scope.currentIndexChanged.connect(lambda *_: self.rev_sheets.setVisible(self.rev_scope.currentData() == "sheet"))
+        for w in (QLabel("Revision"), self.revision, self.rev_scope, self.rev_sheets, self.rev_auto):
             row.addWidget(w)
         row.addStretch(1)
         lay.addLayout(row)
@@ -2192,14 +2203,66 @@ class ExportDialog(RemembersSize, QDialog):
         return box
 
     def _revisions(self) -> dict:
-        return self.ctrl.project.metadata.setdefault("revisions", {"project": 1, "groups": {}})
+        r = self.ctrl.project.metadata.setdefault("revisions", {"project": 1, "groups": {}})
+        r.setdefault("groups", {})
+        r.setdefault("sheets", {})
+        return r
 
     def _next_revision(self) -> int:
         r = self._revisions()
         sh = self.ctrl.sheet
+        if self.rev_scope.currentData() == "sheet":
+            return int(r["sheets"].get(sh.id, r.get("project", 1)))
         if self.rev_scope.currentData() == "group" and sh.group:
             return int(r["groups"].get(sh.group, r.get("project", 1)))
         return int(r.get("project", 1))
+
+    def sheet_revisions(self) -> dict[str, int]:
+        """The revision of every sheet (the open sheet: the number in the box)."""
+        return {sh.id: (self.revision.value() if sh.id == self.ctrl.sheet_id else
+                        int(self._revisions()["sheets"].get(sh.id, self._revisions().get("project", 1))))
+                for sh in self.ctrl.project.sheets}
+
+    def set_sheet_revisions(self, revs: dict[str, int]) -> None:
+        r = self._revisions()
+        for sid, v in revs.items():
+            r["sheets"][sid] = int(v)
+        self.ctrl.dirty = True
+        if self.ctrl.sheet_id in revs:
+            self.revision.setValue(int(revs[self.ctrl.sheet_id]))
+        self._name_changed()
+
+    def _show_formats(self) -> None:
+        """The formats a {variable} can have, with examples (a list a person can read and copy from)."""
+        from ..post import naming
+        rows = "".join(f"<tr><td><code>{html.escape(ex)}</code></td><td>&nbsp;&nbsp;{html.escape(text)}</td></tr>"
+                       for ex, text in naming.FORMATS)
+        box = QMessageBox(self)
+        box.setWindowTitle("Formats of the variables")
+        box.setTextFormat(Qt.RichText)
+        box.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        box.setText("Write a format after a colon inside the braces:<br><br><table>" + rows + "</table><br>"
+                    "They work in the file name, the folder inside, the toolpath part ({segments}) and toolpath names.")
+        box.exec()
+
+    def _sheet_revisions(self) -> None:
+        """A number for every sheet (each sheet counts up for itself)."""
+        d = QDialog(self)
+        d.setWindowTitle("Revision of every sheet")
+        form = QFormLayout(d)
+        boxes = {}
+        for sh in self.ctrl.project.sheets:
+            b = QSpinBox()
+            b.setRange(0, 99999)
+            b.setValue(self.sheet_revisions()[sh.id])
+            form.addRow(sh.name + ("  (open)" if sh.id == self.ctrl.sheet_id else ""), b)
+            boxes[sh.id] = b
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(d.accept)
+        bb.rejected.connect(d.reject)
+        form.addRow(bb)
+        if d.exec():
+            self.set_sheet_revisions({sid: b.value() for sid, b in boxes.items()})
 
     def _pick_folder(self) -> None:
         from .files import open_dir
@@ -2282,6 +2345,8 @@ class ExportDialog(RemembersSize, QDialog):
         """The revision of the files of this sheet: with the revision of the sheet group, a sheet of a group has its group's number
         (the box is the number of the sheet that is open, and what is typed in it is the one for that group)."""
         r = self._revisions()
+        if self.rev_scope.currentData() == "sheet" and sheet.id != self.ctrl.sheet_id:
+            return int(r["sheets"].get(sheet.id, r.get("project", 1)))
         if self.rev_scope.currentData() == "group" and sheet.group and sheet.id != self.ctrl.sheet_id:
             return int(r["groups"].get(sheet.group, r.get("project", 1)))
         return self.revision.value()
@@ -2336,6 +2401,7 @@ class ExportDialog(RemembersSize, QDialog):
             t = self.ctrl.project.toolpath(it.data(Qt.UserRole))
             it.setCheckState(Qt.Checked if t is not None and wanted(t) else Qt.Unchecked)
         self.list.blockSignals(False)
+        self._name_changed()                  # (the names of the files follow what is ticked)
         self.preview()
 
     def _material_setup(self) -> None:
@@ -2418,6 +2484,12 @@ class ExportDialog(RemembersSize, QDialog):
         warn = zero_warning(self.ctrl.project)
         self.zero_warning.setText(warn)
         self.zero_warning.setVisible(bool(warn))
+        none = not self.chosen()
+        self.save_button.setEnabled(not none)
+        self.save_button.setToolTip("Tick the toolpaths to save first" if none else "Write the files")
+        if none:
+            self.view.show_message("Tick the toolpaths to save (the list above, or All)")
+            return
         jobs = self.jobs(self.ctrl.sheet)
         if not jobs:
             self.view.show_message("(no calculated toolpaths on this sheet)")
@@ -2501,7 +2573,9 @@ class ExportDialog(RemembersSize, QDialog):
         up = 1 if self.rev_auto.isChecked() else 0                    # (counting up: the next save is the next revision)
         for _i, s, _o in plan:
             rev = self._revision_for(s)
-            if self.rev_scope.currentData() == "group" and s.group:
+            if self.rev_scope.currentData() == "sheet":
+                r["sheets"][s.id] = rev + up
+            elif self.rev_scope.currentData() == "group" and s.group:
                 r["groups"][s.group] = rev + up
             else:
                 r["project"] = rev + up

@@ -156,6 +156,7 @@ def test_commands_toolpaths_export_and_simulation(win, tmp_path):
     win.toolpaths_panel.refresh()
     assert win.toolpaths_panel.tree.topLevelItemCount() == 2
     ex = ExportDialog(ctrl, win)
+    ex._tick(lambda t: t.enabled)      # (it opens with nothing ticked)
     for i in range(ex.post.count()):
         ex.post.setCurrentIndex(i)
         text = ex.text.toPlainText()

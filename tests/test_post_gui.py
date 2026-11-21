@@ -193,6 +193,7 @@ def test_save_gcode_has_the_editor_and_explains_lines(rwin):
     objs = populate(win, select=False)
     c.add_toolpath(ToolpathDef("p", "profile", end_mill(6), {"through": True}, Selection("vectors", [objs[0].id])))
     dlg = ExportDialog(c, win)
+    dlg._tick(lambda t: t.enabled)      # (it opens with nothing ticked)
     dlg.post.setCurrentIndex(dlg.post.findData("mach3"))
     dlg.preview()
     text = dlg.text.toPlainText()

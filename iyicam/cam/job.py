@@ -22,6 +22,7 @@ class ComputeResult:
     error: str | None = None
     order: list[str] | None = None                          # cut order (vector contour keys)
     start_updates: dict = field(default_factory=dict)       # key -> better start point of the vector
+    strategy: str | None = None                             # the order strategy used (what "auto" chose)
 
 
 class ComputeCancelled(BaseException):
@@ -67,7 +68,7 @@ def compute_toolpath(project: Project, tdef: ToolpathDef, sheet: Sheet,
                             f"({ctx.safe_z:g} mm): set them in Toolpaths > Material Setup")
     try:
         res.toolpaths = cls(tdef.params).compute(ctx)
-        res.order, res.start_updates = ctx.order, dict(ctx.start_updates or {})
+        res.order, res.start_updates, res.strategy = ctx.order, dict(ctx.start_updates or {}), ctx.strategy
     except clip.TooComplex as exc:      # (shapes piled on one spot: said as it is, no traceback)
         res.error = str(exc)
     except Exception as exc:  # strategies (and plugins) must never crash the application

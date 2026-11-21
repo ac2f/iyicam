@@ -223,7 +223,8 @@ toolpaths of a group are cut together, where the first of them is. Example: a 4 
 - `{revision:03}` (or `{revision:3}`): at least three digits, zeros in front: 1 → `001`, 12 → `012`;
 - `{tool_diameter:.1}`: one decimal (6 → `6.0`); `{sheet_height/2:05.1}`: both;
 - a text variable with a width is filled with zeros in front as well.
-The desktop window, the page and the engine write the same name.
+The desktop window, the page and the engine write the same name. The desktop window lists these with examples under
+**Formats...** (next to *Insert a variable*).
 
 The order of the blocks in a file is always: start of the file, first tool / tool change, start of a toolpath, its
 moves, end of a toolpath (and so on for every toolpath), end of the file.
@@ -279,7 +280,9 @@ Sheets can be put in groups (the *Group* of the sheet's properties, or the right
 In the Save G-code window (desktop) and on the Output tab (page): the **folder** is chosen first (and remembered), then **Save**
 writes: nothing is written before. The files are named by the prefixes (variables: `{toolpath_name}`, `{safe_z}`, `{cut_depth}`,
 `{tool_diameter}`, `{sheet_group}`, `{revision}` and the others above) and can go in a **folder inside** it with variables of
-its own (`Rev{revision}`). The **revision** counts up by itself after every save (it can be typed; it is of the project or of
-the sheet group, each group counting for itself) and is kept in the project file. The window shows what was saved last
+its own (`Rev{revision}`). The **revision** counts up by itself after every save (it can be typed; it is of the project, of
+the sheet group, each group counting for itself, or **of the sheet**, each sheet counting for itself: **Sheets...** sets the
+number of every sheet) and is kept in the project file. The window opens with **no toolpath ticked** (tick them, or *All*);
+opened from a toolpath or a group (*Save G-code of this group...*), those are ticked. The window shows what was saved last
 and stays open for the next revision. What was calculated is saved as it is: the desktop asks when the drawing changed since
 (save as calculated, or calculate again), the engine writes the toolpaths of the last calculation when the project is the same.

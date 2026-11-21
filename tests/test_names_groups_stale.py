@@ -173,6 +173,8 @@ def test_the_save_window_names_a_file_of_several_toolpaths_by_all_of_them(rwin):
     process()
     for only in (None, {t.id, t2.id}):
         d = ExportDialog(c, win, only=only)
+        if only is None:
+            d._tick(lambda t: t.enabled)      # (it opens with nothing ticked)
         d._name_rows.itemAt(0).layout().itemAt(0).widget().setText("{toolpath_name}_T{tool_number}_R{revision:03}")
         process()
         assert "Outline+Holes_T1+2_R" in d.name_preview.text()

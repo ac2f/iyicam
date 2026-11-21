@@ -67,6 +67,7 @@ def test_save_gcode_warns_when_z_zero_is_the_table(rwin):
     assert zero_warning(c.project) == ""
     c.project.material.z_zero = "bottom"
     d = ExportDialog(c, win)
+    d._tick(lambda t: t.enabled)      # (it opens with nothing ticked)
     process()
     assert d.zero_warning.isVisibleTo(d) and "table" in d.zero_warning.text()
     assert f"{c.project.material.thickness:g} mm" in d.zero_warning.text()

@@ -59,6 +59,7 @@ def test_the_save_window_names_the_files_by_the_prefixes(tmp_path, monkeypatch):
     try:
         c, t, objs = parts(win)
         d = ExportDialog(c, win)
+        d._tick(lambda t: t.enabled)      # (it opens with nothing ticked)
         assert d.name_parts() == ["{project_name}"]
         d._add_prefix("{date}")
         d._add_prefix("T{tool_number}")
@@ -88,6 +89,7 @@ def test_the_save_window_saves_into_the_folder_by_revision_and_counts_up(tmp_pat
         out = tmp_path / "nc"
         out.mkdir()
         d = ExportDialog(c, win)
+        d._tick(lambda t: t.enabled)      # (it opens with nothing ticked)
         d.sheets.setCurrentIndex(d.sheets.findData("current"))
         d._add_prefix("R{revision}")
         d.subfolder.setText("Rev{revision}")
@@ -107,6 +109,40 @@ def test_the_save_window_saves_into_the_folder_by_revision_and_counts_up(tmp_pat
         assert (out / "Rev9").is_dir() and d.revision.value() == 9
         for v in ("toolpath_name", "safe_z", "cut_depth", "tool_diameter", "sheet_group", "revision"):
             assert v in naming.NAMES
+        d.close()
+    finally:
+        gen.close()
+
+
+def test_the_save_window_opens_with_nothing_ticked_and_counts_the_revision_of_every_sheet(tmp_path, monkeypatch):
+    pytest.importorskip("PySide6.QtWidgets")
+    from gui_robot import rwin_gen
+    from test_cutedit import parts
+    from iyicam.gui.dialogs import ExportDialog
+    gen = rwin_gen(tmp_path / "h", monkeypatch)
+    win, _ = next(gen)
+    try:
+        c, t, objs = parts(win)
+        c.recalculate()
+        d = ExportDialog(c, win)
+        assert d.chosen() == set() and not d.save_button.isEnabled()          # (nothing ticked: nothing to save)
+        d.close()
+        d = ExportDialog(c, win, only={t.id})                                # (from the toolpath: that one)
+        assert d.chosen() == {t.id} and d.save_button.isEnabled()
+        second = c.project.add_sheet("Second", 300, 200)
+        d.rev_scope.setCurrentIndex(d.rev_scope.findData("sheet"))
+        assert d.rev_sheets.isVisibleTo(d)
+        d.set_sheet_revisions({c.sheet.id: 3, second.id: 7})
+        assert d.revision.value() == 3 and d._revision_for(second) == 7 and d._revision_for(c.sheet) == 3
+        out = tmp_path / "nc"
+        out.mkdir()
+        d.folder.setText(str(out))
+        d.sheets.setCurrentIndex(d.sheets.findData("current"))
+        d._add_prefix("R{revision:03}")
+        d.save()
+        assert [f.stem.endswith("_R003") for f in out.rglob("*.tap")] == [True]
+        revs = c.project.metadata["revisions"]["sheets"]
+        assert revs[c.sheet.id] == 4 and revs[second.id] == 7 and d.revision.value() == 4    # (only the saved sheet counts up)
         d.close()
     finally:
         gen.close()

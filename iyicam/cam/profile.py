@@ -201,14 +201,19 @@ class ProfileOp(Operation):
             ctx.warn("The finish pass runs along parts the roughing pass has already cut free: add tabs")
         sheet = Plate.of(ctx.sheet)
         home = ctx.material.home[:2]
-        order, notes = seq.sequence(sitems, cfg, home, sheet, zones=bool(cfg["smart_starts"]))  # (not for 'optimise now' once)
+        used: dict = {}
+        order, notes = seq.sequence(sitems, cfg, home, sheet, zones=bool(cfg["smart_starts"]), info=used)  # (not for 'optimise now' once)
         for n in notes:
             ctx.warn(n)
         ctx.order = order
+        ctx.strategy = used.get("strategy", cfg["strategy"])
+        cfg = {**cfg, "strategy": ctx.strategy}          # ("auto": what it chose, for the start points and the check below)
         if cfg["strategy"] in ("cols_bl", "rows_bl") and len(sitems) <= 800:     # (the plate is looked at the way a person does)
             from . import audit
             parts = {it.key: it.bbox for it in sitems if it.depth % 2 == 0}
             bad = audit.violations([k for k in order if k in parts], parts, columns=cfg["strategy"] == "cols_bl")
+            moved = {k for pair in used.get("big_last", []) for k in pair}    # (big parts last on purpose)
+            bad = [x for x in bad if x[0] not in moved and x[1] not in moved]
             if bad:
                 kinds = sorted({r for _, _, r in bad})
                 ctx.warn(f"{len(bad)} pair(s) of cuts break the {' / '.join(kinds)} rule of the order "

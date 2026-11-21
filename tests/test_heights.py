@@ -232,6 +232,7 @@ def test_the_toolpath_panel_the_toolbar_and_the_gcode_window_show_the_heights(rw
     process()
     assert c.project.material.safe_z == 22.0 and "safe Z 22 mm" in panel.material.text()
     exp = ExportDialog(c, win)
+    exp._tick(lambda t: t.enabled)      # (it opens with nothing ticked)
     assert "safe Z 22 mm" in exp.heights.text() and "home" in exp.heights.text()
     robot.hook = lambda d: d.form.widgets["safe_z"].setValue(c.units.to_display(31.0)) if isinstance(d, MaterialDialog) else None
     exp._material_setup()
