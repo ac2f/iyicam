@@ -132,6 +132,16 @@ def process() -> None:
     QApplication.processEvents()
 
 
+def release_keys(widget) -> None:
+    """Let go of every modifier key. Qt keeps the modifiers of the last key event as the program's own
+    (``QGuiApplication.keyboardModifiers()``), and mouse moves sent by QTest do not change them: after a test clicks
+    Alt+F7, say, Alt stays "held" for every later test in the same process, and with Alt held nothing snaps."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    QTest.keyRelease(widget, Qt.Key_Alt, Qt.NoModifier)
+    QApplication.processEvents()
+
+
 def rwin_gen(tmp_path, monkeypatch):
     """A main window on a fresh settings folder with the robot installed: ``yield from`` it in a fixture."""
     monkeypatch.setenv("IYICAM_HOME", str(tmp_path / "home"))
@@ -141,6 +151,7 @@ def rwin_gen(tmp_path, monkeypatch):
     w.resize(1200, 800)
     w.show()
     process()
+    release_keys(w)                       # (no key left held by a test that ran before in this process)
     yield w, robot
     for c in w.documents():
         c.dirty = False
