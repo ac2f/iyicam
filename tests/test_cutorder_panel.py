@@ -242,7 +242,7 @@ def test_live_mode_applies_at_once_and_is_remembered(tmp_path, monkeypatch):
         s.close()
 
 
-def test_the_smart_modes_and_their_numbers_are_applied_and_remembered_for_new_toolpaths(rwin):
+def test_the_smart_modes_and_their_numbers_are_applied_to_the_toolpath_only(rwin):
     win, _ = rwin
     c, t, objs, panel = opened(win)
     panel.smart.setChecked(True)
@@ -251,7 +251,7 @@ def test_the_smart_modes_and_their_numbers_are_applied_and_remembered_for_new_to
     panel.margin.setValue(c.units.to_display(2.5))
     panel.margin.editingFinished.emit()
     assert t.sequence["start_margin"] == pytest.approx(2.5)
-    assert c.settings.sequence_defaults["smart_starts"] is True
+    assert not c.settings.sequence_defaults.get("smart_starts")      # (not carried over to new toolpaths)
 
 
 def test_the_preview_goes_when_the_document_changes_or_the_panel_is_hidden(rwin):

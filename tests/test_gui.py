@@ -727,7 +727,7 @@ def test_cutting_direction_per_strategy(win):
     assert t2.sequence["directions"]["diag_tr"] == "cw"
 
 
-def test_inner_pieces_first_is_one_click_and_remembered(win):
+def test_inner_pieces_first_is_one_click_on_the_project_and_new_toolpaths_start_with_the_default(win):
     from conftest import end_mill
 
     from iyicam.core.document import Selection, ToolpathDef
@@ -744,10 +744,12 @@ def test_inner_pieces_first_is_one_click_and_remembered(win):
     assert first.sequence.get("grouping", "depth") == "depth"
     win.inner_first_action.trigger()                     # the menu item: off -> part by part
     assert first.sequence["grouping"] == "part" and not win.inner_first_action.isChecked()
-    assert make("b").sequence["grouping"] == "part"      # new toolpaths start the way the last choice was
-    assert Settings.load().sequence_defaults["grouping"] == "part"    # and so does the next session
+    assert not c.inner_first()                            # (the check mark follows the toolpaths of the project)
+    b = make("b")
+    assert b.sequence.get("grouping", "depth") == "depth"   # a new toolpath starts with the default: inner pieces first
+    assert "grouping" not in Settings.load().sequence_defaults
     win.inner_first_action.trigger()
-    assert first.sequence["grouping"] == "depth" and Settings.load().sequence_defaults["grouping"] == "depth"
+    assert first.sequence["grouping"] == "depth" and c.inner_first()
 
 
 def test_nesting_dialog_inner_pieces_and_filled_holes(win):

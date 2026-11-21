@@ -489,11 +489,11 @@ class Controller(CutControl, QObject):
 
     # -- toolpaths -----------------------------------------------------------------------------------
     def add_toolpath(self, tdef: ToolpathDef) -> None:
+        # a new toolpath starts with the default cut order (strategy, inner pieces first, direction, start points ...):
+        # nothing chosen for another toolpath is carried over. Only the cutting directions set on purpose as the default
+        # ("Use these for new toolpaths too" of the directions table) are used.
         if self.settings.strategy_directions and "directions" not in tdef.sequence:
             tdef.sequence["directions"] = dict(self.settings.strategy_directions)
-        for key, value in self.settings.sequence_defaults.items():
-            if key in self.REMEMBERED_SEQUENCE:    # (the strategy is not: every new toolpath starts with the default one)
-                tdef.sequence.setdefault(key, value)   # new toolpaths are ordered the way the last one was
         with self.edit(f"Add toolpath {tdef.name}", geometry=False):
             self.project.toolpaths.append(tdef)
         self.recalculate({tdef.id})
@@ -735,22 +735,20 @@ class Controller(CutControl, QObject):
         if self.stale and self.settings.auto_recalculate:
             self.recalculate(only)
 
-    # cut order and start point settings that new toolpaths start with (what was chosen last)
-    REMEMBERED_SEQUENCE = ("grouping", "direction", "smart_starts", "start_margin", "corner_distance")
-
-    def remember_cut_order(self, **changes) -> None:
-        """Cut order / start point settings chosen by the user: new toolpaths start with them."""
-        keep = {k: v for k, v in changes.items() if k in self.REMEMBERED_SEQUENCE and v is not None}
-        if keep:
-            self.settings.sequence_defaults.update(keep)
-            self.settings.save()
+    def inner_first(self) -> bool:
+        """Whether the toolpaths of the project that cut vector by vector cut the inner pieces first (no such
+        toolpath: the default, yes)."""
+        from ..cam.profile import ProfileOp
+        tps = [t for t in self.project.toolpaths
+               if (op := self.registry.operations.get(t.op)) is not None and issubclass(op, ProfileOp)]
+        return all(t.sequence.get("grouping", "depth") == "depth" for t in tps)
 
     def set_inner_first(self, on: bool) -> int:
-        """Cut the inner pieces (göbek) of all parts first (``on``) or part by part, on every toolpath that
-        cuts vector by vector and on the toolpaths made later. Returns how many toolpaths changed."""
+        """Cut the inner pieces (göbek) of all parts first (``on``) or part by part, on every toolpath of the project
+        that cuts vector by vector (new toolpaths start with the default, inner pieces first). Returns how many
+        toolpaths changed."""
         from ..cam.profile import ProfileOp
         grouping = "depth" if on else "part"
-        self.remember_cut_order(grouping=grouping)
         ids = set()
         todo = [t for t in self.project.toolpaths
                 if (op := self.registry.operations.get(t.op)) is not None and issubclass(op, ProfileOp)

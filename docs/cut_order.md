@@ -150,8 +150,10 @@ nested in a hole) are grouped with the outlines:
 * **Part by part**: a part's inner pieces, then its outline, then the next part.
 
 **Toolpaths ▸ Cut Inner Pieces (Göbek) First** switches between the two for every
-toolpath at once. What was chosen last (the strategy too) is remembered and is used
-by the toolpaths made later, also in the next session.
+toolpath of the project at once. A new toolpath always starts from the default cut order (the
+default strategy, inner pieces first, its default direction and start points): nothing chosen for
+another toolpath is carried over. Only the cutting directions set on purpose with *Use these for new
+toolpaths too* (the directions table) are used by new toolpaths.
 
 Rows and columns are found automatically (a new row starts where the next part is more
 than half a part size further on) or use a fixed **row / column size**. A part is where the sweep

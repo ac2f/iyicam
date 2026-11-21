@@ -659,9 +659,11 @@ class MainWindow(QMainWindow):
         self._act(m, "&Recalculate All", self.recalculate, "F5")
         self._act(m, "Cut &Order...", self.cut_order, "Ctrl+Alt+O")
         self.inner_first_action = self._act(m, "Cut Inner Pieces (&Göbek) First", self.toggle_inner_first, None, True,
-                                            s.sequence_defaults.get("grouping", "depth") == "depth")
+                                            c.inner_first())
         self.inner_first_action.setToolTip("Cut the holes and inner pieces of all parts first, then the outlines, "
-                                           "each in the order of the cut order strategy")
+                                           "each in the order of the cut order strategy (the toolpaths of this project; "
+                                           "new toolpaths start with inner pieces first)")
+        m.aboutToShow.connect(lambda: self.inner_first_action.setChecked(self.ctrl.inner_first()))
         m.addSeparator()
         self._act(m, "&Material Setup...", self.material_setup, "Ctrl+Shift+M")
         self._act(m, "&Tool Database...", lambda: ToolDatabaseDialog(self.ctrl, self).exec())

@@ -167,7 +167,6 @@ class CutControl:
             return False
         if p.changes:
             self.set_sequence(p.tid, **p.changes)
-            self.remember_cut_order(**p.changes)
         if p.smart_starts:
             self.optimise_starts({p.tid})
         return True

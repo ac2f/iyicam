@@ -224,7 +224,7 @@ def test_toolpath_tool_is_remembered_per_kind_but_settings_start_from_the_defaul
     assert sess.robot.problems() == []
 
 
-def test_cut_order_choice_is_the_start_of_the_next_toolpaths(sess):
+def test_a_new_toolpath_starts_from_the_default_cut_order_whatever_was_chosen_before(sess):
     from conftest import end_mill
 
     from iyicam.core.document import Selection, ToolpathDef
@@ -234,15 +234,16 @@ def test_cut_order_choice_is_the_start_of_the_next_toolpaths(sess):
     t = ToolpathDef("a", "profile", end_mill(6), {"through": True}, Selection("vectors", [obj.id]))
     c.add_toolpath(t)
     c.set_sequence(t.id, strategy="rows_tr", grouping="part", smart_starts=True, start_margin=2.5)
-    c.remember_cut_order(strategy="rows_tr", grouping="part", smart_starts=True, start_margin=2.5)
+    assert t.sequence["grouping"] == "part"            # (the toolpath it was set on keeps it)
     sess.restart()
     c = sess.ctrl
     obj = VectorObject([shapes.rectangle(10, 10, 100, 60)], c.layer_id)
     c.add_vectors([obj], select=False)
     t2 = ToolpathDef("b", "profile", end_mill(6), {"through": True}, Selection("vectors", [obj.id]))
     c.add_toolpath(t2)
-    assert (t2.sequence.get("strategy", "cols_bl"), t2.sequence["grouping"], t2.sequence["smart_starts"],
-            t2.sequence["start_margin"]) == ("cols_bl", "part", True, 2.5)   # (the strategy starts at the default)
+    from iyicam.cam import sequence as seq
+    for k in ("strategy", "grouping", "smart_starts", "start_margin"):     # nothing is carried over, also not across sessions
+        assert t2.sequence.get(k, seq.DEFAULTS[k]) == seq.DEFAULTS[k], k
 
 
 # -- nesting ---------------------------------------------------------------------------------------------------

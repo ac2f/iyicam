@@ -30,7 +30,7 @@ class Settings:
     show_route: bool = False          # arrows for the rapid moves between the cuts
     show_starts: bool = False         # where every cut starts and closes (and whether that is a good place)
     strategy_directions: dict = field(default_factory=dict)  # cutting direction per cut order strategy
-    sequence_defaults: dict = field(default_factory=dict)  # cut order / start point settings chosen last: new toolpaths
+    sequence_defaults: dict = field(default_factory=dict)  # (no longer used: new toolpaths start from the default cut order; kept so older settings files load)
     memory: dict = field(default_factory=dict)  # what every dialog was last set to, by dialog (see remember)
     dirs: dict = field(default_factory=dict)    # the folder last used for every kind of file
     window_geometry: str = ""

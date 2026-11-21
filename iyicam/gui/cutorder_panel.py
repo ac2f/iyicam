@@ -693,7 +693,6 @@ class CutOrderPanel(DocPanel):
         self.ctrl.clear_cut_preview()
         if self.live.isChecked():                   # (the person asked for every choice to be applied at once)
             self.ctrl.set_sequence(self.tid, **changes)
-            self.ctrl.remember_cut_order(**changes)
             return
         self.pending().update(changes)
         self._summary(self._preview())
@@ -734,10 +733,7 @@ class CutOrderPanel(DocPanel):
 
     def _take_pending(self) -> dict:
         """The settings that wait: they leave the waiting list because they are about to be applied."""
-        changes = dict(self._pending.pop(self.tid, None) or {})
-        if changes:
-            self.ctrl.remember_cut_order(**changes)
-        return changes
+        return dict(self._pending.pop(self.tid, None) or {})
 
     def _reorder(self) -> None:
         if self.tid:

@@ -151,4 +151,4 @@ def test_a_new_toolpath_starts_outside_and_with_the_default_strategy(rwin):
     dlg.close()
     _, t, _ = __import__("test_cutedit").parts(win, n=1)
     assert t.sequence.get("strategy", seq.DEFAULTS["strategy"]) == seq.DEFAULTS["strategy"]
-    assert t.sequence.get("smart_starts") is True
+    assert not t.sequence.get("smart_starts")              # (nothing chosen before is carried over)
