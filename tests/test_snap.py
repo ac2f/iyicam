@@ -8,7 +8,7 @@ import pytest
 
 pytest.importorskip("PySide6.QtWidgets")
 
-from gui_robot import process, rwin_gen  # noqa: E402
+from gui_robot import hover, process, rwin_gen  # noqa: E402
 from PySide6.QtCore import QPointF, Qt  # noqa: E402
 from PySide6.QtGui import QGuiApplication  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
@@ -399,11 +399,9 @@ def test_the_status_bar_says_what_the_pointer_clung_to(view):
     win, _, c, cv = view
     add(c, shapes.rectangle(100, 100, 60, 40))
     win.set_tool("line")                                                                # (a tool that places points)
-    QTest.mouseMove(cv, at(cv, 101.0, 101.0))
-    process()
+    hover(cv, at(cv, 101.0, 101.0))
     assert win.snap_label.text().startswith("Node") and "100 mm" in win.snap_label.text()
-    QTest.mouseMove(cv, at(cv, 200.0, 300.0))
-    process()
+    hover(cv, at(cv, 200.0, 300.0))
     assert win.snap_label.text() == ""
 
 

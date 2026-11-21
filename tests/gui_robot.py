@@ -142,6 +142,18 @@ def release_keys(widget) -> None:
     QApplication.processEvents()
 
 
+def hover(widget, pos) -> None:
+    """Move the pointer onto ``pos`` of ``widget``, surely. Qt drops a mouse move to where it last saw the pointer,
+    and that place outlives the window: a test that moves onto a point at which a test before it (in the same
+    process, on a window of the same layout) left the pointer would get no move at all. A step aside first makes
+    the move onto ``pos`` a real one."""
+    from PySide6.QtCore import QPoint
+    from PySide6.QtTest import QTest
+    QTest.mouseMove(widget, pos + QPoint(1, 1))
+    QTest.mouseMove(widget, pos)
+    QApplication.processEvents()
+
+
 def rwin_gen(tmp_path, monkeypatch):
     """A main window on a fresh settings folder with the robot installed: ``yield from`` it in a fixture."""
     monkeypatch.setenv("IYICAM_HOME", str(tmp_path / "home"))
