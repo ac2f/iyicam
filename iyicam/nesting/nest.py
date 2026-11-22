@@ -1370,6 +1370,33 @@ def alt_order(best, order):
     return order
 
 
+POINT_STEPS = (300, 200, 150, 100, 80, 60, 40)   # point budgets tried, finest first, when the time limit is short for the job
+PASS_COST = 1.2e-8     # seconds of a first pass, per (parts^2 x mean outline points^3): measured on letters
+PASS_SHARE = 0.4       # the first pass may take this share of the time limit
+
+
+def point_budget(shapes: Sequence[NestShape], settings: NestSettings) -> int:
+    """The outline point budget to nest with: ``max_points``, or less when with that the first pass alone would take
+    more than :data:`PASS_SHARE` of the time limit (hundreds of curved parts). The work grows with the number of parts
+    squared and the outline points cubed; the points are counted on a sample of the parts."""
+    mp = settings.max_points
+    n = sum(max(0, sh.quantity) for sh in shapes)
+    if settings.time_limit <= 0 or n <= 40 or settings.arrange != "free":
+        return mp
+    tol = min(settings.tolerance, max(0.05, settings.spacing * 0.025))
+    step = max(1, len(shapes) // 30)
+    sample = [sh for sh in list(shapes)[::step] if sh.polys][:30]
+    if not sample:
+        return mp
+    budgets = [mp] + [b for b in POINT_STEPS if 0 < b < (mp if mp > 0 else 10 ** 9)]
+    for b in budgets:
+        pts = sum(sum(len(p) for p in _outline([q for q, _ in clip.polytree(sh.polys, "nonzero")] or sh.polys,
+                                                settings.spacing / 2.0, tol, b)) for sh in sample) / len(sample)
+        if PASS_COST * n * n * pts ** 3 <= PASS_SHARE * settings.time_limit:
+            return b
+    return budgets[-1]
+
+
 def nest(shapes: Sequence[NestShape], settings: NestSettings, progress: Callable | None = None,
          cancel: Callable[[], bool] | None = None) -> NestResult:
     """Nest the shapes; ``cancel()`` is asked all the time and ``NestCancelled`` raised when it says yes.
@@ -1380,6 +1407,9 @@ def nest(shapes: Sequence[NestShape], settings: NestSettings, progress: Callable
     :meth:`Nester.polish`). One attempt is the plain layout (biggest first, the gravity chosen).
 
     ``progress(done, total)`` counts the parts placed over all attempts."""
+    budget = point_budget(shapes, settings)
+    if budget != settings.max_points:          # (hundreds of curved parts and a short time limit: a little coarser)
+        settings = replace(settings, max_points=budget)
     n = Nester(shapes, settings)
     n.cancel = cancel
     squeezing = (settings.squeeze_angle > 0 or settings.squeeze_margin > 0) and settings.arrange == "free"

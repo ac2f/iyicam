@@ -51,7 +51,7 @@ class Clipper(pyclipper.Pyclipper):
         return super().Execute(*args, **kwargs) if self._used else []
 
 
-def union_all(paths: list, group: int = 8) -> list:
+def union_all(paths: list, group: int = 32) -> list:
     """The union (non-zero) of many integer paths that all turn the same way (counter-clockwise), made in small groups and
     then two results at a time: the same region as one union of all of them, but a union of hundreds of overlapping
     pieces at once is very slow in Clipper (25 s against 0.01 s for the no-fit polygon of two curved parts)."""

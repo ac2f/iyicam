@@ -151,7 +151,11 @@ nothing. What keeps it fast:
   curves can have hundreds of points, and the work grows with the square of that. The price is that such parts end
   up further from their neighbours: the old default of 40 made the letters of a text up to 6 mm fatter on every side,
   and 14 sets of texts in many fonts and sizes used 4 % more sheet than with 300 (in about the same time, the search
-  having a time limit). A setting of 40 remembered from before is raised to 300. Plain parts (rectangles, rounded corners, L shapes) are not
+  having a time limit). A setting of 40 remembered from before is raised to 300.
+  With a *Time limit*, a big job of curved parts gets a smaller budget when the first pass alone would take more than
+  about 40 % of the time (the work grows with the parts squared and the points cubed: 212 letters at 300 points took
+  474 s for one pass, at 100 points 173 s, at 40 points 49 s); the finest budget that fits is taken. Without a time
+  limit the setting is used as it is. Plain parts (rectangles, rounded corners, L shapes) are not
   touched. *Outline tolerance* is the least that is simplified.
 * Parts with the same outline (copies drawn separately, anywhere on the sheet) share their
   work; outlines that look the same when turned (a rectangle at 0° and 180°, a square at every
