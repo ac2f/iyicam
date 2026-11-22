@@ -153,7 +153,7 @@ nothing. What keeps it fast:
   and 14 sets of texts in many fonts and sizes used 4 % more sheet than with 300 (in about the same time, the search
   having a time limit). A setting of 40 remembered from before is raised to 300.
   With a *Time limit*, a big job of curved parts gets a smaller budget when the first pass alone would take more than
-  about 40 % of the time (the work grows with the parts squared and the points cubed: 212 letters at 300 points took
+  about 75 % of the time (the work grows with the parts squared and the points cubed: 212 letters at 300 points took
   474 s for one pass, at 100 points 173 s, at 40 points 49 s); the finest budget that fits is taken. Without a time
   limit the setting is used as it is. Plain parts (rectangles, rounded corners, L shapes) are not
   touched. *Outline tolerance* is the least that is simplified.
@@ -181,9 +181,10 @@ Nesting places the parts one by one at the best place of the feasible area. What
 order the parts come decides how much of the sheet is used, so several layouts are made and the best one
 is kept: **Optimisation attempts** (default 30; 1 is one quick pass).
 
-* The first attempt puts the biggest parts first in the *Direction* chosen. With *Along X* / *Along Y* the following
-  ones also judge a place by the far edge of the part (where it reaches up / right) instead of its near edge, so of
-  its angles the one that keeps the layout lowest wins (letters lie down); the better layout of the two is kept.
+* The first attempt puts the biggest parts first in the *Direction* chosen. With *Along X* / *Along Y* it judges a
+  place by the far edge of the part (where it reaches up / right), so of its angles the one that keeps the layout
+  lowest wins (letters lie down); the next one by its near edge (rectangles keep their columns), and the better
+  layout is kept.
   The following ones try (with *Automatic* only) the other directions (left, bottom, smallest area, shortest layout along X or Y) and other orders of
   the parts (by area, longest side, height, width). After those the best order is shuffled a little.
 * A layout is better when it places more parts, then uses fewer (cheaper) sheets, then uses less of the last
@@ -200,9 +201,12 @@ is kept: **Optimisation attempts** (default 30; 1 is one quick pass).
 * The work is shared between the attempts (the no-fit polygons are made once), so ten attempts cost a lot
   less than ten times one. The result is the same every time for the same settings.
 
-**Time limit** (seconds, 0 = none; `--time-limit` on the command line): the search stops when the time is
+**Time limit** (seconds, default 120, 0 = none; `--time-limit` on the command line): the search stops when the time is
 up and keeps the best layout found so far, which is never worse than the first pass. The first pass is
-always finished.
+always finished. A small job is done long before (the search stops when nothing better comes for a while); hundreds
+of curved parts use less material with more time: 394 letters on 1000 x 2000 sheets used 4.8 % less sheet with
+600 s than with 60 s (finer outlines for the first pass, more search after it). A remembered 30 s, the old default,
+is raised to 120 s.
 
 On a 2440 x 1220 sheet with 22 mixed parts (rounded rectangles, L, T and U shapes, circles, arrows) one pass
 used 89 % of the sheet, the search 81-84 %; 24 rectangles of many sizes needed 2 sheets in one pass and 1 with

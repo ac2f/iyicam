@@ -185,7 +185,7 @@ def test_the_free_nesting_is_as_before_and_can_be_kept_to_one_direction():
     only = NestSettings(1000, 800, margin=10, spacing=10, rotations=[0], iterations=6, gravity="bottom", gravity_only=True)
     plan = Nester(shapes_, only).candidates(20)
     assert plan and {g for _, g in plan} == {"bottom", "bottom_far"}        # (only the one asked for, by either edge)
-    assert plan[0][1] == "bottom"                                             # (the plain layout first)
+    assert plan[0][1] == "bottom_far" and plan[1][1] == "bottom"               # (both edges, the far one first)
     res = nest(shapes_, only)
     assert not res.unplaced
     assert_valid(shapes_, res, only)

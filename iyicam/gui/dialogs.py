@@ -1578,8 +1578,10 @@ class NestingDialog(RemembersSize, QDialog):
             Param("iterations", "Optimisation attempts", "int", 30, min=1, max=200, group="Strategy",
                   help="1: one quick pass. More: other orders of the parts and other directions are tried, "
                        "the best layout (fewest sheets, least area used on the last) is kept and polished"),
-            Param("time_limit", "Time limit of the search (seconds)", "int", 30, min=0, max=3600, group="Strategy",
-                  help="No further layout is tried after this; the best so far is kept. 0 = no limit"),
+            Param("time_limit", "Time limit of the search (seconds)", "int", 120, min=0, max=3600, group="Strategy",
+                  help="No further layout is tried after this; the best so far is kept (a small job is done long "
+                       "before: the search stops when nothing better comes). Hundreds of curved parts use less "
+                       "material with more time. 0 = no limit"),
             Param("group_inner", "Inner pieces (göbek) stay with their part", "bool", False, group="Parts",
                   help="On: whatever lies inside a part (the pieces in its holes too) moves with it. "
                        "Off: pieces in holes are parts of their own and are nested separately"),
@@ -1623,8 +1625,9 @@ class NestingDialog(RemembersSize, QDialog):
             if mem.get("iterations") == 8:          # (the old default: the new one finds tighter layouts)
                 mem["iterations"] = 30
             ctrl.settings.remember("nesting", mem, save=False)
-        if mem.get("max_points") == 40:              # (the old default: it made curved parts up to 6 mm fatter on every side)
-            ctrl.settings.remember("nesting", dict(mem, max_points=300), save=False)
+        old = {k: v for k, v in (("max_points", 300), ("time_limit", 120)) if mem.get(k) == {"max_points": 40, "time_limit": 30}[k]}
+        if old:                                      # (the old defaults: 40 points made curved parts up to 6 mm fatter on
+            ctrl.settings.remember("nesting", dict(mem, **old), save=False)   # every side; 30 s is short for big jobs)
         self.form = ParamForm(params, ctrl.settings.recall("nesting", self.memo), ctrl.units)
         self._grouped = False
         self._memory: dict = {"qty": {}, "rules": {}, "layer_rules": {}}   # what was set for parts that left the table

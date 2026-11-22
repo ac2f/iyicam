@@ -309,10 +309,59 @@ def convex_parts(path: IntPath) -> list[IntPath] | None:
     return [[P[t] for t in pc] for pc in pieces]
 
 
+def _pocket_depth(pts: IntPath, hull: IntPath) -> float:
+    """How far the points lie inside the boundary of their convex hull at most (units)."""
+    m = len(hull)
+    worst = 0.0
+    for px, py in pts:
+        best = math.inf
+        for k in range(m):
+            ax, ay = hull[k]
+            bx, by = hull[(k + 1) % m]
+            dx, dy = bx - ax, by - ay
+            L2 = dx * dx + dy * dy
+            t = 0.0 if L2 == 0 else max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / L2))
+            d = math.hypot(px - ax - t * dx, py - ay - t * dy)
+            if d < best:
+                best = d
+                if best <= worst:
+                    break
+        worst = max(worst, best)
+    return worst
+
+
+def merge_pieces(pieces: list[IntPath], tol: float) -> list[IntPath]:
+    """Fewer convex pieces: two pieces that share an edge become their convex hull when it lies within ``tol`` of the
+    two (a shallow pocket between them is filled). The work of a no-fit polygon grows with the pieces of both parts
+    multiplied, and the curves of letters make many small ones; the hulls only add up to ``tol`` to the outline, on the
+    safe side."""
+    pieces = [list(p) for p in pieces]
+    changed = True
+    while changed and len(pieces) > 1:
+        changed = False
+        owners: dict[frozenset, list[int]] = {}
+        for i, p in enumerate(pieces):
+            for k in range(len(p)):
+                owners.setdefault(frozenset((p[k], p[(k + 1) % len(p)])), []).append(i)
+        gone: set[int] = set()
+        for ids in owners.values():
+            if len(ids) != 2 or ids[0] == ids[1] or ids[0] in gone or ids[1] in gone:
+                continue
+            i, j = ids
+            both = pieces[i] + pieces[j]
+            hull = convex_hull(both)
+            if len(hull) >= 3 and _pocket_depth(both, hull) <= tol:
+                pieces[i] = hull
+                gone.add(j)
+                changed = True
+        pieces = [p for k, p in enumerate(pieces) if k not in gone]
+    return pieces
+
+
 class _Variant:
     __slots__ = ("paths", "bbox", "area", "convex", "pieces", "sig", "holes", "solid", "_prep", "_negprep")
 
-    def __init__(self, paths: list[IntPath], holes: list[IntPath] | None = None):
+    def __init__(self, paths: list[IntPath], holes: list[IntPath] | None = None, merge: float = 0.0):
         self.paths = paths
         self.holes = holes or []          # the room inside the part, counter-clockwise like the outline
         # outline minus holes as one set of paths (non-zero fill): what is really solid
@@ -333,6 +382,8 @@ class _Variant:
             if parts is None:
                 pieces = None
                 break
+            if merge > 0 and len(parts) > 2:
+                parts = merge_pieces(parts, merge)
             pieces += parts
         self.pieces = pieces
         self._prep = None
@@ -514,6 +565,9 @@ class Nester:
         settings = replace(settings, tolerance=min(settings.tolerance, max(0.05, settings.spacing * 0.025)))
         self.st = settings
         half = settings.spacing / 2.0
+        # convex pieces that lie this close to their hull are one piece (the pocket between them filled): a tenth of the
+        # gap, at most 0.6 mm; the no-fit polygons of curved parts get several times cheaper, the layouts stay the same
+        self._merge = min(0.6, 0.1 * settings.spacing) * clip.SCALE
         conts = settings.containers or [Container.rect(settings.sheet_width, settings.sheet_height)]
         self.boxes = [_Box(i, c, settings.margin, settings.spacing, settings.tolerance)
                       for i, c in enumerate(conts)]
@@ -684,7 +738,8 @@ class Nester:
         ang = round(ang % 360.0, 6)
         v = self._vcache[c].get(ang)
         if v is None:
-            v = self._vcache[c][ang] = _Variant(_rotate_int(self._grown[c], ang), _rotate_int(self._rooms[c], ang))
+            v = self._vcache[c][ang] = _Variant(_rotate_int(self._grown[c], ang), _rotate_int(self._rooms[c], ang),
+                                                self._merge)
         return v
 
     def _relieved(self, box: _Box, relief: float) -> _Box:
@@ -1215,9 +1270,11 @@ class Nester:
             plan = [("area", g) for g in gravs] + [("side", g) for g in gravs] + [
                 ("height", gravs[0]), ("width", gravs[0]), ("perimeter", gravs[0])] + (
                 [] if len(gravs) < 2 else [("height", gravs[1]), ("width", gravs[1]), ("perimeter", gravs[1])])
-        else:   # the direction by its near edge first (the plain layout), then mostly by the far edge
-            plan = [("area", g0), ("area", far)] + [(how, g) for how in ("side", "height", "width", "perimeter")
-                                                    for g in (far, g0)] + [(how, g) for g in gravs[1:] for how in ("area", "side")]
+        else:   # by the far edge first when a direction was chosen (on letters the better one), then by the near edge
+            first = (far, g0) if self.st.gravity_only else (g0, far)
+            plan = [("area", first[0]), ("area", first[1])] + [(how, g) for how in ("side", "height", "width", "perimeter")
+                                                                for g in (far, g0)] + [(how, g) for g in gravs[1:]
+                                                                                       for how in ("area", "side")]
         out, seen = [], set()
         for how, g in plan:
             if len(out) >= max(1, count):
@@ -1371,8 +1428,8 @@ def alt_order(best, order):
 
 
 POINT_STEPS = (300, 200, 150, 100, 80, 60, 40)   # point budgets tried, finest first, when the time limit is short for the job
-PASS_COST = 1.2e-8     # seconds of a first pass, per (parts^2 x mean outline points^3): measured on letters
-PASS_SHARE = 0.4       # the first pass may take this share of the time limit
+PASS_COST = 0.6e-8     # seconds of a first pass, per (parts^2 x mean outline points^3): measured on letters
+PASS_SHARE = 0.75      # the first pass may take this share of the time limit
 
 
 def point_budget(shapes: Sequence[NestShape], settings: NestSettings) -> int:
