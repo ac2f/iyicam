@@ -117,6 +117,15 @@ def field_text(field: str, vals: dict) -> str:
     return "" if v is None else _formatted(v, spec)
 
 
+def fill(template: str, vals: dict) -> str:
+    """A text with ``{variables}`` of ``vals`` put in (sums and formats too: ``{sheet_number:02}``, ``{diameter*2}``); a brace of a
+    name ``vals`` does not have stays as it is. For the names of tools, toolpath packages and their groups."""
+    if "{" not in (template or ""):
+        return template or ""
+    return _ANY.sub(lambda m: field_text(m.group(1), vals)
+                    if all(n in vals for n in _IDENT.findall(_split(m.group(1))[0])) else m.group(0), template)
+
+
 def check(parts, sep: str = DEFAULT_SEP) -> tuple[list[str], str]:
     """``(parts, separator)`` cleaned, or :class:`NamingError` with what is wrong."""
     if parts is None:
@@ -202,7 +211,7 @@ def values_for(project, sheet, index: int, count: int, post_name: str, group: st
     safe = [d.safe_z if d is not None and d.safe_z is not None else project.material.safe_z for d in defs] or [project.material.safe_z]
     v = values(project.name, sheet.name, index, count, post_name, group, len(tps), None, "", project.sheet_thickness(sheet),
                sheet.width, sheet.height, now=now, sheet_group=sheet.group, revision=revision, safe_z=max(safe))
-    v.update({"tool_number": joined(t.tool.number for t in tps), "tool_name": joined(t.tool.name for t in tps),
+    v.update({"tool_number": joined(t.tool.number for t in tps), "tool_name": joined(t.tool.label for t in tps),
               "tool_diameter": joined(float(t.tool.diameter) for t in tps),
               "toolpath_name": joined(toolpath_name(project, d, sheet) if d is not None else t.name for d, t in zip(defs, tps)),
               "cut_depth": joined(float(d.params["cut_depth"]) for d in defs
@@ -237,7 +246,7 @@ def toolpath_values(project, tdef, sheet=None) -> dict:
     depth = tdef.params.get("cut_depth")
     if tdef.params.get("through"):
         depth = thick + float(tdef.params.get("overcut") or 0.0)
-    return {"tool_name": t.name, "tool_number": str(t.number), "tool_diameter": num(t.diameter),
+    return {"tool_name": t.label, "tool_number": str(t.number), "tool_diameter": num(t.diameter),
             "feed_rate": num(t.feed_rate), "plunge_rate": num(t.plunge_rate), "spindle_speed": num(t.spindle_speed),
             "stepdown": num(t.stepdown), "cut_depth": num(depth) if isinstance(depth, (int, float)) else "",
             "allowance": num(tdef.params.get("allowance")) if isinstance(tdef.params.get("allowance"), (int, float)) else "",

@@ -440,7 +440,7 @@ class PostProcessor:
             "ymax": self.fmt(self.ty(stats.ymax) if math.isfinite(stats.ymax) else 0.0),
             "zmin": self.fmt(self.tz(stats.zmin)),
             "rotary_diameter": self.fmt(m.rotary_diameter * self._k) if m.rotary else "",
-            "tools": ", ".join(sorted({f"T{t.tool.number} {t.tool.name}" for t in toolpaths})),
+            "tools": ", ".join(sorted({f"T{t.tool.number} {t.tool.label}" for t in toolpaths})),
         }
         v.update(job.extra)
         return v
@@ -453,7 +453,7 @@ class PostProcessor:
         coolant = {"mist": "M7", "flood": "M8"}.get(t.coolant, "")
         st = tp.stats(job.project.material.machine())
         return {
-            "tool_number": t.number, "tool_name": t.name, "tool_type": t.type,
+            "tool_number": t.number, "tool_name": t.label, "tool_type": t.type,
             "tool_diameter": self.fmt(t.diameter * self._k), "tool_angle": self.fmt(t.angle, 1, coord=False),
             "spindle_speed": int(round(rpm)), "spindle_dir_code": "M4" if t.spindle_dir == "ccw" else "M3",
             "coolant_code": coolant, "coolant_off": "M9" if coolant else "",

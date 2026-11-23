@@ -6,7 +6,7 @@ transformation, the next one by it twice, and so on - a row of five copies is "M
 """
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QFormLayout, QGridLayout, QHBoxLayout, QLabel, QPushButton,
                                 QScrollArea, QStackedWidget, QToolButton, QVBoxLayout, QWidget)
 from .wheelguard import QComboBox, QDoubleSpinBox, QSpinBox
@@ -22,6 +22,7 @@ MEMORY_KEY = "transform_panel"
 
 
 class TransformPanel(DocPanel):
+    transformed = Signal(str, object)     # (what was done, how to do it again): Repeat (Ctrl+R) of the window
     signals = ("selection_changed", "changed")
 
     def __init__(self, ctrl, parent=None):
@@ -382,17 +383,26 @@ class TransformPanel(DocPanel):
         except ValueError as exc:
             self.ctrl.message.emit(str(exc))
             return False
-        return self._run(T, dict(PAGES)[key])
+        ok = self._run(T, dict(PAGES)[key])
+        if ok:
+            self.transformed.emit(dict(PAGES)[key], self.apply)
+        return ok
 
     def rotate_by(self, degrees: float) -> bool:
         if self._bb is None:
             return False
-        return self._run(placement.turn(degrees, self._pivot()), "Rotate")
+        ok = self._run(placement.turn(degrees, self._pivot()), "Rotate")
+        if ok:
+            self.transformed.emit(f"Rotate {degrees:g}°", lambda: self.rotate_by(degrees))
+        return ok
 
     def flip(self, left_right: bool) -> bool:
         if self._bb is None:
             return False
-        return self._run(placement.flip(self._bb, self.anchor, left_right), "Mirror")
+        ok = self._run(placement.flip(self._bb, self.anchor, left_right), "Mirror")
+        if ok:
+            self.transformed.emit("Mirror", lambda: self.flip(left_right))
+        return ok
 
     # -- what is remembered ----------------------------------------------------------------------------
     NUMBERS = ("angle", "sx", "sy", "ax", "ay")

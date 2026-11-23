@@ -597,8 +597,9 @@ The automatic calculation does only the red ones; F5 (Recalculate All) calculate
 
 A profile toolpath has **Allowance** among its common settings (for *Outside* and *Inside*), the way ArtCAM has it: the tool
 runs that much further from the line. Outside: `+1` cuts the part 1 mm bigger on every side, `-1` 1 mm smaller. Inside (holes):
-`+1` leaves the hole 1 mm smaller, `-1` makes it bigger. A negative allowance of the tool radius or more cannot be cut (the
-tool would have to run on the other side of the line): it is taken as just under the radius, and the toolpath says so.
+`+1` leaves the hole 1 mm smaller, `-1` makes it bigger. A negative allowance of the tool radius or more is taken as it is: the
+centre of the tool then runs on the other side of the line (a 4 mm tool with `-2.2` cuts the part 2.2 mm smaller, its centre
+0.2 mm inside the line).
 
 ## Blank project, Z zero on the table
 

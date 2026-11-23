@@ -522,13 +522,20 @@ class MaterialDialog(RemembersSize, QDialog):
 # tools
 # ---------------------------------------------------------------------------
 
-def tool_params(t: Tool) -> list[Param]:
+def tool_params(t: Tool, groups: list[str] | None = None) -> list[Param]:
     tapered = ["v_bit", "engraving"]
+    if groups is not None:                       # (the groups of the tool database: one of them is chosen)
+        names = list(dict.fromkeys([g for g in groups] + [t.group]))
+        group = Param("group", "Group", "choice", t.group, choices=[(g, g or "(no group)") for g in names], group="Tool",
+                      help="New groups: 'New group...' under the list of tools")
+    else:
+        group = Param("group", "Group", "str", t.group, group="Tool")
     return [
-        Param("name", "Name", "str", t.name, group="Tool"),
+        Param("name", "Name", "str", t.name, group="Tool",
+              help="It may have {variables} of the tool: {type} Ø{diameter} -> End Mill Ø6 (the {…} button puts them in)"),
         Param("type", "Type", "choice", t.type, choices=list(TOOL_TYPES.items()), group="Tool"),
         Param("number", "Tool number", "int", t.number, min=0, max=999, group="Tool"),
-        Param("group", "Group", "str", t.group, group="Tool"),
+        group,
         Param("diameter", "Diameter", "length", t.diameter, min=0.01, group="Geometry"),
         Param("angle", "Included angle", "angle", t.angle, min=1.0, max=179.0, group="Geometry",
               visible={"type": tapered + ["drill"]}),
@@ -556,22 +563,59 @@ class ToolEditor(QWidget):
     #: calculated for that size; another size is another tool: the tool database)
     SIZE_FIELDS = ("diameter", "tip_diameter", "angle", "corner_radius")
 
-    def __init__(self, ctrl, tool: Tool | None = None, parent=None, lock_size: bool = False):
+    def __init__(self, ctrl, tool: Tool | None = None, parent=None, lock_size: bool = False,
+                 groups: list[str] | None = None):
         super().__init__(parent)
         self.ctrl = ctrl
         self.lock_size = lock_size
+        self.groups = groups
         self.lay = QVBoxLayout(self)
         self.lay.setContentsMargins(0, 0, 0, 0)
+        # the name: {variables} of the tool, and what the name becomes
+        row = QHBoxLayout()
+        self.name_shown = QLabel()
+        self.name_shown.setStyleSheet("color: gray")
+        row.addWidget(self.name_shown, 1)
+        var_b = QToolButton()
+        var_b.setText("{…}")
+        var_b.setToolTip("Put a variable of the tool in its name (the diameter, the type, the number ...)")
+        var_b.setPopupMode(QToolButton.InstantPopup)
+        vmenu = QMenu(var_b)
+        from ..core.tooling import TOOL_NAME_VARIABLES
+        for name, en, _tr in TOOL_NAME_VARIABLES:
+            vmenu.addAction(f"{{{name}}}  {en}", lambda n=name: self._insert_variable(n))
+        var_b.setMenu(vmenu)
+        row.addWidget(var_b)
+        self.lay.addLayout(row)
         self.form = None
         self._tool = None
         self.set_tool(tool or Tool())
+
+    def _insert_variable(self, name: str) -> None:
+        w = self.form.widgets.get("name")
+        if isinstance(w, QLineEdit):
+            w.insert("{" + name + "}")
+            w.setFocus()
+
+    def _show_name(self, *_) -> None:
+        try:
+            t = self.tool()
+        except Exception:  # noqa: BLE001  (a form half filled in)
+            return
+        self.name_shown.setText(f"Name: <b>{t.label}</b>" if t.label != t.name else "")
+
+    def set_groups(self, groups: list[str]) -> None:
+        """The groups of the tool database changed: the Group field offers them."""
+        self.groups = groups
+        self.set_tool(self.tool())
 
     def set_tool(self, t: Tool) -> None:
         self._tool = t
         if self.form is not None:
             self.lay.removeWidget(self.form)
             self.form.deleteLater()
-        self.form = ParamForm(tool_params(t), None, self.ctrl.units)
+        self.form = ParamForm(tool_params(t, self.groups), None, self.ctrl.units)
+        self.form.changed.connect(self._show_name)
         if self.lock_size:
             for name in self.SIZE_FIELDS:
                 w = self.form.widgets.get(name)
@@ -580,6 +624,7 @@ class ToolEditor(QWidget):
                     w.setToolTip("The size of the tool cannot be changed here: choose another tool (Select from "
                                  "database...) or change it in the tool database")
         self.lay.addWidget(self.form)
+        self._show_name()
 
     def tool(self) -> Tool:
         t = self._tool.copy()
@@ -639,11 +684,13 @@ class FeedsDialog(QDialog):
 class ToolDatabaseDialog(RemembersSize, QDialog):
     """Edit the tool library; in pick mode the selected tool is returned."""
 
-    def __init__(self, ctrl, parent=None, pick: bool = False):
+    def __init__(self, ctrl, parent=None, pick: bool = False, select_id: str | None = None, title: str = ""):
         super().__init__(parent)
         self.ctrl = ctrl
-        self.setWindowTitle("Select Tool" if pick else "Tool Database")
+        self.setWindowTitle(title or ("Select Tool" if pick else "Tool Database"))
         self.lib_tools = [t.copy() for t in ctrl.tools.tools]
+        self.groups: list[str] = list(ctrl.tools.groups())        # (empty groups too, in their order)
+        self.current_group: str | None = None
         lay = QVBoxLayout(self)
         split = QSplitter()
         left = QWidget()
@@ -662,15 +709,29 @@ class ToolDatabaseDialog(RemembersSize, QDialog):
             b.clicked.connect(slot)
             row.addWidget(b)
         ll.addLayout(row)
+        grow = QHBoxLayout()
+        for text, slot, tip in (("New group...", self.new_group, "Make a group of tools (an empty one: put tools in it with "
+                                                                  "their Group field)"),
+                                ("Rename group...", self.rename_group, "Rename the group that is selected (its tools move with it)"),
+                                ("Delete group", self.delete_group, "Remove the group that is selected; its tools stay, "
+                                                                    "out of every group")):
+            b = QPushButton(text)
+            b.setToolTip(tip)
+            b.clicked.connect(slot)
+            grow.addWidget(b)
+        grow.addStretch(1)
+        ll.addLayout(grow)
         split.addWidget(left)
-        self.editor = ToolEditor(ctrl)
+        self.editor = ToolEditor(ctrl, groups=self.groups)
         split.addWidget(scroll(self.editor))
         split.setSizes([260, 380])
         lay.addWidget(split)
         lay.addWidget(buttons(self, "Select" if pick else "Save"))
         self.current: Tool | None = None
-        self.refresh()
+        self.refresh(select_id)
         self.keep_size(ctrl, "tools", 720, 620)
+
+    GROUP_ROLE = Qt.UserRole + 1
 
     def _commit_editor(self) -> None:
         if self.current is not None:
@@ -679,25 +740,35 @@ class ToolDatabaseDialog(RemembersSize, QDialog):
                 if t.id == self.current.id:
                     self.lib_tools[i] = new
                     self.current = new
+            if new.group not in self.groups:
+                self.groups.append(new.group)
 
-    def refresh(self, select_id: str | None = None) -> None:
+    def refresh(self, select_id: str | None = None, select_group: str | None = None) -> None:
         self.tree.blockSignals(True)
         self.tree.clear()
         groups: dict[str, QTreeWidgetItem] = {}
         target = None
+        order = list(dict.fromkeys(self.groups + [t.group for t in self.lib_tools]))
+        for name in order:
+            g = QTreeWidgetItem([name or "Ungrouped"])
+            g.setData(0, self.GROUP_ROLE, name)
+            f = g.font(0)
+            f.setBold(True)
+            g.setFont(0, f)
+            self.tree.addTopLevelItem(g)
+            g.setExpanded(True)
+            groups[name] = g
+            if select_group is not None and name == select_group:
+                target = g
         for t in self.lib_tools:
-            g = groups.get(t.group)
-            if g is None:
-                g = QTreeWidgetItem([t.group or "Ungrouped"])
-                g.setFlags(g.flags() & ~Qt.ItemIsSelectable)
-                self.tree.addTopLevelItem(g)
-                g.setExpanded(True)
-                groups[t.group] = g
-            it = QTreeWidgetItem([f"T{t.number}  {t.name}"])
+            it = QTreeWidgetItem([f"T{t.number}  {t.label}"])
             it.setData(0, Qt.UserRole, t.id)
-            g.addChild(it)
-            if t.id == (select_id or (self.current.id if self.current else None)):
+            groups[t.group].addChild(it)
+            if select_group is None and t.id == (select_id or (self.current.id if self.current else None)):
                 target = it
+        for name, g in groups.items():
+            if not g.childCount():
+                g.setText(0, f"{name or 'Ungrouped'}  (empty)")
         self.tree.blockSignals(False)
         if target is None and self.lib_tools:
             target = groups[self.lib_tools[0].group].child(0)
@@ -706,17 +777,79 @@ class ToolDatabaseDialog(RemembersSize, QDialog):
 
     def _changed(self, cur, prev) -> None:
         self._commit_editor()
+        if cur is not None and cur.data(0, Qt.UserRole) is None:      # (a group: what Rename / Delete group act on)
+            self.current_group = cur.data(0, self.GROUP_ROLE)
+            return
         tid = cur.data(0, Qt.UserRole) if cur else None
         t = next((t for t in self.lib_tools if t.id == tid), None)
         if t is not None:
             self.current = t
+            self.current_group = t.group
             self.editor.set_tool(t)
+
+    # -- groups --------------------------------------------------------------------------------------------------------
+    def _group_names(self) -> list[str]:
+        return list(dict.fromkeys(self.groups + [t.group for t in self.lib_tools]))
+
+    def new_group(self) -> None:
+        name, ok = QInputDialog.getText(self, "New group", "Name of the group:")
+        name = (name or "").strip()
+        if not ok or not name:
+            return
+        self._commit_editor()
+        if name not in self._group_names():
+            self.groups.append(name)
+        self.editor.set_groups(self._group_names())
+        self.refresh(select_group=name)
+
+    def rename_group(self) -> None:
+        old = self.current_group
+        if old is None:
+            QMessageBox.information(self, "Rename group", "Select a group (or a tool of it) first.")
+            return
+        name, ok = QInputDialog.getText(self, "Rename group", "New name of the group:", text=old)
+        name = (name or "").strip()
+        if not ok or not name or name == old:
+            return
+        self._commit_editor()
+        for t in self.lib_tools:
+            if t.group == old:
+                t.group = name
+        self.groups = list(dict.fromkeys(name if g == old else g for g in self._group_names()))
+        self.current_group = name
+        if self.current is not None:
+            self.editor.groups = self._group_names()
+            self.editor.set_tool(next(t for t in self.lib_tools if t.id == self.current.id))
+        self.refresh(select_group=name)
+
+    def delete_group(self) -> None:
+        name = self.current_group
+        if name is None:
+            QMessageBox.information(self, "Delete group", "Select a group (or a tool of it) first.")
+            return
+        n = sum(1 for t in self.lib_tools if t.group == name)
+        if n and QMessageBox.question(self, "Delete group", f"The group '{name}' has {n} tool(s): they stay, out of every "
+                                                           "group. Delete the group?") != QMessageBox.Yes:
+            return
+        self._commit_editor()
+        for t in self.lib_tools:
+            if t.group == name:
+                t.group = ""
+        self.groups = [g for g in self._group_names() if g != name]
+        self.current_group = None
+        self.editor.groups = self._group_names()
+        if self.current is not None:
+            self.current = next(t for t in self.lib_tools if t.id == self.current.id)
+            self.editor.set_tool(self.current)
+        self.refresh()
 
     def add(self) -> None:
         self._commit_editor()
-        t = Tool(name="New tool", number=max((t.number for t in self.lib_tools), default=0) + 1)
+        t = Tool(name="New tool", number=max((t.number for t in self.lib_tools), default=0) + 1,
+                 group=self.current_group if self.current_group is not None else "End Mills")
         self.lib_tools.append(t)
         self.current = t
+        self.editor.set_tool(t)          # (before the list moves to it: or the tool shown before is written over the new one)
         self.refresh(t.id)
 
     def copy(self) -> None:
@@ -768,6 +901,7 @@ class ToolDatabaseDialog(RemembersSize, QDialog):
     def accept(self) -> None:
         self._commit_editor()
         self.ctrl.tools.tools = self.lib_tools
+        self.ctrl.tools.group_names = [g for g in self._group_names() if g]
         try:
             self.ctrl.save_tools()
         except OSError as exc:
@@ -780,7 +914,8 @@ class ToolDatabaseDialog(RemembersSize, QDialog):
 # ---------------------------------------------------------------------------
 
 class ToolpathDialog(RemembersSize, QDialog):
-    def __init__(self, ctrl, op_id: str, tdef: ToolpathDef | None = None, parent=None, sheet_group: str = ""):
+    def __init__(self, ctrl, op_id: str, tdef: ToolpathDef | None = None, parent=None, sheet_group: str = "",
+                 tool: Tool | None = None):
         super().__init__(parent)
         self.ctrl = ctrl
         self.op = ctrl.registry.operations[op_id]
@@ -858,7 +993,10 @@ class ToolpathDialog(RemembersSize, QDialog):
         tl.addLayout(row)
         self.memory_key = f"toolpath:{op_id}"
         mem = {} if self.tdef else ctrl.settings.recall(self.memory_key)
-        tool = self.tdef.tool if self.tdef else self._remembered_tool(mem.get("tool")) or self._default_tool()
+        # a new toolpath takes the tool as it is in the tool database (the one chosen for it, else the one chosen last time):
+        # what was changed on the tool of another toolpath (its feed rate ...) is that toolpath's only
+        tool = self.tdef.tool if self.tdef else tool or self.library_tool(ctrl, self.op, mem.get("tool_id")) \
+            or self._default_tool()
         self.tool_editor = ToolEditor(ctrl, tool, lock_size=True)
         tl.addWidget(scroll(self.tool_editor))
         # -- vectors tab
@@ -1019,21 +1157,19 @@ class ToolpathDialog(RemembersSize, QDialog):
         except Exception:  # noqa: BLE001  (a form half filled in: nothing to show yet)
             self.name_shown.setText("")
 
-    def _remembered_tool(self, d) -> Tool | None:
-        """The tool of the last toolpath of this kind (when it still fits the toolpath)."""
-        if not isinstance(d, dict):
+    @staticmethod
+    def library_tool(ctrl, op, tool_id) -> Tool | None:
+        """A copy of the tool ``tool_id`` of the tool database, as it is there (when it fits the toolpath)."""
+        t = ctrl.tools.get(tool_id) if isinstance(tool_id, str) else None
+        if t is None or (op.tool_types is not None and t.type not in op.tool_types):
             return None
-        try:
-            t = Tool.from_dict(d)
-        except (TypeError, ValueError, KeyError):
-            return None
-        return t if self.op.tool_types is None or t.type in self.op.tool_types else None
+        return t.copy()
 
     def _remember(self) -> None:
         s = self.ctrl.settings
         s.memory.pop(self.memory_key + ":params", None)      # (settings are not carried over to new toolpaths)
-        s.remember(self.memory_key, {"tool": self.tool_editor.tool().to_dict(),
-                                     "all_sheets": self.all_sheets.isChecked()})
+        # which tool of the database was used (not the tool as it was changed for this toolpath: that is not carried over)
+        s.remember(self.memory_key, {"tool_id": self.tool_editor.tool().id, "all_sheets": self.all_sheets.isChecked()})
 
     def _default_tool(self) -> Tool:
         lib = self.ctrl.tools.tools
@@ -2027,7 +2163,7 @@ class ExportDialog(RemembersSize, QDialog):
         self.list.setDragDropMode(QListWidget.InternalMove)          # (drag a toolpath to where it is to be cut)
         self.list.setDefaultDropAction(Qt.MoveAction)
         for t in ctrl.project.toolpaths:
-            it = QListWidgetItem(f"{t.name}  —  T{t.tool.number} {t.tool.name}" + (f"   [{t.group}]" if t.group else ""))
+            it = QListWidgetItem(f"{t.name}  —  T{t.tool.number} {t.tool.label}" + (f"   [{t.group}]" if t.group else ""))
             it.setData(Qt.UserRole, t.id)
             it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
             on = only is not None and t.id in only          # (from the menu nothing is ticked: tick what is to be saved)
@@ -3210,6 +3346,7 @@ class PreferencesDialog(QDialog):
                   help="Shift: 10 times, Ctrl: a tenth"),
             Param("auto_recalculate", "Recalculate toolpaths automatically after every edit", "bool", s.auto_recalculate),
             Param("calculate_on_open", "Calculate the toolpaths of a project when it is opened", "bool", s.calculate_on_open),
+            Param("ask_tool", "A new toolpath asks for its tool from the tool database first", "bool", s.ask_tool),
             Param("show_directions", "Show direction arrows", "bool", s.show_directions),
             Param("sim_resolution", "Simulation resolution (mm, 0 = auto)", "float", s.sim_resolution, min=0.0),
         ]

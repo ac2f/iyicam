@@ -1,5 +1,5 @@
 """Allowance of a profile, as in ArtCAM: + leaves material on the wall (an outside cut makes the part bigger, an inside cut
-the hole smaller), − the other way; it is a common setting, and more than the tool radius is never taken."""
+the hole smaller), − the other way; it is a common setting, and it is taken as it is, more than the tool radius too."""
 import pytest
 from conftest import add_tp, end_mill, make_project
 
@@ -37,9 +37,17 @@ def test_inside_plus_makes_the_hole_smaller_and_minus_bigger(a):
     assert x0 == pytest.approx(100 + 3 + a, abs=0.01) and x1 == pytest.approx(200 - 3 - a, abs=0.01)
 
 
-def test_more_than_the_tool_radius_is_not_taken_and_it_is_said():
-    x0, _, _, _, warnings = cut_box("outside", -5.0)
-    assert x0 == pytest.approx(100 - 0.001, abs=0.01) and any("Allowance" in w for w in warnings)
+@pytest.mark.parametrize("a", [-3.2, -5.0])
+def test_more_than_the_tool_radius_is_taken_as_it_is(a):
+    # (a 6 mm tool with -3.2: the centre runs 0.2 inside the outline, the part is 3.2 smaller on every side, not 3)
+    x0, x1, y0, y1, warnings = cut_box("outside", a)
+    assert x0 == pytest.approx(100 - 3 - a, abs=0.01) and x1 == pytest.approx(200 + 3 + a, abs=0.01)
+    assert y0 == pytest.approx(100 - 3 - a, abs=0.01) and not any("Allowance" in w for w in warnings)
+
+
+def test_a_minus_allowance_past_the_radius_on_a_hole_makes_it_bigger_by_that_much():
+    x0, x1, _, _, _ = cut_box("inside", -3.2)
+    assert x0 == pytest.approx(100 + 3 - 3.2, abs=0.01) and x1 == pytest.approx(200 - 3 + 3.2, abs=0.01)
 
 
 def test_the_allowance_is_in_sight_and_only_for_outside_and_inside():

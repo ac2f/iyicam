@@ -498,6 +498,17 @@ class Controller(CutControl, QObject):
             self.project.toolpaths.append(tdef)
         self.recalculate({tdef.id})
 
+    def add_toolpaths(self, tdefs: list[ToolpathDef], label: str = "Add toolpaths") -> None:
+        """Several new toolpaths at once (a package): one undo step, one calculation."""
+        if not tdefs:
+            return
+        for t in tdefs:
+            if self.settings.strategy_directions and "directions" not in t.sequence:
+                t.sequence["directions"] = dict(self.settings.strategy_directions)
+        with self.edit(label, geometry=False):
+            self.project.toolpaths.extend(tdefs)
+        self.recalculate({t.id for t in tdefs})
+
     def replace_toolpath(self, tdef: ToolpathDef) -> None:
         with self.edit(f"Edit toolpath {tdef.name}", geometry=False):
             self.project.toolpaths = [tdef if t.id == tdef.id else t for t in self.project.toolpaths]
@@ -655,9 +666,12 @@ class Controller(CutControl, QObject):
             self.results.update(res)
         self._mark_calculated({t.id for t in self.project.toolpaths} if only is None else set(only))
         self._store_orders(res)
+        before = set(self.stale_ids)
         if apply_starts and self._apply_start_updates(res, force_smart or set()):
-            # the vectors now carry the start points; toolpaths sharing them follow
-            return self.recalculate(only, apply_starts=False)
+            # the vectors now carry the start points; toolpaths sharing them follow: also those that were not asked for
+            # (a new toolpath that moves the start points of vectors other toolpaths cut must not leave them red)
+            followers = self.refresh_stale() - before
+            return self.recalculate(None if only is None else set(only) | followers, apply_starts=False)
         self.toolpaths_changed.emit()
         if self._compute_again:   # something asked for a calculation while this one ran
             self._compute_again = False

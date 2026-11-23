@@ -17,6 +17,17 @@ TOOL_TYPES: dict[str, str] = {
 }
 
 
+#: what the name of a tool may be made of: ``{type} Ø{diameter}`` -> ``End Mill Ø6`` (sums and formats as in file names:
+#: ``T{number:02}``, ``{feed_rate/60:.1}``); a name without braces is as it is
+TOOL_NAME_VARIABLES: list[tuple[str, str, str]] = [
+    ("type", "Type of the tool", "Takımın tipi"), ("diameter", "Diameter", "Çap"), ("number", "Tool number", "Takım numarası"),
+    ("angle", "Included angle (V-bits, drills)", "Açı (V uç, matkap)"), ("tip_diameter", "Tip diameter", "Uç çapı"),
+    ("corner_radius", "Corner radius", "Köşe yarıçapı"), ("flutes", "Flutes", "Ağız sayısı"),
+    ("flute_length", "Flute length", "Kesme boyu"), ("stepdown", "Stepdown", "Kademe derinliği"),
+    ("stepover", "Stepover", "Yan adım"), ("feed_rate", "Feed rate (per minute)", "İlerleme (dakikada)"),
+    ("plunge_rate", "Plunge rate", "Dalma hızı"), ("spindle_speed", "Spindle speed", "Devir"), ("group", "Group", "Grup")]
+
+
 def _new_id() -> str:
     return uuid.uuid4().hex[:12]
 
@@ -92,11 +103,30 @@ class Tool:
         known = {f.name for f in fields(cls)}
         return cls(**{k: v for k, v in d.items() if k in known})
 
+    def name_values(self) -> dict:
+        """The values of the ``{variables}`` of a tool name (TOOL_NAME_VARIABLES)."""
+        out = {}
+        for k, _, _ in TOOL_NAME_VARIABLES:
+            v = TOOL_TYPES.get(self.type, self.type) if k == "type" else getattr(self, k)
+            out[k] = f"{v:g}" if isinstance(v, float) else str(v)
+        return out
+
+    @property
+    def label(self) -> str:
+        """The name as it is shown and written: its ``{variables}`` put in (``{type} Ø{diameter}`` -> ``End Mill Ø6``)."""
+        if "{" not in self.name:
+            return self.name
+        from ..post.naming import fill
+        try:
+            return fill(self.name, self.name_values())
+        except Exception:  # noqa: BLE001  (a name is never worth an error)
+            return self.name
+
     def describe(self) -> str:
         t = TOOL_TYPES.get(self.type, self.type)
         if self.is_tapered:
-            return f"{self.name} ({t} {self.angle:g}°, D{self.diameter:g})"
-        return f"{self.name} ({t} D{self.diameter:g})"
+            return f"{self.label} ({t} {self.angle:g}°, D{self.diameter:g})"
+        return f"{self.label} ({t} D{self.diameter:g})"
 
 
 def default_tools() -> list[Tool]:
@@ -129,9 +159,10 @@ def default_tools() -> list[Tool]:
 class ToolLibrary:
     """A list of tools persisted as JSON."""
 
-    def __init__(self, tools: list[Tool] | None = None, path: Path | None = None):
+    def __init__(self, tools: list[Tool] | None = None, path: Path | None = None, groups: list[str] | None = None):
         self.tools: list[Tool] = list(tools) if tools is not None else default_tools()
         self.path = path
+        self.group_names: list[str] = list(groups or [])     # (the groups in their order, empty ones too)
 
     def get(self, tool_id: str) -> Tool | None:
         for t in self.tools:
@@ -153,14 +184,41 @@ class ToolLibrary:
         self.tools = [t for t in self.tools if t.id != tool_id]
 
     def groups(self) -> list[str]:
-        seen: list[str] = []
+        """The groups: those made (in their order, empty ones too), then those only the tools name."""
+        seen: list[str] = [g for g in self.group_names if g]
         for t in self.tools:
             if t.group not in seen:
                 seen.append(t.group)
         return seen
 
+    def add_group(self, name: str) -> str:
+        name = name.strip()
+        if not name:
+            raise ValueError("a group needs a name")
+        if name not in self.groups():
+            self.group_names = self.groups() + [name]
+        return name
+
+    def rename_group(self, old: str, new: str) -> None:
+        """Rename a group: its tools move with it."""
+        new = new.strip()
+        if not new:
+            raise ValueError("a group needs a name")
+        order = self.groups()
+        for t in self.tools:
+            if t.group == old:
+                t.group = new
+        self.group_names = list(dict.fromkeys(new if g == old else g for g in order))
+
+    def remove_group(self, name: str, move_to: str = "") -> None:
+        """Remove a group; its tools go to ``move_to`` (or out of every group)."""
+        for t in self.tools:
+            if t.group == name:
+                t.group = move_to
+        self.group_names = [g for g in self.groups() if g != name]
+
     def to_dict(self) -> dict:
-        return {"format": "iyicam-tools", "version": 1, "tools": [t.to_dict() for t in self.tools]}
+        return {"format": "iyicam-tools", "version": 1, "groups": self.groups(), "tools": [t.to_dict() for t in self.tools]}
 
     def save(self, path: Path | None = None) -> None:
         path = Path(path or self.path)
@@ -172,7 +230,8 @@ class ToolLibrary:
     def load(cls, path: Path) -> "ToolLibrary":
         path = Path(path)
         data = json.loads(path.read_text(encoding="utf-8"))
-        return cls([Tool.from_dict(d) for d in data.get("tools", [])], path)
+        return cls([Tool.from_dict(d) for d in data.get("tools", [])], path,
+                   [str(g) for g in data.get("groups", []) if isinstance(g, str)])
 
     @classmethod
     def load_or_default(cls, path: Path) -> "ToolLibrary":

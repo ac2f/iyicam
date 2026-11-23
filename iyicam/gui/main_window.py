@@ -114,6 +114,7 @@ class MainWindow(QMainWindow):
         ctrl.message.connect(lambda m: self.statusBar().showMessage(m, min(20000, 4000 + 80 * len(m))))   # (longer text, longer to read it)
         ctrl.command_result.connect(lambda payload, c=ctrl: QTimer.singleShot(0, lambda: self._show_report(c, *payload)))
         ctrl.changed.connect(lambda c=ctrl: self._doc_changed(c))
+        ctrl.toolpaths_changed.connect(lambda c=ctrl: c is self.ctrl and self._update_actions())
         ctrl.project_replaced.connect(lambda c=ctrl: self._doc_changed(c))
         ctrl.units_changed.connect(lambda c=ctrl: self._units_changed(c))
         # (only the drawing that is shown tells the window about its tool, prompt and mouse)
@@ -148,6 +149,8 @@ class MainWindow(QMainWindow):
         if hasattr(self, "quick"):
             self.quick["undo"].setEnabled(u.can_undo)
             self.quick["redo"].setEnabled(u.can_redo)
+        if hasattr(self, "undo_action"):          # (the menu items too, at every change: not only when the Edit menu opens,
+            self._update_undo()                   # or an item greyed out then stays dead for Ctrl+Z / Ctrl+Y afterwards)
 
     # -- look ---------------------------------------------------------------------------------------
     def set_theme(self, name: str) -> None:
@@ -334,6 +337,7 @@ class MainWindow(QMainWindow):
         self.props_panel = PropertiesPanel(c)
         self.props_dock = self._dock("Selection", self.props_panel, Qt.LeftDockWidgetArea)
         self.transform_panel = TransformPanel(c)
+        self.transform_panel.transformed.connect(lambda label, again: self._remember_repeat(("call", again), label))
         self.transform_dock = self._dock("Transform", self.transform_panel, Qt.LeftDockWidgetArea)
         self.tabifyDockWidget(self.props_dock, self.transform_dock)
         self.transform_dock.raise_()
@@ -590,6 +594,9 @@ class MainWindow(QMainWindow):
         m = mb.addMenu("&Edit")
         self.undo_action = self._act(m, "&Undo", lambda: self.ctrl.undo(), QKeySequence.Undo)
         self.redo_action = self._act(m, "&Redo", lambda: self.ctrl.redo(), QKeySequence.Redo)
+        self.redo_action.setShortcuts([QKeySequence("Ctrl+Y"), QKeySequence("Ctrl+Shift+Z")])   # (both, as in CorelDRAW, on every system)
+        self.repeat_action = self._act(m, "Re&peat", self.repeat_last, "Ctrl+R")
+        self.repeat_action.setToolTip("Do the last action again (the same values, on what is selected now), as Ctrl+R in CorelDRAW")
         m.aboutToShow.connect(self._update_undo)
         m.addSeparator()
         self._act(m, "&Delete", self.delete, QKeySequence.Delete)
@@ -601,6 +608,7 @@ class MainWindow(QMainWindow):
         self._command_menus(m, "Edit")
         m.addSeparator()
         self._act(m, "&Preferences...", lambda: PreferencesDialog(self.ctrl, self).exec())
+        self._act(m, "&Keyboard Shortcuts...", self.edit_shortcuts)
 
         m = mb.addMenu("&View")
         self._act(m, "Zoom &Extents", lambda: self.canvas.zoom_extents(), "F")
@@ -657,6 +665,10 @@ class MainWindow(QMainWindow):
         new = m.addMenu("&New Toolpath")
         for op in c.registry.operations.values():
             self._act(new, op.label + "...", lambda o=op.id: self.new_toolpath(o))
+        self._act(m, "Toolpath &Packages...", self.manage_packages)
+        self._act(m, "Save Selected Toolpaths as a Pac&kage...", self.save_package)
+        self.use_package_menu = m.addMenu("&Use a Package")
+        self.use_package_menu.aboutToShow.connect(lambda: self._fill_packages(self.use_package_menu))
         self._act(m, "&Recalculate All", self.recalculate, "F5")
         self._act(m, "Cut &Order...", self.cut_order, "Ctrl+Alt+O")
         self.inner_first_action = self._act(m, "Cut Inner Pieces (&Göbek) First", self.toggle_inner_first, None, True,
@@ -709,11 +721,131 @@ class MainWindow(QMainWindow):
         self._act(m, "&Keyboard Shortcuts", self.shortcuts_help)
         self._act(m, "&G-code Words (I J K ...)...", lambda: GlossaryDialog(self).exec())
         self._act(m, "&About iyiCAM", self.about)
+        self._apply_shortcuts()
+
+    # -- keyboard shortcuts and Repeat (Ctrl+R) -------------------------------------------------------------------------
+    #: what Repeat does not do again (it would undo / redo, or only open a window or a panel)
+    NOT_REPEATED = ("Edit/Undo", "Edit/Redo", "Edit/Repeat", "Edit/Preferences", "Edit/Keyboard Shortcuts")
+    REPEATED_MENUS = ("Edit", "Vectors")
+
+    def _apply_shortcuts(self) -> None:
+        """Every menu item gets its id; the program's keys are noted and the person's put over them; the items of the Edit
+        and Vectors menus tell Repeat that they ran."""
+        from . import shortcuts
+        self.shortcut_actions = shortcuts.collect(self.menuBar())
+        self.shortcut_defaults = {aid: shortcuts.keys_of(a) for aid, a in self.shortcut_actions.items()}
+        shortcuts.apply(self.shortcut_actions, self.shortcut_defaults, self.ctrl.settings.shortcuts)
+        for aid, a in self.shortcut_actions.items():
+            if (aid.split("/")[0] in self.REPEATED_MENUS and aid not in self.NOT_REPEATED and not a.isCheckable()
+                    and not aid.endswith(" Panel") and a.property("iyicam_command") is None):
+                a.triggered.connect(lambda checked=False, i=aid: self._remember_repeat(("action", i), i.split("/")[-1]))
+
+    def edit_shortcuts(self) -> None:
+        from .shortcuts import ShortcutsDialog
+        s = self.ctrl.settings
+        dlg = ShortcutsDialog(self.shortcut_actions, self.shortcut_defaults, s.shortcuts, self)
+        if not dlg.exec():
+            return
+        kept = {k: v for k, v in (s.shortcuts or {}).items() if k not in self.shortcut_actions}   # (items of plugins that are off now)
+        s.shortcuts = {**kept, **dlg.overrides()}
+        try:
+            s.save()
+        except OSError:
+            pass
+        from . import shortcuts
+        shortcuts.apply(self.shortcut_actions, self.shortcut_defaults, s.shortcuts)
+
+    def _remember_repeat(self, what: tuple, label: str) -> None:
+        self._repeat = what
+        if hasattr(self, "repeat_action"):
+            try:
+                self.repeat_action.setText(f"Re&peat {label}")
+            except RuntimeError:                           # (the menus were built again meanwhile)
+                pass
+
+    def repeat_last(self) -> None:
+        """Ctrl+R: the last command again with the same values (no window), the last transform of the panel, or the last
+        action of the Edit and Vectors menus, on what is selected now."""
+        what = getattr(self, "_repeat", None)
+        if what is None:
+            self.statusBar().showMessage("Nothing to repeat yet", 3000)
+            return
+        kind = what[0]
+        if kind == "cmd":
+            cmd = self.ctrl.registry.commands.get(what[1])
+            if cmd is not None:
+                self.ctrl.run_command(cmd, dict(what[2]) if what[2] is not None else None)
+        elif kind == "call":
+            what[1]()
+        elif kind == "action":
+            a = getattr(self, "shortcut_actions", {}).get(what[1])
+            if a is not None:
+                a.trigger()
 
     def _fill_toolpath_menu(self) -> None:
         self._toolpath_menu.clear()
         for op in self.ctrl.registry.operations.values():
             self._act(self._toolpath_menu, op.label + "...", lambda o=op.id: self.new_toolpath(o))
+        self._toolpath_menu.addSeparator()
+        pk = self._toolpath_menu.addMenu("Package")
+        pk.aboutToShow.connect(lambda: self._fill_packages(pk))
+
+    # -- packages of toolpaths --------------------------------------------------------------------------------------------
+    def _fill_packages(self, menu: QMenu) -> None:
+        from ..cam import tp_packages
+        menu.clear()
+        pkgs = tp_packages.load()
+        for p in pkgs:
+            self._act(menu, p["name"] + "...", lambda pid=p["id"]: self.apply_package(pid))
+        if pkgs:
+            menu.addSeparator()
+        self._act(menu, "Toolpath Packages...", self.manage_packages)
+
+    def manage_packages(self, select_id=None) -> None:
+        from .packages import PackagesDialog
+        dlg = PackagesDialog(self.ctrl, self, select_id if isinstance(select_id, str) else None)
+        if dlg.exec() and dlg.to_apply:
+            self.apply_package(dlg.to_apply)
+
+    def save_package(self) -> None:
+        """The toolpaths selected in the list (or all of them) as a new package; its window opens to change it."""
+        from PySide6.QtWidgets import QInputDialog
+        from ..cam import tp_packages
+        ids = self.toolpaths_panel.selected_ids()
+        tps = [t for t in self.ctrl.project.toolpaths if t.id in ids] or list(self.ctrl.project.toolpaths)
+        if not tps:
+            QMessageBox.information(self, "Package", "Create toolpaths first: a package is made of them.")
+            return
+        name, ok = QInputDialog.getText(self, "Save as a package", f"Name of the package ({len(tps)} toolpath(s)):")
+        if not ok or not name.strip():
+            return
+        pkg = tp_packages.save(tp_packages.from_toolpaths(name.strip(), tps, self.ctrl.registry))
+        self.manage_packages(pkg["id"])
+
+    def apply_package(self, pid: str) -> None:
+        """A package of toolpaths on the vectors that are selected: its window, then its toolpaths (one undo step)."""
+        from ..cam import tp_packages
+        from .packages import PackageApplyDialog
+        pkg = tp_packages.get(pid)
+        if pkg is None:
+            return
+        ctrl = self.ctrl
+        ids = [o.id for o in ctrl.selected_objects()]
+        if not ids:
+            QMessageBox.information(self, "Package", "Select the vectors the toolpaths of the package are for first.")
+            return
+        dlg = PackageApplyDialog(ctrl, pkg, ids, self)
+        if not dlg.exec():
+            return
+        try:
+            tps, group = dlg.toolpaths()
+        except tp_packages.PackageError as exc:
+            QMessageBox.warning(self, "Package", str(exc))
+            return
+        ctrl.add_toolpaths(tps, f"Package {pkg['name']}")
+        self.statusBar().showMessage(f"{len(tps)} toolpath(s) of the package {pkg['name']}" + (f" in the group {group}" if group else ""),
+                                     6000)
+        self._remember_repeat(("call", lambda: self.apply_package(pid)), f"Package {pkg['name']}")
 
     def _fill_window_menu(self) -> None:
         m = self.window_menu
@@ -761,6 +893,7 @@ class MainWindow(QMainWindow):
                     subs[path] = target.addMenu(name)
                 target = subs[path]
             a = self._act(target, cmd.label, lambda c_=cmd: self.run_command(c_), cmd.shortcut)
+            a.setProperty("iyicam_command", cmd.id)
             a.setToolTip(cmd.tooltip)
         return subs
 
@@ -1395,7 +1528,8 @@ class MainWindow(QMainWindow):
             if not dlg.exec():
                 return
             values = dlg.values()
-        self.ctrl.run_command(cmd, values)
+        if self.ctrl.run_command(cmd, values):
+            self._remember_repeat(("cmd", cmd.id, dict(values) if values is not None else None), cmd.label.rstrip("."))
 
     def _show_report(self, ctrl, cmd, result: dict) -> None:
         """A command handed back a report (a measurement ...): show it where it can be read and copied."""
@@ -1466,7 +1600,12 @@ class MainWindow(QMainWindow):
         if not isinstance(sheet_group, str):             # (a menu passes its own "checked")
             sheet_group = ""
         ctrl = self.ctrl                                  # (the project the window was opened for: not the tab that is open later)
-        dlg = ToolpathDialog(ctrl, op_id, None, self, sheet_group=sheet_group)
+        tool = None
+        if ctrl.settings.ask_tool:                        # the tool first, from the tool database, as it is there
+            tool = self.ask_tool(ctrl, op_id)
+            if tool is None:
+                return
+        dlg = ToolpathDialog(ctrl, op_id, None, self, sheet_group=sheet_group, tool=tool)
 
         def made() -> None:
             t = dlg.toolpath()  # once: every call makes a new definition with a new id
@@ -1479,6 +1618,17 @@ class MainWindow(QMainWindow):
             ctrl.add_toolpath(t)
             self._report_for(ctrl, t.id)
         dlg.open_modeless(made)
+
+    def ask_tool(self, ctrl, op_id: str, title: str = ""):
+        """The tool of a new toolpath, chosen in the tool database (the one chosen last time for this kind is selected);
+        None when the choice is cancelled."""
+        op = ctrl.registry.operations[op_id]
+        last = ctrl.settings.recall(f"toolpath:{op_id}").get("tool_id")
+        dlg = ToolDatabaseDialog(ctrl, self, pick=True, select_id=last if ctrl.tools.get(last or "") else None,
+                                 title=title or f"Tool for the new {op.label} toolpath")
+        if not dlg.exec():
+            return None
+        return dlg.selected_tool()
 
     def edit_toolpath(self, tid: str) -> None:
         ctrl = self.ctrl
@@ -1795,7 +1945,10 @@ class MainWindow(QMainWindow):
                  ("Ctrl+drag a vector", "Copy it while moving (Ctrl+click toggles the selection)"),
                  ("Right-click a vector", "Cut, copy, paste, transform, arrange, edit nodes, new toolpath"),
                  ("Alt+F7 / F8 / F9 / F10 / F11", "Transform panel: position / rotate / scale and mirror / size / slant"),
-                 ("Ctrl+M / Ctrl+R", "Move... / Rotate... by numbers"),
+                 ("Ctrl+M / Ctrl+Shift+R", "Move... / Rotate... by numbers"),
+                 ("Ctrl+R", "Repeat the last action (the same values, on the selection)"),
+                 ("Ctrl+Y / Ctrl+Shift+Z", "Redo"),
+                 ("Edit > Keyboard Shortcuts...", "Change the shortcut of any function"),
                  ("Ctrl+Alt+O", "Cut order panel: order, directions and start points on the drawing"),
                  ("B", "Start point tool: click or drag on a vector to start its cut there"),
                  ("] / [", "Start point at the next / previous corner (of the selected vectors)")]

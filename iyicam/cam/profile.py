@@ -160,9 +160,8 @@ class ProfileOp(Operation):
             return []
         surface = -start
         r = tool.radius_at_depth(final - start) if tool.is_tapered else tool.radius
-        if v["side"] != "on" and r + v["allowance"] <= 0.001:
-            ctx.warn(f"Allowance {v['allowance']:g} is more than the tool radius: it is taken as {-(r - 0.001):g}")
-            v = self.values = {**v, "allowance": -(r - 0.001)}
+        # (the allowance is taken as it is, also more than the tool radius: the centre of the tool then runs on the other
+        # side of the line, as asked: a 4 mm tool with -2.2 cuts the part 2.2 mm smaller, not 2)
         self._tool_r = r + (v["allowance"] if v["side"] != "on" else 0.0)
         self._sig = (repr(sorted((k, repr(x)) for k, x in v.items())), repr(sorted(tool.to_dict().items())),
                      tuple(levels), surface, final, ctx.safe_z, ctx.clearance)
@@ -179,7 +178,7 @@ class ProfileOp(Operation):
 
         # cut order: one entry per vector contour, whatever its loops
         through = final >= ctx.thickness - 1e-6
-        kerf_r = max(self._tool_r, 0.05)
+        kerf_r = self._tool_r if self._tool_r > 0.05 else max(r, 0.05)    # (past the line: the cut is the tool itself)
         src = dict(sources)
         locked = {f"{o.id}:{i}" for o in ctx.objects for i in o.locked_starts}
         smart = cfg["smart_starts"] or ctx.force_smart

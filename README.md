@@ -63,8 +63,15 @@ with Python plugins.
   move a selection by an **automatic** step that follows the zoom (a round number of about 10 pixels: far moves more, close
   finer) or a **fixed** one (**Vectors ▸ Edit ▸ Arrow Key Step**, also in Preferences); Shift ×10, Ctrl ÷10; with
   snapping to the grid on, the fixed step is the grid's
-- A new toolpath starts from the default settings every time (allowance, depths, passes ...); only the tool chosen last
-  for that kind of toolpath is kept
+- A new toolpath starts from the default settings every time (allowance, depths, passes ...) and **asks for its tool** from
+  the tool database first (the one chosen last for that kind is selected; Preferences can switch the question off). The tool
+  comes as it is in the database: a feed rate changed for one toolpath stays that toolpath's
+- **Toolpath packages** (Toolpaths ▸ Toolpath Packages / Use a Package): several toolpaths kept together (an outside cut 10 mm
+  off at 2 mm deep, an inside cut 3 mm in at 1 mm deep, ... with one tool) and made at once on the selection; the tool, the
+  depths and allowances can be changed for that time; names and a new toolpath group with `{variables}`
+  (`{package} S{sheet_number}-{n:02}` -> `Contour S3-01`, then `-02`). *Save Selected Toolpaths as a Package* makes one
+- **Every menu function has a keyboard shortcut that can be changed** (Edit ▸ Keyboard Shortcuts...); **Ctrl+R repeats** the
+  last action with the same values (as in CorelDRAW); redo is Ctrl+Y or Ctrl+Shift+Z; Rotate... by numbers is Ctrl+Shift+R
 - **Node editing**: drag nodes and bezier handles, insert / delete nodes, convert spans
   (line / arc / bezier), set the start point, break, close, reverse
 - Vector commands: offset (round / sharp), weld, subtract, intersect, join with tolerance,
@@ -94,7 +101,8 @@ with Python plugins.
   rapid-down clearance, home position, per-sheet thickness override
 - Tool database: end mills, ball nose, bull nose, V-bits, engraving tools, drills with
   feeds, speeds, stepdown / stepover, tool numbers, coolant; import / export; chip load based
-  **feeds & speeds calculator** with material presets
+  **feeds & speeds calculator** with material presets; **groups** made, renamed and removed (empty ones kept); tool
+  names with `{variables}` (`T{number:02} Ø{diameter} {type}` -> `T03 Ø6 End Mill`)
 - Toolpaths select vectors explicitly **or by layer** (layer based toolpaths work on every
   sheet — ideal together with nesting), can be saved and loaded as templates
 - **Profile**: outside / inside / on, climb / conventional, allowance, sharp corners,

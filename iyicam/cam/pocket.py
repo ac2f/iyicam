@@ -18,6 +18,7 @@ class PatternPath:
     contour: Contour
     group: int = 0        # paths are cut group by group, nearest neighbour inside a group
     linked: bool = False  # True: reached from the previous path by feeding at depth
+    row: int | None = None  # a line of a raster: its row (the lines are cut row after row, not nearest first)
 
 
 def segment_inside(p: Pt, q: Pt, polys: list[clip.Poly], tol: float = 1e-3) -> bool:
@@ -138,7 +139,7 @@ class PocketOp(Operation):
             # offset rings no further apart than the tool radius provably leave nothing behind
             pattern = self._add_cleanup(pattern, inner, r, tol)
         if v["direction"] == "conventional":
-            pattern = [PatternPath(p.contour.reversed() if p.contour.closed else p.contour, p.group)
+            pattern = [PatternPath(p.contour.reversed() if p.contour.closed else p.contour, p.group, row=p.row)
                        for p in pattern]
         pattern = self._link(pattern, inner, so, r, pos)
         floor = mb.surface
@@ -198,12 +199,12 @@ class PocketOp(Operation):
         lines = [[(x0, y0 + step * (k + 0.5)), (x1, y0 + step * (k + 0.5))] for k in range(n)]
         if n == 1:
             lines = [[(x0, (y0 + y1) / 2), (x1, (y0 + y1) / 2)]]
-        segs = clip.clip_lines(lines, rpolys)
         paths = []
-        for s in segs:
-            pts = [back.apply(p) for p in s]
-            if len(pts) >= 2 and dist(pts[0], pts[-1]) > 1e-6:
-                paths.append(PatternPath(Contour.polyline([pts[0], pts[-1]], False)))
+        for k, line in enumerate(lines):
+            for s in clip.clip_lines([line], rpolys):
+                pts = [back.apply(p) for p in s]
+                if len(pts) >= 2 and dist(pts[0], pts[-1]) > 1e-6:
+                    paths.append(PatternPath(Contour.polyline([pts[0], pts[-1]], False), row=k))
         mode = self.values["profile_pass"]
         if mode == "none":
             return paths
@@ -261,24 +262,44 @@ class PocketOp(Operation):
         out: list[PatternPath] = []
         pos = home
         max_link = max(2.5 * so, 2 * r)
+        # (a link runs along the edge of the area the centre of the tool may be in: from the end of one raster line to the start
+        # of the next. On the edge is inside: tested against the area grown a hair, or half the links of a zig-zag were taken
+        # as leaving the pocket and became a lift, a rapid and a plunge each)
+        reach = clip.offset(inner, 0.01) or inner
         pattern = [p for p in pattern if p.contour.segs]   # a path that shrank to nothing is nothing to cut
         for g in sorted({p.group for p in pattern}):
             remaining = [p for p in pattern if p.group == g]
+            rows = [p.row for p in remaining if p.row is not None]
+            row = None
             while remaining:
-                best_i, best_d = 0, math.inf
-                for i, pp in enumerate(remaining):
-                    c = pp.contour
+                # raster lines start at a row at one end and go on to a piece of the row next to it (or the rest of the same
+                # row), nearest first; only when no such piece is left the nearest anywhere. Nearest first alone swept to a
+                # corner and came back across the pocket for the rows left (a big tool on a slanted raster); row after row
+                # alone crossed an island on every row
+                if row is None and rows:
+                    ends = {min(rows), max(rows)}
+                    pool = [i for i, pp in enumerate(remaining) if pp.row in ends]
+                elif row is not None:
+                    pool = [i for i, pp in enumerate(remaining) if pp.row is not None and abs(pp.row - row) <= 1] \
+                        or list(range(len(remaining)))
+                else:
+                    pool = list(range(len(remaining)))
+                best_i, best_d = pool[0], math.inf
+                for i in pool:
+                    c = remaining[i].contour
                     d = c.nearest(pos)[3] if c.closed else min(dist(pos, c.start), dist(pos, c.end))
                     if d < best_d:
                         best_i, best_d = i, d
                 pp = remaining.pop(best_i)
+                if pp.row is not None:
+                    row = pp.row
                 c = pp.contour
                 if c.closed:
                     c = vectorops.set_start_point(c, pos)
                 elif dist(pos, c.end) < dist(pos, c.start):
                     c = c.reversed()
-                linked = bool(out) and dist(pos, c.start) <= max_link and segment_inside(pos, c.start, inner)
-                out.append(PatternPath(c, g, linked))
+                linked = bool(out) and dist(pos, c.start) <= max_link and segment_inside(pos, c.start, reach)
+                out.append(PatternPath(c, g, linked, pp.row))
                 pos = c.end
         return out
 

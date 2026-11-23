@@ -523,7 +523,7 @@ class ToolpathsPanel(DocPanel):
                 total = total.merge(st)
             from ..post.naming import toolpath_name
             shown = toolpath_name(self.ctrl.project, t, self.ctrl.sheet)
-            it = QTreeWidgetItem([shown, t.group, t.tool.name, format_time(st.time_s) if here and here.toolpaths else ""])
+            it = QTreeWidgetItem([shown, t.group, t.tool.label, format_time(st.time_s) if here and here.toolpaths else ""])
             it.setData(0, Qt.UserRole, t.id)
             it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
             it.setCheckState(0, Qt.Checked if t.enabled else Qt.Unchecked)

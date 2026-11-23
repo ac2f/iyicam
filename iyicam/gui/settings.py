@@ -45,6 +45,8 @@ class Settings:
     sim_resolution: float = 0.0       # 0 = automatic
     window_state: str = ""
     theme: str = "system"             # system | light | dark
+    shortcuts: dict = field(default_factory=dict)   # keyboard shortcuts the person changed: menu path -> [keys] ([]: none)
+    ask_tool: bool = True             # a new toolpath asks for its tool from the tool database first
     open_tabs: list[str] = field(default_factory=list)   # the projects that were open when the program was closed
     active_tab: int = 0
 

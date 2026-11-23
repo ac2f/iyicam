@@ -138,7 +138,7 @@ def test_the_quick_tool_bar(rwin):
         if not a.isSeparator() and a.menu() is None:
             a.trigger()
             process()
-    assert win._toolpath_menu.actions() and all(a.text() for a in win._toolpath_menu.actions())
+    assert win._toolpath_menu.actions() and all(a.text() for a in win._toolpath_menu.actions() if not a.isSeparator())
     for a in win._toolpath_menu.actions():
         a.trigger()
         process()
@@ -146,5 +146,7 @@ def test_the_quick_tool_bar(rwin):
 
 
 def test_the_program_has_an_icon():
+    from PySide6.QtWidgets import QApplication
+    QApplication.instance() or QApplication([])           # (a picture needs the application: run alone, no other test made it)
     from iyicam.gui.theme import app_icon
     assert not app_icon().isNull() and not app_icon(64).pixmap(64, 64).isNull()

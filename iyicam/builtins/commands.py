@@ -657,7 +657,7 @@ def commands() -> list[Command]:
                            ("top_right", "Top right"), ("bottom_right", "Bottom right")]),
             Param("x", "X", "length", 0.0), Param("y", "Y", "length", 0.0)], min_selection=1),
         Command("xform.rotate", "Rotate...", _rotate, XFORM, [Param("angle", "Angle", "angle", 90.0)] + about + copy,
-                min_selection=1, shortcut="Ctrl+R"),
+                min_selection=1, shortcut="Ctrl+Shift+R"),     # (Ctrl+R repeats the last action, as in CorelDRAW)
         Command("xform.scale", "Scale...", _scale, XFORM, [
             Param("sx", "Scale X %", "percent", 100.0, min=0.001), Param("sy", "Scale Y %", "percent", 100.0, min=0.001),
             Param("uniform", "Keep proportions", "bool", True)] + about + copy, min_selection=1),

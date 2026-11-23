@@ -170,15 +170,19 @@ def test_new_project_and_material_setup_are_remembered(sess):
 
 # -- toolpaths ----------------------------------------------------------------------------------------------
 def test_toolpath_tool_is_remembered_per_kind_but_settings_start_from_the_defaults(sess):
-    from conftest import end_mill
+    # (the tool: which one of the tool database, not the changes made to it for a toolpath)
     win, robot, c = sess.win, sess.robot, sess.ctrl
     obj = VectorObject([shapes.rectangle(10, 10, 100, 60)], c.layer_id)
     c.add_vectors([obj])
 
+    lib8 = next(t for t in c.tools.tools if t.diameter == 8.0)
+
     def hook(dlg):
+        if hasattr(dlg, "lib_tools") and hasattr(dlg, "tree"):          # (a new toolpath asks for its tool first: the 8 mm one)
+            dlg.refresh(lib8.id)
         if hasattr(dlg, "tool_editor") and hasattr(dlg, "form"):
             dlg.name.setText("My cut")
-            dlg.tool_editor.set_tool(end_mill(8.0, name="Eight", feed_rate=4321))
+            dlg.tool_editor.form.set_values({"feed_rate": 4321.0})      # (for this toolpath only)
             set_form(dlg, side="inside", overcut=0.7, allowance=0.4, tabs=True, tab_count=6, through=False,
                      cut_depth=c.units.to_display(7.0))
             dlg.all_sheets.setChecked(False)
@@ -201,7 +205,9 @@ def test_toolpath_tool_is_remembered_per_kind_but_settings_start_from_the_defaul
     sess.robot.hook = look
     win.new_toolpath("profile")
     v = made["values"]
-    assert made["tool"].diameter == 8.0 and made["tool"].feed_rate == 4321 and made["all_sheets"] is False
+    # the tool chosen last is chosen again, as it is in the tool database: the feed rate changed for the first toolpath stays its own
+    assert made["tool"].diameter == 8.0 and made["tool"].id == lib8.id and made["tool"].feed_rate == lib8.feed_rate != 4321
+    assert made["all_sheets"] is False
     # every value of a new toolpath is the default again (an allowance left from the last one cut parts wrong)
     from iyicam.core.registry import REGISTRY
     defaults = {p.name: p.default for p in REGISTRY.operations["profile"].params()}
