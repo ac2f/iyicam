@@ -1,0 +1,991 @@
+{
+ "menus": [
+  {
+   "text": "File",
+   "menu": [
+    {
+     "text": "New...",
+     "shortcut": "Ctrl+N"
+    },
+    {
+     "text": "Open...",
+     "shortcut": "Ctrl+O"
+    },
+    {
+     "text": "Open Recent",
+     "shortcut": "",
+     "menu": []
+    },
+    {
+     "text": "Reopen Closed Tab",
+     "shortcut": "Ctrl+Shift+T"
+    },
+    "---",
+    {
+     "text": "Save",
+     "shortcut": "Ctrl+S"
+    },
+    {
+     "text": "Save As...",
+     "shortcut": "Ctrl+Shift+S"
+    },
+    {
+     "text": "Save All",
+     "shortcut": ""
+    },
+    {
+     "text": "Close Tab",
+     "shortcut": "Ctrl+F4"
+    },
+    "---",
+    {
+     "text": "Import Vectors...",
+     "shortcut": "Ctrl+I"
+    },
+    {
+     "text": "Export Vectors...",
+     "shortcut": ""
+    },
+    "---",
+    {
+     "text": "Save G-code...",
+     "shortcut": "Ctrl+Shift+E"
+    },
+    {
+     "text": "Open G-code (Backplot)...",
+     "shortcut": ""
+    },
+    {
+     "text": "Job Report...",
+     "shortcut": ""
+    },
+    {
+     "text": "Export Image...",
+     "shortcut": ""
+    },
+    "---",
+    {
+     "text": "Quit",
+     "shortcut": ""
+    }
+   ]
+  },
+  {
+   "text": "Edit",
+   "menu": [
+    {
+     "text": "Undo Add toolpath Pocket 1",
+     "shortcut": "Ctrl+Z"
+    },
+    {
+     "text": "Redo",
+     "shortcut": "Ctrl+Y, Ctrl+Shift+Z"
+    },
+    {
+     "text": "Repeat",
+     "shortcut": "Ctrl+R"
+    },
+    "---",
+    {
+     "text": "Delete",
+     "shortcut": "Del"
+    },
+    {
+     "text": "Duplicate",
+     "shortcut": "Ctrl+D"
+    },
+    {
+     "text": "Cut",
+     "shortcut": "Ctrl+X"
+    },
+    {
+     "text": "Copy",
+     "shortcut": "Ctrl+C"
+    },
+    {
+     "text": "Paste",
+     "shortcut": "Ctrl+V"
+    },
+    "---",
+    {
+     "text": "Select",
+     "shortcut": "",
+     "menu": [
+      {
+       "text": "Select All",
+       "shortcut": "Ctrl+A"
+      },
+      {
+       "text": "Invert Selection",
+       "shortcut": "Ctrl+Shift+I"
+      },
+      {
+       "text": "Select Open Vectors",
+       "shortcut": ""
+      },
+      {
+       "text": "Select Similar...",
+       "shortcut": ""
+      }
+     ]
+    },
+    "---",
+    {
+     "text": "Preferences...",
+     "shortcut": ""
+    },
+    {
+     "text": "Keyboard Shortcuts...",
+     "shortcut": ""
+    }
+   ]
+  },
+  {
+   "text": "View",
+   "menu": [
+    {
+     "text": "Zoom Extents",
+     "shortcut": "F"
+    },
+    {
+     "text": "Zoom Selection",
+     "shortcut": "Shift+F"
+    },
+    "---",
+    {
+     "text": "Show Toolpaths",
+     "shortcut": "",
+     "checkable": true
+    },
+    {
+     "text": "Show Tool Width",
+     "shortcut": "",
+     "checkable": true
+    },
+    {
+     "text": "Show Directions",
+     "shortcut": "",
+     "checkable": true
+    },
+    {
+     "text": "Show Cut Order",
+     "shortcut": "",
+     "checkable": true
+    },
+    {
+     "text": "Show Route Between Cuts",
+     "shortcut": "",
+     "checkable": true
+    },
+    {
+     "text": "Show Start Points",
+     "shortcut": "",
+     "checkable": true
+    },
+    {
+     "text": "Show Simulation",
+     "shortcut": "",
+     "checkable": true
+    },
+    "---",
+    {
+     "text": "Clear Guides",
+     "shortcut": ""
+    },
+    "---",
+    {
+     "text": "Snap to Grid",
+     "shortcut": "F7",
+     "checkable": true
+    },
+    {
+     "text": "Snap to Vectors",
+     "shortcut": "F8",
+     "checkable": true
+    },
+    {
+     "text": "Snap to Alignments",
+     "shortcut": "Shift+F8",
+     "checkable": true
+    },
+    {
+     "text": "Snap to Edges",
+     "shortcut": "Shift+F7",
+     "checkable": true
+    },
+    "---",
+    {
+     "text": "Project",
+     "shortcut": "",
+     "checkable": true
+    },
+    {
+     "text": "Vector Library",
+     "shortcut": "",
+     "checkable": true
+    },
+    {
+     "text": "Selection",
+     "shortcut": "",
+     "checkable": true
+    },
+    {
+     "text": "Transform",
+     "shortcut": "",
+     "checkable": true
+    },
+    {
+     "text": "Toolpaths",
+     "shortcut": "",
+     "checkable": true
+    },
+    {
+     "text": "Cut Order",
+     "shortcut": "",
+     "checkable": true
+    },
+    {
+     "text": "Simulation",
+     "shortcut": "",
+     "checkable": true
+    },
+    {
+     "text": "Python Console",
+     "shortcut": "",
+     "checkable": true
+    },
+    {
+     "text": "Appearance",
+     "shortcut": "",
+     "menu": [
+      {
+       "text": "Follow the System",
+       "shortcut": "",
+       "checkable": true
+      },
+      {
+       "text": "Light",
+       "shortcut": "",
+       "checkable": true
+      },
+      {
+       "text": "Dark",
+       "shortcut": "",
+       "checkable": true
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "text": "Draw",
+   "menu": [
+    {
+     "text": "Select / Transform",
+     "shortcut": "S",
+     "checkable": true
+    },
+    {
+     "text": "Edit Nodes",
+     "shortcut": "N",
+     "checkable": true
+    },
+    {
+     "text": "Polyline / Bezier",
+     "shortcut": "P",
+     "checkable": true
+    },
+    {
+     "text": "Line",
+     "shortcut": "L",
+     "checkable": true
+    },
+    {
+     "text": "Rectangle",
+     "shortcut": "R",
+     "checkable": true
+    },
+    {
+     "text": "Circle",
+     "shortcut": "C",
+     "checkable": true
+    },
+    {
+     "text": "Ellipse",
+     "shortcut": "E",
+     "checkable": true
+    },
+    {
+     "text": "Polygon",
+     "shortcut": "G",
+     "checkable": true
+    },
+    {
+     "text": "Star",
+     "shortcut": "",
+     "checkable": true
+    },
+    {
+     "text": "Arc (3 points)",
+     "shortcut": "A",
+     "checkable": true
+    },
+    {
+     "text": "Text",
+     "shortcut": "T",
+     "checkable": true
+    },
+    {
+     "text": "Measure",
+     "shortcut": "M",
+     "checkable": true
+    },
+    {
+     "text": "Trim Vectors",
+     "shortcut": "X",
+     "checkable": true
+    },
+    {
+     "text": "Set Start Point",
+     "shortcut": "B",
+     "checkable": true
+    }
+   ]
+  },
+  {
+   "text": "Vectors",
+   "menu": [
+    {
+     "text": "Vector Library",
+     "shortcut": ""
+    },
+    {
+     "text": "Keep Selection in the Library...",
+     "shortcut": ""
+    },
+    "---",
+    {
+     "text": "Trace Bitmap...",
+     "shortcut": ""
+    },
+    {
+     "text": "Text on Curve...",
+     "shortcut": ""
+    },
+    {
+     "text": "Start Points",
+     "shortcut": "",
+     "menu": [
+      {
+       "text": "Set Start Point",
+       "shortcut": "B",
+       "checkable": true
+      },
+      "---",
+      {
+       "text": "Bottom Left Corner",
+       "shortcut": ""
+      },
+      {
+       "text": "Bottom Right Corner",
+       "shortcut": ""
+      },
+      {
+       "text": "Top Left Corner",
+       "shortcut": ""
+      },
+      {
+       "text": "Top Right Corner",
+       "shortcut": ""
+      },
+      {
+       "text": "Middle of a Side",
+       "shortcut": "",
+       "menu": [
+        {
+         "text": "Top Side",
+         "shortcut": ""
+        },
+        {
+         "text": "Bottom Side",
+         "shortcut": ""
+        },
+        {
+         "text": "Left Side",
+         "shortcut": ""
+        },
+        {
+         "text": "Right Side",
+         "shortcut": ""
+        }
+       ]
+      },
+      "---",
+      {
+       "text": "Next Corner",
+       "shortcut": "]"
+      },
+      {
+       "text": "Previous Corner",
+       "shortcut": "["
+      },
+      {
+       "text": "Opposite Point",
+       "shortcut": ""
+      },
+      "---",
+      {
+       "text": "Smart (best place)",
+       "shortcut": ""
+      },
+      {
+       "text": "Release (to smart start points)",
+       "shortcut": ""
+      },
+      "---",
+      {
+       "text": "Smart Start Points...",
+       "shortcut": ""
+      }
+     ]
+    },
+    "---",
+    {
+     "text": "Create",
+     "shortcut": "",
+     "menu": [
+      {
+       "text": "Rectangle...",
+       "shortcut": ""
+      },
+      {
+       "text": "Circle...",
+       "shortcut": ""
+      },
+      {
+       "text": "Ellipse...",
+       "shortcut": ""
+      },
+      {
+       "text": "Polygon...",
+       "shortcut": ""
+      },
+      {
+       "text": "Star...",
+       "shortcut": ""
+      },
+      {
+       "text": "Slot...",
+       "shortcut": ""
+      },
+      {
+       "text": "Arc...",
+       "shortcut": ""
+      },
+      {
+       "text": "Spiral...",
+       "shortcut": ""
+      },
+      {
+       "text": "Bounding Box",
+       "shortcut": ""
+      },
+      {
+       "text": "Door / Panel...",
+       "shortcut": ""
+      }
+     ]
+    },
+    {
+     "text": "Edit",
+     "shortcut": "",
+     "menu": [
+      {
+       "text": "Offset...",
+       "shortcut": "Ctrl+Shift+O"
+      },
+      {
+       "text": "Weld (Union)",
+       "shortcut": "Ctrl+Shift+W"
+      },
+      {
+       "text": "Subtract",
+       "shortcut": ""
+      },
+      {
+       "text": "Intersect",
+       "shortcut": ""
+      },
+      {
+       "text": "Join Vectors...",
+       "shortcut": "Ctrl+J"
+      },
+      {
+       "text": "Close Vectors",
+       "shortcut": ""
+      },
+      {
+       "text": "Reverse Direction",
+       "shortcut": ""
+      },
+      {
+       "text": "Group",
+       "shortcut": "Ctrl+G"
+      },
+      {
+       "text": "Ungroup",
+       "shortcut": "Ctrl+Shift+G"
+      },
+      {
+       "text": "Explode into Segments",
+       "shortcut": ""
+      },
+      {
+       "text": "Smooth / Fit Arcs...",
+       "shortcut": ""
+      },
+      {
+       "text": "Simplify...",
+       "shortcut": ""
+      },
+      {
+       "text": "Convert to Polyline...",
+       "shortcut": ""
+      },
+      {
+       "text": "Centre Line (Single Line)...",
+       "shortcut": ""
+      },
+      {
+       "text": "Vector Doctor...",
+       "shortcut": ""
+      },
+      {
+       "text": "Delete Duplicates...",
+       "shortcut": ""
+      },
+      "---",
+      {
+       "text": "Resize Handles (Mouse)",
+       "shortcut": "",
+       "checkable": true
+      },
+      {
+       "text": "Arrow Key Step",
+       "shortcut": "",
+       "menu": [
+        {
+         "text": "Automatic (follows the zoom)",
+         "shortcut": "",
+         "checkable": true
+        },
+        "---",
+        {
+         "text": "0.1 mm",
+         "shortcut": "",
+         "checkable": true
+        },
+        {
+         "text": "1 mm",
+         "shortcut": "",
+         "checkable": true
+        },
+        {
+         "text": "10 mm",
+         "shortcut": "",
+         "checkable": true
+        },
+        {
+         "text": "Custom...",
+         "shortcut": "",
+         "checkable": true
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "text": "Corners",
+     "shortcut": "",
+     "menu": [
+      {
+       "text": "Fillet Corners...",
+       "shortcut": ""
+      },
+      {
+       "text": "Chamfer Corners...",
+       "shortcut": ""
+      },
+      {
+       "text": "Dog-bone / T-bone Corners...",
+       "shortcut": ""
+      }
+     ]
+    },
+    {
+     "text": "Transform",
+     "shortcut": "",
+     "menu": [
+      {
+       "text": "Position Panel",
+       "shortcut": "Alt+F7"
+      },
+      {
+       "text": "Rotate Panel",
+       "shortcut": "Alt+F8"
+      },
+      {
+       "text": "Scale and mirror Panel",
+       "shortcut": "Alt+F9"
+      },
+      {
+       "text": "Size Panel",
+       "shortcut": "Alt+F10"
+      },
+      {
+       "text": "Slant Panel",
+       "shortcut": "Alt+F11"
+      },
+      "---",
+      {
+       "text": "Move...",
+       "shortcut": "Ctrl+M"
+      },
+      {
+       "text": "Position...",
+       "shortcut": ""
+      },
+      {
+       "text": "Rotate...",
+       "shortcut": "Ctrl+Shift+R"
+      },
+      {
+       "text": "Scale...",
+       "shortcut": ""
+      },
+      {
+       "text": "Set Size...",
+       "shortcut": ""
+      },
+      {
+       "text": "Mirror...",
+       "shortcut": ""
+      },
+      {
+       "text": "Slant...",
+       "shortcut": ""
+      },
+      {
+       "text": "Rotate 90° Left",
+       "shortcut": ""
+      },
+      {
+       "text": "Rotate 90° Right",
+       "shortcut": ""
+      },
+      {
+       "text": "Rotate 180°",
+       "shortcut": ""
+      },
+      {
+       "text": "Flip Left / Right",
+       "shortcut": ""
+      },
+      {
+       "text": "Flip Top / Bottom",
+       "shortcut": ""
+      }
+     ]
+    },
+    {
+     "text": "Arrange",
+     "shortcut": "",
+     "menu": [
+      {
+       "text": "Align...",
+       "shortcut": ""
+      },
+      {
+       "text": "Centre on Sheet",
+       "shortcut": "F9"
+      },
+      {
+       "text": "Distribute...",
+       "shortcut": ""
+      },
+      {
+       "text": "Rectangular Array...",
+       "shortcut": ""
+      },
+      {
+       "text": "Circular Array...",
+       "shortcut": ""
+      },
+      {
+       "text": "Copy Along Vector...",
+       "shortcut": ""
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "text": "Toolpaths",
+   "menu": [
+    {
+     "text": "New Toolpath",
+     "shortcut": "",
+     "menu": [
+      {
+       "text": "Profile...",
+       "shortcut": ""
+      },
+      {
+       "text": "Pocket (Area Clearance)...",
+       "shortcut": ""
+      },
+      {
+       "text": "Drilling...",
+       "shortcut": ""
+      },
+      {
+       "text": "Engrave (Follow Vector)...",
+       "shortcut": ""
+      },
+      {
+       "text": "V-Carve...",
+       "shortcut": ""
+      },
+      {
+       "text": "Inlay...",
+       "shortcut": ""
+      },
+      {
+       "text": "Fluting...",
+       "shortcut": ""
+      }
+     ]
+    },
+    {
+     "text": "Toolpath Packages...",
+     "shortcut": ""
+    },
+    {
+     "text": "Save Selected Toolpaths as a Package...",
+     "shortcut": ""
+    },
+    {
+     "text": "Use a Package",
+     "shortcut": "",
+     "menu": []
+    },
+    {
+     "text": "Recalculate All",
+     "shortcut": "F5"
+    },
+    {
+     "text": "Cut Order...",
+     "shortcut": "Ctrl+Alt+O"
+    },
+    {
+     "text": "Cut Inner Pieces (Göbek) First",
+     "shortcut": "",
+     "checkable": true
+    },
+    "---",
+    {
+     "text": "Material Setup...",
+     "shortcut": "Ctrl+Shift+M"
+    },
+    {
+     "text": "Tool Database...",
+     "shortcut": ""
+    },
+    "---",
+    {
+     "text": "Simulate",
+     "shortcut": "F6"
+    },
+    {
+     "text": "Clear Simulation",
+     "shortcut": ""
+    },
+    {
+     "text": "Clear G-code Backplot",
+     "shortcut": ""
+    },
+    "---",
+    {
+     "text": "Save Toolpath Template...",
+     "shortcut": ""
+    },
+    {
+     "text": "Load Toolpath Template...",
+     "shortcut": ""
+    },
+    "---",
+    {
+     "text": "Save G-code...",
+     "shortcut": ""
+    },
+    {
+     "text": "Post-processors...",
+     "shortcut": ""
+    }
+   ]
+  },
+  {
+   "text": "Nesting",
+   "menu": [
+    {
+     "text": "Nest Parts...",
+     "shortcut": "Ctrl+Shift+N"
+    },
+    "---",
+    {
+     "text": "Stock of Plates...",
+     "shortcut": ""
+    },
+    {
+     "text": "Add Selected Vectors to Stock",
+     "shortcut": ""
+    },
+    {
+     "text": "Add Leftover of Current Sheet to Stock...",
+     "shortcut": ""
+    },
+    "---",
+    {
+     "text": "Set Sheet Outline from Selected Vectors",
+     "shortcut": ""
+    },
+    {
+     "text": "Clear Sheet Outline",
+     "shortcut": ""
+    }
+   ]
+  },
+  {
+   "text": "Plugins",
+   "menu": [
+    {
+     "text": "Plugin Manager...",
+     "shortcut": ""
+    },
+    {
+     "text": "Python Console",
+     "shortcut": "Ctrl+`"
+    },
+    "---"
+   ]
+  },
+  {
+   "text": "Window",
+   "menu": []
+  },
+  {
+   "text": "Help",
+   "menu": [
+    {
+     "text": "Keyboard Shortcuts",
+     "shortcut": ""
+    },
+    {
+     "text": "G-code Words (I J K ...)...",
+     "shortcut": ""
+    },
+    {
+     "text": "About iyiCAM",
+     "shortcut": ""
+    }
+   ]
+  }
+ ],
+ "toolbars": {
+  "": [
+   "New group (in the group that is selected: a subgroup)",
+   "Keep the selected vectors in the library (in the group that is selected)",
+   "Put the drawing in the open sheet (double click does it too)",
+   "Delete",
+   ""
+  ],
+  "MainToolbar": [
+   "New project (Ctrl+N)",
+   "Open project (Ctrl+O)",
+   "Save project (Ctrl+S)",
+   "---",
+   "Undo (Ctrl+Z)",
+   "Redo (Ctrl+Y)",
+   "---",
+   "Zoom to the whole sheet (F)",
+   "---",
+   "Nest parts (Ctrl+Shift+N)",
+   "New toolpath",
+   "Material and heights: thickness, Z zero, safe Z, home (Ctrl+Shift+M)",
+   "Cut order, directions and start points (Ctrl+Alt+O)",
+   "Recalculate toolpaths (F5)",
+   "Simulate (F6)",
+   "Save G-code (Ctrl+Shift+E)"
+  ],
+  "DrawingToolbar": [
+   "Select / Transform (S)",
+   "Edit Nodes (N)",
+   "---",
+   "Polyline / Bezier (P)",
+   "Line (L)",
+   "Rectangle (R)",
+   "Circle (C)",
+   "Ellipse (E)",
+   "Polygon (G)",
+   "Star",
+   "Arc (3 points) (A)",
+   "Text (T)",
+   "---",
+   "Measure (M)",
+   "Trim Vectors (X)",
+   "Set Start Point (B)"
+  ]
+ },
+ "docks": [
+  {
+   "title": "Vector Library",
+   "area": "LeftDockWidgetArea",
+   "visible": true
+  },
+  {
+   "title": "Project",
+   "area": "LeftDockWidgetArea",
+   "visible": true
+  },
+  {
+   "title": "Selection",
+   "area": "LeftDockWidgetArea",
+   "visible": true
+  },
+  {
+   "title": "Transform",
+   "area": "LeftDockWidgetArea",
+   "visible": true
+  },
+  {
+   "title": "Cut Order",
+   "area": "RightDockWidgetArea",
+   "visible": true
+  },
+  {
+   "title": "Simulation",
+   "area": "RightDockWidgetArea",
+   "visible": true
+  },
+  {
+   "title": "Toolpaths",
+   "area": "RightDockWidgetArea",
+   "visible": true
+  },
+  {
+   "title": "Python Console",
+   "area": "BottomDockWidgetArea",
+   "visible": false
+  }
+ ]
+}

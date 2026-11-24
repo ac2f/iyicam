@@ -1,0 +1,5583 @@
+{
+ "api": 1,
+ "iyicam": "0.1.0",
+ "operations": [
+  {
+   "id": "profile",
+   "label": "Profile",
+   "description": "Cut along vectors on the outside, inside or on the line, with tabs, ramps and leads.",
+   "tool_types": [
+    "end_mill",
+    "ball_nose",
+    "bull_nose",
+    "v_bit",
+    "engraving"
+   ],
+   "needs_closed": false,
+   "extra_tool_params": [],
+   "params": [
+    {
+     "name": "start_depth",
+     "label": "Start depth",
+     "kind": "length",
+     "default": 0.0,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Depth",
+     "help": "Depth below the material surface where cutting starts",
+     "visible": null,
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "through",
+     "label": "Cut through material",
+     "kind": "bool",
+     "default": true,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Depth",
+     "help": "Cut to the full material thickness",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "overcut",
+     "label": "Cut below bottom",
+     "kind": "length",
+     "default": 0.2,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Depth",
+     "help": "Extra depth into the spoilboard",
+     "visible": {
+      "through": true
+     },
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "cut_depth",
+     "label": "Cut depth",
+     "kind": "length",
+     "default": 6.0,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Depth",
+     "help": "",
+     "visible": {
+      "through": false
+     },
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "stepdown",
+     "label": "Stepdown (0 = tool)",
+     "kind": "length",
+     "default": 0.0,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Depth",
+     "help": "Maximum depth per pass; 0 uses the tool's stepdown",
+     "visible": null,
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "side",
+     "label": "Machine",
+     "kind": "choice",
+     "default": "outside",
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": [
+      [
+       "outside",
+       "Outside / Right"
+      ],
+      [
+       "inside",
+       "Inside / Left"
+      ],
+      [
+       "on",
+       "On the vector"
+      ]
+     ],
+     "group": "Profile",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "direction",
+     "label": "Direction",
+     "kind": "choice",
+     "default": "climb",
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": [
+      [
+       "climb",
+       "Climb"
+      ],
+      [
+       "conventional",
+       "Conventional"
+      ]
+     ],
+     "group": "Profile",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "allowance",
+     "label": "Allowance (+ bigger part / − smaller part)",
+     "kind": "length",
+     "default": 0.0,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Profile",
+     "help": "Material left on the wall, as in ArtCAM. Outside: + cuts the part that much bigger on every side, − smaller. Inside (holes): + leaves the hole that much smaller, − bigger.",
+     "visible": {
+      "side": [
+       "outside",
+       "inside"
+      ]
+     },
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "sharp_corners",
+     "label": "Sharp corners",
+     "kind": "bool",
+     "default": false,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Profile",
+     "help": "Keep offset corners sharp instead of rolling around them",
+     "visible": {
+      "side": [
+       "outside",
+       "inside"
+      ]
+     },
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "finish_pass",
+     "label": "Finish pass allowance",
+     "kind": "length",
+     "default": 0.0,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Profile",
+     "help": "Leave this much for a final full depth pass (0 = no finish pass)",
+     "visible": {
+      "side": [
+       "outside",
+       "inside"
+      ]
+     },
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "start_mode",
+     "label": "Start point",
+     "kind": "choice",
+     "default": "vector",
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": [
+      [
+       "vector",
+       "Vector start point"
+      ],
+      [
+       "nearest",
+       "Nearest to previous cut"
+      ]
+     ],
+     "group": "Profile",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "tabs",
+     "label": "Add tabs / bridges",
+     "kind": "bool",
+     "default": false,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Tabs",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "tab_mode",
+     "label": "Tab placement",
+     "kind": "choice",
+     "default": "count",
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": [
+      [
+       "count",
+       "Number per vector"
+      ],
+      [
+       "spacing",
+       "Distance between tabs"
+      ],
+      [
+       "manual",
+       "Positions picked on the drawing"
+      ]
+     ],
+     "group": "Tabs",
+     "help": "Manual positions are edited with 'Edit Tabs' in the toolpath list",
+     "visible": {
+      "tabs": true
+     },
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "tab_count",
+     "label": "Tabs per vector",
+     "kind": "int",
+     "default": 4,
+     "min": 1,
+     "max": 200,
+     "step": null,
+     "choices": null,
+     "group": "Tabs",
+     "help": "",
+     "visible": {
+      "tabs": true,
+      "tab_mode": "count"
+     },
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "tab_spacing",
+     "label": "Tab spacing",
+     "kind": "length",
+     "default": 300.0,
+     "min": 1.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Tabs",
+     "help": "",
+     "visible": {
+      "tabs": true,
+      "tab_mode": "spacing"
+     },
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "tab_length",
+     "label": "Tab length",
+     "kind": "length",
+     "default": 8.0,
+     "min": 0.1,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Tabs",
+     "help": "",
+     "visible": {
+      "tabs": true
+     },
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "tab_height",
+     "label": "Tab thickness",
+     "kind": "length",
+     "default": 3.0,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Tabs",
+     "help": "",
+     "visible": {
+      "tabs": true
+     },
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "tab_3d",
+     "label": "Ramped (3D) tabs",
+     "kind": "bool",
+     "default": false,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Tabs",
+     "help": "",
+     "visible": {
+      "tabs": true
+     },
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "tab_min_length",
+     "label": "Skip vectors shorter than",
+     "kind": "length",
+     "default": 40.0,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Tabs",
+     "help": "",
+     "visible": {
+      "tabs": true
+     },
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "ramp",
+     "label": "Entry",
+     "kind": "choice",
+     "default": "none",
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": [
+      [
+       "none",
+       "Plunge"
+      ],
+      [
+       "linear",
+       "Ramp over distance"
+      ],
+      [
+       "helix",
+       "Smooth spiral"
+      ]
+     ],
+     "group": "Ramp & Leads",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "ramp_length",
+     "label": "Ramp distance",
+     "kind": "length",
+     "default": 20.0,
+     "min": 0.1,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Ramp & Leads",
+     "help": "",
+     "visible": {
+      "ramp": "linear"
+     },
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "lead",
+     "label": "Lead in / out",
+     "kind": "choice",
+     "default": "none",
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": [
+      [
+       "none",
+       "None"
+      ],
+      [
+       "arc",
+       "Arc"
+      ],
+      [
+       "line",
+       "Line"
+      ]
+     ],
+     "group": "Ramp & Leads",
+     "help": "",
+     "visible": {
+      "side": [
+       "outside",
+       "inside"
+      ]
+     },
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "lead_length",
+     "label": "Lead radius / length",
+     "kind": "length",
+     "default": 5.0,
+     "min": 0.1,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Ramp & Leads",
+     "help": "",
+     "visible": {
+      "lead": [
+       "arc",
+       "line"
+      ]
+     },
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "overlap",
+     "label": "Overlap at end",
+     "kind": "length",
+     "default": 0.0,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Ramp & Leads",
+     "help": "Continue past the start point to clean the seam",
+     "visible": null,
+     "decimals": 3,
+     "advanced": true
+    }
+   ]
+  },
+  {
+   "id": "pocket",
+   "label": "Pocket (Area Clearance)",
+   "description": "Clear the area inside closed vectors; inner vectors become islands.",
+   "tool_types": [
+    "end_mill",
+    "ball_nose",
+    "bull_nose",
+    "v_bit",
+    "engraving"
+   ],
+   "needs_closed": true,
+   "extra_tool_params": [],
+   "params": [
+    {
+     "name": "start_depth",
+     "label": "Start depth",
+     "kind": "length",
+     "default": 0.0,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Depth",
+     "help": "Depth below the material surface where cutting starts",
+     "visible": null,
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "through",
+     "label": "Cut through material",
+     "kind": "bool",
+     "default": false,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Depth",
+     "help": "Cut to the full material thickness",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "overcut",
+     "label": "Cut below bottom",
+     "kind": "length",
+     "default": 0.2,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Depth",
+     "help": "Extra depth into the spoilboard",
+     "visible": {
+      "through": true
+     },
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "cut_depth",
+     "label": "Cut depth",
+     "kind": "length",
+     "default": 5.0,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Depth",
+     "help": "",
+     "visible": {
+      "through": false
+     },
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "stepdown",
+     "label": "Stepdown (0 = tool)",
+     "kind": "length",
+     "default": 0.0,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Depth",
+     "help": "Maximum depth per pass; 0 uses the tool's stepdown",
+     "visible": null,
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "strategy",
+     "label": "Strategy",
+     "kind": "choice",
+     "default": "offset",
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": [
+      [
+       "offset",
+       "Offset (contour parallel)"
+      ],
+      [
+       "raster",
+       "Raster (zig-zag)"
+      ]
+     ],
+     "group": "Pocket",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "stepover",
+     "label": "Stepover (0 = tool)",
+     "kind": "length",
+     "default": 0.0,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Pocket",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "direction",
+     "label": "Direction",
+     "kind": "choice",
+     "default": "climb",
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": [
+      [
+       "climb",
+       "Climb"
+      ],
+      [
+       "conventional",
+       "Conventional"
+      ]
+     ],
+     "group": "Pocket",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "allowance",
+     "label": "Wall allowance",
+     "kind": "length",
+     "default": 0.0,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Pocket",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "finish_wall",
+     "label": "Wall finish allowance",
+     "kind": "length",
+     "default": 0.0,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Pocket",
+     "help": "Leave this much on the wall and remove it with a final full depth pass",
+     "visible": null,
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "rest_from",
+     "label": "Rest machining after tool Ø (0 = off)",
+     "kind": "length",
+     "default": 0.0,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Pocket",
+     "help": "Only machine the corners a larger tool of this diameter could not reach",
+     "visible": null,
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "order",
+     "label": "Cut order",
+     "kind": "choice",
+     "default": "inside_out",
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": [
+      [
+       "inside_out",
+       "From the centre outwards"
+      ],
+      [
+       "outside_in",
+       "From the wall inwards"
+      ]
+     ],
+     "group": "Pocket",
+     "help": "",
+     "visible": {
+      "strategy": "offset"
+     },
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "raster_angle",
+     "label": "Raster angle",
+     "kind": "angle",
+     "default": 0.0,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Pocket",
+     "help": "",
+     "visible": {
+      "strategy": "raster"
+     },
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "profile_pass",
+     "label": "Boundary pass",
+     "kind": "choice",
+     "default": "last",
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": [
+      [
+       "none",
+       "None"
+      ],
+      [
+       "first",
+       "Before raster"
+      ],
+      [
+       "last",
+       "After raster"
+      ]
+     ],
+     "group": "Pocket",
+     "help": "",
+     "visible": {
+      "strategy": "raster"
+     },
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "entry",
+     "label": "Entry",
+     "kind": "choice",
+     "default": "plunge",
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": [
+      [
+       "plunge",
+       "Plunge"
+      ],
+      [
+       "ramp",
+       "Zig-zag ramp"
+      ],
+      [
+       "helix",
+       "Helix"
+      ]
+     ],
+     "group": "Entry",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "ramp_length",
+     "label": "Ramp distance",
+     "kind": "length",
+     "default": 15.0,
+     "min": 0.5,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Entry",
+     "help": "",
+     "visible": {
+      "entry": "ramp"
+     },
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "helix_radius",
+     "label": "Helix radius (0 = auto)",
+     "kind": "length",
+     "default": 0.0,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Entry",
+     "help": "",
+     "visible": {
+      "entry": "helix"
+     },
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "ramp_angle",
+     "label": "Helix angle",
+     "kind": "angle",
+     "default": 3.0,
+     "min": 0.2,
+     "max": 45.0,
+     "step": null,
+     "choices": null,
+     "group": "Entry",
+     "help": "",
+     "visible": {
+      "entry": "helix"
+     },
+     "decimals": 3,
+     "advanced": true
+    }
+   ]
+  },
+  {
+   "id": "drill",
+   "label": "Drilling",
+   "description": "Drill holes at the centre of each selected vector.",
+   "tool_types": [
+    "drill",
+    "end_mill",
+    "ball_nose",
+    "v_bit"
+   ],
+   "needs_closed": false,
+   "extra_tool_params": [],
+   "params": [
+    {
+     "name": "start_depth",
+     "label": "Start depth",
+     "kind": "length",
+     "default": 0.0,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Depth",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "through",
+     "label": "Drill through material",
+     "kind": "bool",
+     "default": false,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Depth",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "overcut",
+     "label": "Drill below bottom",
+     "kind": "length",
+     "default": 1.0,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Depth",
+     "help": "",
+     "visible": {
+      "through": true
+     },
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "cut_depth",
+     "label": "Hole depth",
+     "kind": "length",
+     "default": 10.0,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Depth",
+     "help": "",
+     "visible": {
+      "through": false
+     },
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "tip_compensation",
+     "label": "Add drill point length",
+     "kind": "bool",
+     "default": false,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Depth",
+     "help": "Deepen by the drill point so the full diameter reaches the depth",
+     "visible": null,
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "peck",
+     "label": "Peck depth (0 = none)",
+     "kind": "length",
+     "default": 0.0,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Drilling",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "dwell",
+     "label": "Dwell at bottom (s)",
+     "kind": "float",
+     "default": 0.0,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Drilling",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "retract",
+     "label": "Retract height",
+     "kind": "length",
+     "default": 2.0,
+     "min": 0.1,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Drilling",
+     "help": "Height above the surface where drilling starts and returns to",
+     "visible": null,
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "targets",
+     "label": "Drill at",
+     "kind": "choice",
+     "default": "centres",
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": [
+      [
+       "centres",
+       "Centre of every selected vector"
+      ],
+      [
+       "circles",
+       "Circles only"
+      ],
+      [
+       "matching",
+       "Circles matching the tool diameter"
+      ]
+     ],
+     "group": "Drilling",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "match_tolerance",
+     "label": "Diameter tolerance",
+     "kind": "length",
+     "default": 0.5,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Drilling",
+     "help": "",
+     "visible": {
+      "targets": "matching"
+     },
+     "decimals": 3,
+     "advanced": true
+    }
+   ]
+  },
+  {
+   "id": "engrave",
+   "label": "Engrave (Follow Vector)",
+   "description": "Machine exactly along the vectors; with a V-bit the depth can come from a line width.",
+   "tool_types": null,
+   "needs_closed": false,
+   "extra_tool_params": [],
+   "params": [
+    {
+     "name": "start_depth",
+     "label": "Start depth",
+     "kind": "length",
+     "default": 0.0,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Depth",
+     "help": "Depth below the material surface where cutting starts",
+     "visible": null,
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "depth_mode",
+     "label": "Depth from",
+     "kind": "choice",
+     "default": "depth",
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": [
+      [
+       "depth",
+       "Cut depth"
+      ],
+      [
+       "width",
+       "Line width (tapered tools)"
+      ]
+     ],
+     "group": "Depth",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "cut_depth",
+     "label": "Cut depth",
+     "kind": "length",
+     "default": 1.0,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Depth",
+     "help": "",
+     "visible": {
+      "depth_mode": "depth"
+     },
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "line_width",
+     "label": "Line width",
+     "kind": "length",
+     "default": 1.0,
+     "min": 0.01,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Depth",
+     "help": "",
+     "visible": {
+      "depth_mode": "width"
+     },
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "stepdown",
+     "label": "Stepdown (0 = tool)",
+     "kind": "length",
+     "default": 0.0,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Depth",
+     "help": "Maximum depth per pass; 0 uses the tool's stepdown",
+     "visible": null,
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "start_mode",
+     "label": "Start point",
+     "kind": "choice",
+     "default": "vector",
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": [
+      [
+       "vector",
+       "Vector start point"
+      ],
+      [
+       "nearest",
+       "Nearest to previous cut"
+      ]
+     ],
+     "group": "Profile",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "ramp",
+     "label": "Entry",
+     "kind": "choice",
+     "default": "none",
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": [
+      [
+       "none",
+       "Plunge"
+      ],
+      [
+       "linear",
+       "Ramp over distance"
+      ],
+      [
+       "helix",
+       "Smooth spiral"
+      ]
+     ],
+     "group": "Ramp & Leads",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "ramp_length",
+     "label": "Ramp distance",
+     "kind": "length",
+     "default": 20.0,
+     "min": 0.1,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Ramp & Leads",
+     "help": "",
+     "visible": {
+      "ramp": "linear"
+     },
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "overlap",
+     "label": "Overlap at end",
+     "kind": "length",
+     "default": 0.0,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Ramp & Leads",
+     "help": "Continue past the start point to clean the seam",
+     "visible": null,
+     "decimals": 3,
+     "advanced": true
+    }
+   ]
+  },
+  {
+   "id": "vcarve",
+   "label": "V-Carve",
+   "description": "Carve shapes with a V-bit; depth follows the shape width. Optional flat bottom.",
+   "tool_types": [
+    "v_bit",
+    "engraving"
+   ],
+   "needs_closed": true,
+   "extra_tool_params": [
+    "clear_tool"
+   ],
+   "params": [
+    {
+     "name": "start_depth",
+     "label": "Start depth",
+     "kind": "length",
+     "default": 0.0,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Depth",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "flat_depth",
+     "label": "Flat depth (0 = no limit)",
+     "kind": "length",
+     "default": 0.0,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Depth",
+     "help": "Maximum carving depth; deeper areas are machined flat",
+     "visible": null,
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "stepdown",
+     "label": "Stepdown (0 = single pass)",
+     "kind": "length",
+     "default": 0.0,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Depth",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "clear_flats",
+     "label": "Clear flat areas",
+     "kind": "bool",
+     "default": true,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Flat areas",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "clear_tool",
+     "label": "Flat area tool (empty = V-bit)",
+     "kind": "tool",
+     "default": null,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Flat areas",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "resolution",
+     "label": "Sampling step",
+     "kind": "length",
+     "default": 0.1,
+     "min": 0.01,
+     "max": 2.0,
+     "step": null,
+     "choices": null,
+     "group": "Advanced",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "smoothing",
+     "label": "Path tolerance",
+     "kind": "length",
+     "default": 0.01,
+     "min": 0.001,
+     "max": 0.5,
+     "step": null,
+     "choices": null,
+     "group": "Advanced",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": true
+    }
+   ]
+  },
+  {
+   "id": "inlay",
+   "label": "Inlay",
+   "description": "V-carve inlay: the pocket, or the mirrored plug that fits into it.",
+   "tool_types": [
+    "v_bit",
+    "engraving"
+   ],
+   "needs_closed": true,
+   "extra_tool_params": [
+    "clear_tool"
+   ],
+   "params": [
+    {
+     "name": "part",
+     "label": "Part",
+     "kind": "choice",
+     "default": "female",
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": [
+      [
+       "female",
+       "Pocket (female)"
+      ],
+      [
+       "male",
+       "Plug (male)"
+      ]
+     ],
+     "group": "Inlay",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "flat_depth",
+     "label": "Pocket depth",
+     "kind": "length",
+     "default": 5.0,
+     "min": 0.01,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Inlay",
+     "help": "Depth of the pocket; wider areas are machined flat at this depth",
+     "visible": null,
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "glue_gap",
+     "label": "Glue gap",
+     "kind": "length",
+     "default": 1.0,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Inlay",
+     "help": "Space left under the plug in flat areas (the plug starts this much higher)",
+     "visible": {
+      "part": "male"
+     },
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "margin",
+     "label": "Plug margin (0 = automatic)",
+     "kind": "length",
+     "default": 0.0,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Inlay",
+     "help": "Width of the background carved around the plug",
+     "visible": {
+      "part": "male"
+     },
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "mirror",
+     "label": "Mirror the plug",
+     "kind": "bool",
+     "default": true,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Inlay",
+     "help": "Mirror left/right in place so the plug can be turned over",
+     "visible": {
+      "part": "male"
+     },
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "stepdown",
+     "label": "Stepdown (0 = single pass)",
+     "kind": "length",
+     "default": 0.0,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Depth",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "clear_flats",
+     "label": "Clear flat areas",
+     "kind": "bool",
+     "default": true,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Flat areas",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "clear_tool",
+     "label": "Flat area tool (empty = V-bit)",
+     "kind": "tool",
+     "default": null,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Flat areas",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "resolution",
+     "label": "Sampling step",
+     "kind": "length",
+     "default": 0.1,
+     "min": 0.01,
+     "max": 2.0,
+     "step": null,
+     "choices": null,
+     "group": "Advanced",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "smoothing",
+     "label": "Path tolerance",
+     "kind": "length",
+     "default": 0.01,
+     "min": 0.001,
+     "max": 0.5,
+     "step": null,
+     "choices": null,
+     "group": "Advanced",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": true
+    }
+   ]
+  },
+  {
+   "id": "fluting",
+   "label": "Fluting",
+   "description": "Machine along vectors with the depth ramping in at the start and out at the end (decorative flutes with ball nose or V-bits).",
+   "tool_types": null,
+   "needs_closed": false,
+   "extra_tool_params": [],
+   "params": [
+    {
+     "name": "start_depth",
+     "label": "Start depth",
+     "kind": "length",
+     "default": 0.0,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Depth",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "cut_depth",
+     "label": "Flute depth",
+     "kind": "length",
+     "default": 4.0,
+     "min": 0.01,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Depth",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "stepdown",
+     "label": "Stepdown (0 = single pass)",
+     "kind": "length",
+     "default": 0.0,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Depth",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "ramp_units",
+     "label": "Ramp lengths in",
+     "kind": "choice",
+     "default": "length",
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": [
+      [
+       "length",
+       "Millimetres"
+      ],
+      [
+       "percent",
+       "% of the vector length"
+      ]
+     ],
+     "group": "Ramps",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "ramp_start",
+     "label": "Ramp at start",
+     "kind": "float",
+     "default": 20.0,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Ramps",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "ramp_end",
+     "label": "Ramp at end",
+     "kind": "float",
+     "default": 20.0,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Ramps",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "profile",
+     "label": "Ramp shape",
+     "kind": "choice",
+     "default": "linear",
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": [
+      [
+       "linear",
+       "Linear"
+      ],
+      [
+       "smooth",
+       "Smooth (S-curve)"
+      ]
+     ],
+     "group": "Ramps",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": true
+    }
+   ]
+  }
+ ],
+ "commands": [
+  {
+   "id": "create.rectangle",
+   "label": "Rectangle...",
+   "menu": "Vectors/Create",
+   "min_selection": 0,
+   "shortcut": null,
+   "tooltip": "",
+   "source": "builtin",
+   "params": [
+    {
+     "name": "width",
+     "label": "Width",
+     "kind": "length",
+     "default": 100.0,
+     "min": 0.001,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "height",
+     "label": "Height",
+     "kind": "length",
+     "default": 60.0,
+     "min": 0.001,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "radius",
+     "label": "Corner radius",
+     "kind": "length",
+     "default": 0.0,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "corner",
+     "label": "Corner type",
+     "kind": "choice",
+     "default": "round",
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": [
+      [
+       "round",
+       "Round"
+      ],
+      [
+       "chamfer",
+       "Chamfer"
+      ],
+      [
+       "inverted",
+       "Inverted round"
+      ]
+     ],
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "angle",
+     "label": "Angle",
+     "kind": "angle",
+     "default": 0.0,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "x",
+     "label": "Centre X (empty = sheet centre)",
+     "kind": "length",
+     "default": null,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Position",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "y",
+     "label": "Centre Y (empty = sheet centre)",
+     "kind": "length",
+     "default": null,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Position",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    }
+   ]
+  },
+  {
+   "id": "create.circle",
+   "label": "Circle...",
+   "menu": "Vectors/Create",
+   "min_selection": 0,
+   "shortcut": null,
+   "tooltip": "",
+   "source": "builtin",
+   "params": [
+    {
+     "name": "diameter",
+     "label": "Diameter",
+     "kind": "length",
+     "default": 50.0,
+     "min": 0.001,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "x",
+     "label": "Centre X (empty = sheet centre)",
+     "kind": "length",
+     "default": null,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Position",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "y",
+     "label": "Centre Y (empty = sheet centre)",
+     "kind": "length",
+     "default": null,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Position",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    }
+   ]
+  },
+  {
+   "id": "create.ellipse",
+   "label": "Ellipse...",
+   "menu": "Vectors/Create",
+   "min_selection": 0,
+   "shortcut": null,
+   "tooltip": "",
+   "source": "builtin",
+   "params": [
+    {
+     "name": "width",
+     "label": "Width",
+     "kind": "length",
+     "default": 80.0,
+     "min": 0.001,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "height",
+     "label": "Height",
+     "kind": "length",
+     "default": 40.0,
+     "min": 0.001,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "angle",
+     "label": "Angle",
+     "kind": "angle",
+     "default": 0.0,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "x",
+     "label": "Centre X (empty = sheet centre)",
+     "kind": "length",
+     "default": null,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Position",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "y",
+     "label": "Centre Y (empty = sheet centre)",
+     "kind": "length",
+     "default": null,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Position",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    }
+   ]
+  },
+  {
+   "id": "create.polygon",
+   "label": "Polygon...",
+   "menu": "Vectors/Create",
+   "min_selection": 0,
+   "shortcut": null,
+   "tooltip": "",
+   "source": "builtin",
+   "params": [
+    {
+     "name": "sides",
+     "label": "Sides",
+     "kind": "int",
+     "default": 6,
+     "min": 3,
+     "max": 500,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "radius",
+     "label": "Radius",
+     "kind": "length",
+     "default": 40.0,
+     "min": 0.001,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "inscribed",
+     "label": "Vertices on radius",
+     "kind": "bool",
+     "default": true,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "angle",
+     "label": "Angle",
+     "kind": "angle",
+     "default": 0.0,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "corner_radius",
+     "label": "Corner radius",
+     "kind": "length",
+     "default": 0.0,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "x",
+     "label": "Centre X (empty = sheet centre)",
+     "kind": "length",
+     "default": null,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Position",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "y",
+     "label": "Centre Y (empty = sheet centre)",
+     "kind": "length",
+     "default": null,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Position",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    }
+   ]
+  },
+  {
+   "id": "create.star",
+   "label": "Star...",
+   "menu": "Vectors/Create",
+   "min_selection": 0,
+   "shortcut": null,
+   "tooltip": "",
+   "source": "builtin",
+   "params": [
+    {
+     "name": "points",
+     "label": "Points",
+     "kind": "int",
+     "default": 5,
+     "min": 3,
+     "max": 200,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "outer",
+     "label": "Outer radius",
+     "kind": "length",
+     "default": 40.0,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "inner",
+     "label": "Inner radius",
+     "kind": "length",
+     "default": 18.0,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "angle",
+     "label": "Angle",
+     "kind": "angle",
+     "default": 0.0,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "x",
+     "label": "Centre X (empty = sheet centre)",
+     "kind": "length",
+     "default": null,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Position",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "y",
+     "label": "Centre Y (empty = sheet centre)",
+     "kind": "length",
+     "default": null,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Position",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    }
+   ]
+  },
+  {
+   "id": "create.slot",
+   "label": "Slot...",
+   "menu": "Vectors/Create",
+   "min_selection": 0,
+   "shortcut": null,
+   "tooltip": "",
+   "source": "builtin",
+   "params": [
+    {
+     "name": "length",
+     "label": "Overall length",
+     "kind": "length",
+     "default": 60.0,
+     "min": 0.001,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "width",
+     "label": "Width",
+     "kind": "length",
+     "default": 10.0,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "angle",
+     "label": "Angle",
+     "kind": "angle",
+     "default": 0.0,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "x",
+     "label": "Centre X (empty = sheet centre)",
+     "kind": "length",
+     "default": null,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Position",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "y",
+     "label": "Centre Y (empty = sheet centre)",
+     "kind": "length",
+     "default": null,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Position",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    }
+   ]
+  },
+  {
+   "id": "create.arc",
+   "label": "Arc...",
+   "menu": "Vectors/Create",
+   "min_selection": 0,
+   "shortcut": null,
+   "tooltip": "",
+   "source": "builtin",
+   "params": [
+    {
+     "name": "radius",
+     "label": "Radius",
+     "kind": "length",
+     "default": 30.0,
+     "min": 0.001,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "start",
+     "label": "Start angle",
+     "kind": "angle",
+     "default": 0.0,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "end",
+     "label": "End angle",
+     "kind": "angle",
+     "default": 90.0,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "ccw",
+     "label": "Counter-clockwise",
+     "kind": "bool",
+     "default": true,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "x",
+     "label": "Centre X (empty = sheet centre)",
+     "kind": "length",
+     "default": null,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Position",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "y",
+     "label": "Centre Y (empty = sheet centre)",
+     "kind": "length",
+     "default": null,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Position",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    }
+   ]
+  },
+  {
+   "id": "create.spiral",
+   "label": "Spiral...",
+   "menu": "Vectors/Create",
+   "min_selection": 0,
+   "shortcut": null,
+   "tooltip": "",
+   "source": "builtin",
+   "params": [
+    {
+     "name": "start_radius",
+     "label": "Start radius",
+     "kind": "length",
+     "default": 2.0,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "pitch",
+     "label": "Pitch",
+     "kind": "length",
+     "default": 5.0,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "turns",
+     "label": "Turns",
+     "kind": "float",
+     "default": 5.0,
+     "min": 0.1,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "x",
+     "label": "Centre X (empty = sheet centre)",
+     "kind": "length",
+     "default": null,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Position",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "y",
+     "label": "Centre Y (empty = sheet centre)",
+     "kind": "length",
+     "default": null,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Position",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    }
+   ]
+  },
+  {
+   "id": "create.boundary",
+   "label": "Bounding Box",
+   "menu": "Vectors/Create",
+   "min_selection": 1,
+   "shortcut": null,
+   "tooltip": "",
+   "source": "builtin",
+   "params": [
+    {
+     "name": "offset",
+     "label": "Offset",
+     "kind": "length",
+     "default": 0.0,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "radius",
+     "label": "Corner radius",
+     "kind": "length",
+     "default": 0.0,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    }
+   ]
+  },
+  {
+   "id": "create.door",
+   "label": "Door / Panel...",
+   "menu": "Vectors/Create",
+   "min_selection": 0,
+   "shortcut": null,
+   "tooltip": "Cabinet door with stacked panels, decorative grooves and optional toolpaths",
+   "source": "builtin",
+   "params": [
+    {
+     "name": "width",
+     "label": "Door width",
+     "kind": "length",
+     "default": 400.0,
+     "min": 10.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Door",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "height",
+     "label": "Door height",
+     "kind": "length",
+     "default": 700.0,
+     "min": 10.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Door",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "outer_radius",
+     "label": "Outer corner radius",
+     "kind": "length",
+     "default": 0.0,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Door",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "frame",
+     "label": "Frame width",
+     "kind": "length",
+     "default": 70.0,
+     "min": 1.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Panels",
+     "help": "From the door edge to the panel line",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "panels",
+     "label": "Panels (stacked)",
+     "kind": "int",
+     "default": 1,
+     "min": 1,
+     "max": 6,
+     "step": null,
+     "choices": null,
+     "group": "Panels",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "rail",
+     "label": "Rail between panels",
+     "kind": "length",
+     "default": 70.0,
+     "min": 1.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Panels",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "style",
+     "label": "Panel shape",
+     "kind": "choice",
+     "default": "square",
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": [
+      [
+       "square",
+       "Square"
+      ],
+      [
+       "round",
+       "Rounded corners"
+      ],
+      [
+       "cove",
+       "Cove (inverted) corners"
+      ],
+      [
+       "chamfer",
+       "Chamfered corners"
+      ],
+      [
+       "arch",
+       "Arched top"
+      ]
+     ],
+     "group": "Panels",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "radius",
+     "label": "Corner radius / chamfer",
+     "kind": "length",
+     "default": 15.0,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Panels",
+     "help": "",
+     "visible": {
+      "style": [
+       "round",
+       "cove",
+       "chamfer"
+      ]
+     },
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "arch",
+     "label": "Arch rise",
+     "kind": "length",
+     "default": 60.0,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Panels",
+     "help": "",
+     "visible": {
+      "style": "arch"
+     },
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "grooves",
+     "label": "Groove lines",
+     "kind": "int",
+     "default": 0,
+     "min": 0,
+     "max": 10,
+     "step": null,
+     "choices": null,
+     "group": "Grooves",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "groove_spacing",
+     "label": "Groove spacing",
+     "kind": "length",
+     "default": 8.0,
+     "min": 0.1,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Grooves",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "groove_side",
+     "label": "Grooves on",
+     "kind": "choice",
+     "default": "panel",
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": [
+      [
+       "panel",
+       "The panel (inside)"
+      ],
+      [
+       "frame",
+       "The frame (outside)"
+      ]
+     ],
+     "group": "Grooves",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "pocket_tool",
+     "label": "Panel pocket tool (none = no toolpath)",
+     "kind": "tool",
+     "default": null,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Toolpaths",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "pocket_depth",
+     "label": "Panel depth",
+     "kind": "length",
+     "default": 6.0,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Toolpaths",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "edge_tool",
+     "label": "Panel edge tool (V-bit / profile bit)",
+     "kind": "tool",
+     "default": null,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Toolpaths",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "groove_tool",
+     "label": "Groove tool",
+     "kind": "tool",
+     "default": null,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Toolpaths",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "groove_depth",
+     "label": "Groove depth",
+     "kind": "length",
+     "default": 2.0,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Toolpaths",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "cut_tool",
+     "label": "Cut-out tool",
+     "kind": "tool",
+     "default": null,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Toolpaths",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "x",
+     "label": "Centre X (empty = sheet centre)",
+     "kind": "length",
+     "default": null,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Position",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "y",
+     "label": "Centre Y (empty = sheet centre)",
+     "kind": "length",
+     "default": null,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "Position",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    }
+   ]
+  },
+  {
+   "id": "edit.offset",
+   "label": "Offset...",
+   "menu": "Vectors/Edit",
+   "min_selection": 1,
+   "shortcut": "Ctrl+Shift+O",
+   "tooltip": "",
+   "source": "builtin",
+   "params": [
+    {
+     "name": "distance",
+     "label": "Distance",
+     "kind": "length",
+     "default": 3.0,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "direction",
+     "label": "Direction",
+     "kind": "choice",
+     "default": "outward",
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": [
+      [
+       "outward",
+       "Outward"
+      ],
+      [
+       "inward",
+       "Inward"
+      ]
+     ],
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "corners",
+     "label": "Corners",
+     "kind": "choice",
+     "default": "round",
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": [
+      [
+       "round",
+       "Round"
+      ],
+      [
+       "sharp",
+       "Sharp"
+      ]
+     ],
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "keep",
+     "label": "Keep original",
+     "kind": "bool",
+     "default": true,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "layer",
+     "label": "Layer",
+     "kind": "choice",
+     "default": "same",
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": [
+      [
+       "same",
+       "Same as original"
+      ],
+      [
+       "active",
+       "Active layer"
+      ]
+     ],
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    }
+   ]
+  },
+  {
+   "id": "edit.weld",
+   "label": "Weld (Union)",
+   "menu": "Vectors/Edit",
+   "min_selection": 2,
+   "shortcut": "Ctrl+Shift+W",
+   "tooltip": "",
+   "source": "builtin",
+   "params": []
+  },
+  {
+   "id": "edit.subtract",
+   "label": "Subtract",
+   "menu": "Vectors/Edit",
+   "min_selection": 2,
+   "shortcut": null,
+   "tooltip": "",
+   "source": "builtin",
+   "params": [
+    {
+     "name": "base",
+     "label": "Keep",
+     "kind": "choice",
+     "default": "first",
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": [
+      [
+       "first",
+       "First selected"
+      ],
+      [
+       "largest",
+       "Largest"
+      ]
+     ],
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    }
+   ]
+  },
+  {
+   "id": "edit.intersect",
+   "label": "Intersect",
+   "menu": "Vectors/Edit",
+   "min_selection": 2,
+   "shortcut": null,
+   "tooltip": "",
+   "source": "builtin",
+   "params": []
+  },
+  {
+   "id": "edit.join",
+   "label": "Join Vectors...",
+   "menu": "Vectors/Edit",
+   "min_selection": 1,
+   "shortcut": "Ctrl+J",
+   "tooltip": "",
+   "source": "builtin",
+   "params": [
+    {
+     "name": "tolerance",
+     "label": "Gap tolerance",
+     "kind": "length",
+     "default": 0.1,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    }
+   ]
+  },
+  {
+   "id": "edit.close",
+   "label": "Close Vectors",
+   "menu": "Vectors/Edit",
+   "min_selection": 1,
+   "shortcut": null,
+   "tooltip": "",
+   "source": "builtin",
+   "params": [
+    {
+     "name": "tolerance",
+     "label": "Snap tolerance",
+     "kind": "length",
+     "default": 0.1,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    }
+   ]
+  },
+  {
+   "id": "edit.reverse",
+   "label": "Reverse Direction",
+   "menu": "Vectors/Edit",
+   "min_selection": 1,
+   "shortcut": null,
+   "tooltip": "",
+   "source": "builtin",
+   "params": []
+  },
+  {
+   "id": "edit.group",
+   "label": "Group",
+   "menu": "Vectors/Edit",
+   "min_selection": 2,
+   "shortcut": "Ctrl+G",
+   "tooltip": "",
+   "source": "builtin",
+   "params": [
+    {
+     "name": "name",
+     "label": "Name",
+     "kind": "str",
+     "default": "",
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    }
+   ]
+  },
+  {
+   "id": "edit.ungroup",
+   "label": "Ungroup",
+   "menu": "Vectors/Edit",
+   "min_selection": 1,
+   "shortcut": "Ctrl+Shift+G",
+   "tooltip": "",
+   "source": "builtin",
+   "params": []
+  },
+  {
+   "id": "edit.explode",
+   "label": "Explode into Segments",
+   "menu": "Vectors/Edit",
+   "min_selection": 1,
+   "shortcut": null,
+   "tooltip": "",
+   "source": "builtin",
+   "params": []
+  },
+  {
+   "id": "edit.smooth",
+   "label": "Smooth / Fit Arcs...",
+   "menu": "Vectors/Edit",
+   "min_selection": 1,
+   "shortcut": null,
+   "tooltip": "",
+   "source": "builtin",
+   "params": [
+    {
+     "name": "tolerance",
+     "label": "Tolerance",
+     "kind": "length",
+     "default": 0.02,
+     "min": 0.001,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    }
+   ]
+  },
+  {
+   "id": "edit.simplify",
+   "label": "Simplify...",
+   "menu": "Vectors/Edit",
+   "min_selection": 1,
+   "shortcut": null,
+   "tooltip": "",
+   "source": "builtin",
+   "params": [
+    {
+     "name": "tolerance",
+     "label": "Tolerance",
+     "kind": "length",
+     "default": 0.05,
+     "min": 0.001,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    }
+   ]
+  },
+  {
+   "id": "edit.polyline",
+   "label": "Convert to Polyline...",
+   "menu": "Vectors/Edit",
+   "min_selection": 1,
+   "shortcut": null,
+   "tooltip": "",
+   "source": "builtin",
+   "params": [
+    {
+     "name": "tolerance",
+     "label": "Tolerance",
+     "kind": "length",
+     "default": 0.01,
+     "min": 0.001,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    }
+   ]
+  },
+  {
+   "id": "edit.centerline",
+   "label": "Centre Line (Single Line)...",
+   "menu": "Vectors/Edit",
+   "min_selection": 1,
+   "shortcut": null,
+   "tooltip": "Single lines along the middle of closed shapes, e.g. text for single line engraving",
+   "source": "builtin",
+   "params": [
+    {
+     "name": "pixel_size",
+     "label": "Resolution (0 = automatic)",
+     "kind": "length",
+     "default": 0.0,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "The shapes are rasterised at this pixel size; smaller is finer and slower",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "smoothing",
+     "label": "Smoothing (pixels)",
+     "kind": "float",
+     "default": 0.8,
+     "min": 0.1,
+     "max": 10.0,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": true
+    },
+    {
+     "name": "keep",
+     "label": "Keep the outlines",
+     "kind": "bool",
+     "default": false,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    }
+   ]
+  },
+  {
+   "id": "edit.doctor",
+   "label": "Vector Doctor...",
+   "menu": "Vectors/Edit",
+   "min_selection": 0,
+   "shortcut": null,
+   "tooltip": "Checks the selection (or the whole sheet) for open, nearly closed, tiny, duplicate and self-crossing vectors, fixes what it can and selects the rest.",
+   "source": "builtin",
+   "params": [
+    {
+     "name": "gap",
+     "label": "Close gaps up to",
+     "kind": "length",
+     "default": 0.1,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "min_size",
+     "label": "Tiny if smaller than",
+     "kind": "length",
+     "default": 0.05,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "fix",
+     "label": "Fix automatically",
+     "kind": "bool",
+     "default": true,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    }
+   ]
+  },
+  {
+   "id": "edit.dedupe",
+   "label": "Delete Duplicates...",
+   "menu": "Vectors/Edit",
+   "min_selection": 0,
+   "shortcut": null,
+   "tooltip": "",
+   "source": "builtin",
+   "params": [
+    {
+     "name": "tolerance",
+     "label": "Tolerance",
+     "kind": "length",
+     "default": 0.01,
+     "min": 0.0001,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "scope",
+     "label": "Search in",
+     "kind": "choice",
+     "default": "sheet",
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": [
+      [
+       "sheet",
+       "Whole sheet"
+      ],
+      [
+       "selection",
+       "Selection"
+      ]
+     ],
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    }
+   ]
+  },
+  {
+   "id": "corner.fillet",
+   "label": "Fillet Corners...",
+   "menu": "Vectors/Corners",
+   "min_selection": 1,
+   "shortcut": null,
+   "tooltip": "",
+   "source": "builtin",
+   "params": [
+    {
+     "name": "radius",
+     "label": "Radius",
+     "kind": "length",
+     "default": 3.0,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    }
+   ]
+  },
+  {
+   "id": "corner.chamfer",
+   "label": "Chamfer Corners...",
+   "menu": "Vectors/Corners",
+   "min_selection": 1,
+   "shortcut": null,
+   "tooltip": "",
+   "source": "builtin",
+   "params": [
+    {
+     "name": "distance",
+     "label": "Distance",
+     "kind": "length",
+     "default": 3.0,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    }
+   ]
+  },
+  {
+   "id": "corner.dogbone",
+   "label": "Dog-bone / T-bone Corners...",
+   "menu": "Vectors/Corners",
+   "min_selection": 1,
+   "shortcut": null,
+   "tooltip": "",
+   "source": "builtin",
+   "params": [
+    {
+     "name": "diameter",
+     "label": "Tool diameter",
+     "kind": "length",
+     "default": 6.0,
+     "min": 0.01,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "cut",
+     "label": "Cut",
+     "kind": "choice",
+     "default": "inside",
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": [
+      [
+       "inside",
+       "Inside (pockets, slots)"
+      ],
+      [
+       "outside",
+       "Outside (parts, tenons)"
+      ]
+     ],
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "style",
+     "label": "Style",
+     "kind": "choice",
+     "default": "dogbone",
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": [
+      [
+       "dogbone",
+       "Dog-bone"
+      ],
+      [
+       "tbone",
+       "T-bone"
+      ]
+     ],
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "clearance",
+     "label": "Clearance",
+     "kind": "length",
+     "default": 0.05,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    }
+   ]
+  },
+  {
+   "id": "xform.move",
+   "label": "Move...",
+   "menu": "Vectors/Transform",
+   "min_selection": 1,
+   "shortcut": "Ctrl+M",
+   "tooltip": "",
+   "source": "builtin",
+   "params": [
+    {
+     "name": "dx",
+     "label": "Move X",
+     "kind": "length",
+     "default": 0.0,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "dy",
+     "label": "Move Y",
+     "kind": "length",
+     "default": 0.0,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "copy",
+     "label": "Make a copy",
+     "kind": "bool",
+     "default": false,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    }
+   ]
+  },
+  {
+   "id": "xform.move_to",
+   "label": "Position...",
+   "menu": "Vectors/Transform",
+   "min_selection": 1,
+   "shortcut": null,
+   "tooltip": "",
+   "source": "builtin",
+   "params": [
+    {
+     "name": "anchor",
+     "label": "Anchor",
+     "kind": "choice",
+     "default": "bottom_left",
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": [
+      [
+       "bottom_left",
+       "Bottom left"
+      ],
+      [
+       "center",
+       "Centre"
+      ],
+      [
+       "top_left",
+       "Top left"
+      ],
+      [
+       "top_right",
+       "Top right"
+      ],
+      [
+       "bottom_right",
+       "Bottom right"
+      ]
+     ],
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "x",
+     "label": "X",
+     "kind": "length",
+     "default": 0.0,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "y",
+     "label": "Y",
+     "kind": "length",
+     "default": 0.0,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    }
+   ]
+  },
+  {
+   "id": "xform.rotate",
+   "label": "Rotate...",
+   "menu": "Vectors/Transform",
+   "min_selection": 1,
+   "shortcut": "Ctrl+Shift+R",
+   "tooltip": "",
+   "source": "builtin",
+   "params": [
+    {
+     "name": "angle",
+     "label": "Angle",
+     "kind": "angle",
+     "default": 90.0,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "about",
+     "label": "About",
+     "kind": "choice",
+     "default": "center",
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": [
+      [
+       "center",
+       "Selection centre"
+      ],
+      [
+       "origin",
+       "Origin (0,0)"
+      ],
+      [
+       "point",
+       "Point"
+      ]
+     ],
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "px",
+     "label": "Point X",
+     "kind": "length",
+     "default": 0.0,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": {
+      "about": "point"
+     },
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "py",
+     "label": "Point Y",
+     "kind": "length",
+     "default": 0.0,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": {
+      "about": "point"
+     },
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "copy",
+     "label": "Make a copy",
+     "kind": "bool",
+     "default": false,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    }
+   ]
+  },
+  {
+   "id": "xform.scale",
+   "label": "Scale...",
+   "menu": "Vectors/Transform",
+   "min_selection": 1,
+   "shortcut": null,
+   "tooltip": "",
+   "source": "builtin",
+   "params": [
+    {
+     "name": "sx",
+     "label": "Scale X %",
+     "kind": "percent",
+     "default": 100.0,
+     "min": 0.001,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "sy",
+     "label": "Scale Y %",
+     "kind": "percent",
+     "default": 100.0,
+     "min": 0.001,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "uniform",
+     "label": "Keep proportions",
+     "kind": "bool",
+     "default": true,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "about",
+     "label": "About",
+     "kind": "choice",
+     "default": "center",
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": [
+      [
+       "center",
+       "Selection centre"
+      ],
+      [
+       "origin",
+       "Origin (0,0)"
+      ],
+      [
+       "point",
+       "Point"
+      ]
+     ],
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "px",
+     "label": "Point X",
+     "kind": "length",
+     "default": 0.0,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": {
+      "about": "point"
+     },
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "py",
+     "label": "Point Y",
+     "kind": "length",
+     "default": 0.0,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": {
+      "about": "point"
+     },
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "copy",
+     "label": "Make a copy",
+     "kind": "bool",
+     "default": false,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    }
+   ]
+  },
+  {
+   "id": "xform.size",
+   "label": "Set Size...",
+   "menu": "Vectors/Transform",
+   "min_selection": 1,
+   "shortcut": null,
+   "tooltip": "",
+   "source": "builtin",
+   "params": [
+    {
+     "name": "width",
+     "label": "Width",
+     "kind": "length",
+     "default": 100.0,
+     "min": 0.001,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "height",
+     "label": "Height",
+     "kind": "length",
+     "default": 100.0,
+     "min": 0.001,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "uniform",
+     "label": "Keep proportions (use width)",
+     "kind": "bool",
+     "default": true,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    }
+   ]
+  },
+  {
+   "id": "xform.mirror",
+   "label": "Mirror...",
+   "menu": "Vectors/Transform",
+   "min_selection": 1,
+   "shortcut": null,
+   "tooltip": "",
+   "source": "builtin",
+   "params": [
+    {
+     "name": "axis",
+     "label": "Mirror",
+     "kind": "choice",
+     "default": "horizontal",
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": [
+      [
+       "horizontal",
+       "Left / right"
+      ],
+      [
+       "vertical",
+       "Top / bottom"
+      ]
+     ],
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "about",
+     "label": "About",
+     "kind": "choice",
+     "default": "center",
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": [
+      [
+       "center",
+       "Selection centre"
+      ],
+      [
+       "origin",
+       "Origin (0,0)"
+      ],
+      [
+       "point",
+       "Point"
+      ]
+     ],
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "px",
+     "label": "Point X",
+     "kind": "length",
+     "default": 0.0,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": {
+      "about": "point"
+     },
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "py",
+     "label": "Point Y",
+     "kind": "length",
+     "default": 0.0,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": {
+      "about": "point"
+     },
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "copy",
+     "label": "Make a copy",
+     "kind": "bool",
+     "default": false,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    }
+   ]
+  },
+  {
+   "id": "xform.slant",
+   "label": "Slant...",
+   "menu": "Vectors/Transform",
+   "min_selection": 1,
+   "shortcut": null,
+   "tooltip": "",
+   "source": "builtin",
+   "params": [
+    {
+     "name": "angle_x",
+     "label": "Horizontal slant",
+     "kind": "angle",
+     "default": 15.0,
+     "min": -80.0,
+     "max": 80.0,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "angle_y",
+     "label": "Vertical slant",
+     "kind": "angle",
+     "default": 0.0,
+     "min": -80.0,
+     "max": 80.0,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "about",
+     "label": "About",
+     "kind": "choice",
+     "default": "center",
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": [
+      [
+       "center",
+       "Selection centre"
+      ],
+      [
+       "origin",
+       "Origin (0,0)"
+      ],
+      [
+       "point",
+       "Point"
+      ]
+     ],
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "px",
+     "label": "Point X",
+     "kind": "length",
+     "default": 0.0,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": {
+      "about": "point"
+     },
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "py",
+     "label": "Point Y",
+     "kind": "length",
+     "default": 0.0,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": {
+      "about": "point"
+     },
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "copy",
+     "label": "Make a copy",
+     "kind": "bool",
+     "default": false,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    }
+   ]
+  },
+  {
+   "id": "xform.rot90l",
+   "label": "Rotate 90° Left",
+   "menu": "Vectors/Transform",
+   "min_selection": 1,
+   "shortcut": null,
+   "tooltip": "Turn the selection a quarter turn counter-clockwise about its centre",
+   "source": "builtin",
+   "params": []
+  },
+  {
+   "id": "xform.rot90r",
+   "label": "Rotate 90° Right",
+   "menu": "Vectors/Transform",
+   "min_selection": 1,
+   "shortcut": null,
+   "tooltip": "Turn the selection a quarter turn clockwise about its centre",
+   "source": "builtin",
+   "params": []
+  },
+  {
+   "id": "xform.rot180",
+   "label": "Rotate 180°",
+   "menu": "Vectors/Transform",
+   "min_selection": 1,
+   "shortcut": null,
+   "tooltip": "",
+   "source": "builtin",
+   "params": []
+  },
+  {
+   "id": "xform.flip_h",
+   "label": "Flip Left / Right",
+   "menu": "Vectors/Transform",
+   "min_selection": 1,
+   "shortcut": null,
+   "tooltip": "Mirror the selection about its own centre line",
+   "source": "builtin",
+   "params": []
+  },
+  {
+   "id": "xform.flip_v",
+   "label": "Flip Top / Bottom",
+   "menu": "Vectors/Transform",
+   "min_selection": 1,
+   "shortcut": null,
+   "tooltip": "Mirror the selection about its own centre line",
+   "source": "builtin",
+   "params": []
+  },
+  {
+   "id": "arrange.align",
+   "label": "Align...",
+   "menu": "Vectors/Arrange",
+   "min_selection": 1,
+   "shortcut": null,
+   "tooltip": "",
+   "source": "builtin",
+   "params": [
+    {
+     "name": "mode",
+     "label": "Align",
+     "kind": "choice",
+     "default": "left",
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": [
+      [
+       "left",
+       "Left"
+      ],
+      [
+       "hcenter",
+       "Centre horizontally"
+      ],
+      [
+       "right",
+       "Right"
+      ],
+      [
+       "bottom",
+       "Bottom"
+      ],
+      [
+       "vcenter",
+       "Centre vertically"
+      ],
+      [
+       "top",
+       "Top"
+      ],
+      [
+       "center",
+       "Centre"
+      ]
+     ],
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "relative",
+     "label": "Relative to",
+     "kind": "choice",
+     "default": "selection",
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": [
+      [
+       "selection",
+       "Selection"
+      ],
+      [
+       "sheet",
+       "Sheet"
+      ]
+     ],
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "each",
+     "label": "Move each vector separately",
+     "kind": "bool",
+     "default": true,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    }
+   ]
+  },
+  {
+   "id": "arrange.center",
+   "label": "Centre on Sheet",
+   "menu": "Vectors/Arrange",
+   "min_selection": 1,
+   "shortcut": "F9",
+   "tooltip": "",
+   "source": "builtin",
+   "params": []
+  },
+  {
+   "id": "arrange.distribute",
+   "label": "Distribute...",
+   "menu": "Vectors/Arrange",
+   "min_selection": 3,
+   "shortcut": null,
+   "tooltip": "",
+   "source": "builtin",
+   "params": [
+    {
+     "name": "axis",
+     "label": "Direction",
+     "kind": "choice",
+     "default": "x",
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": [
+      [
+       "x",
+       "Horizontally"
+      ],
+      [
+       "y",
+       "Vertically"
+      ]
+     ],
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    }
+   ]
+  },
+  {
+   "id": "arrange.array",
+   "label": "Rectangular Array...",
+   "menu": "Vectors/Arrange",
+   "min_selection": 1,
+   "shortcut": null,
+   "tooltip": "",
+   "source": "builtin",
+   "params": [
+    {
+     "name": "rows",
+     "label": "Rows",
+     "kind": "int",
+     "default": 2,
+     "min": 1,
+     "max": 1000,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "cols",
+     "label": "Columns",
+     "kind": "int",
+     "default": 3,
+     "min": 1,
+     "max": 1000,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "spacing",
+     "label": "Spacing is",
+     "kind": "choice",
+     "default": "gap",
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": [
+      [
+       "gap",
+       "Gap between copies"
+      ],
+      [
+       "pitch",
+       "Pitch"
+      ]
+     ],
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "dx",
+     "label": "X spacing",
+     "kind": "length",
+     "default": 10.0,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "dy",
+     "label": "Y spacing",
+     "kind": "length",
+     "default": 10.0,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    }
+   ]
+  },
+  {
+   "id": "arrange.circular",
+   "label": "Circular Array...",
+   "menu": "Vectors/Arrange",
+   "min_selection": 1,
+   "shortcut": null,
+   "tooltip": "",
+   "source": "builtin",
+   "params": [
+    {
+     "name": "count",
+     "label": "Number of copies",
+     "kind": "int",
+     "default": 6,
+     "min": 2,
+     "max": 1000,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "angle",
+     "label": "Total angle",
+     "kind": "angle",
+     "default": 360.0,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "about",
+     "label": "Centre",
+     "kind": "choice",
+     "default": "point",
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": [
+      [
+       "point",
+       "Point"
+      ],
+      [
+       "sheet",
+       "Sheet centre"
+      ],
+      [
+       "origin",
+       "Origin"
+      ]
+     ],
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "cx",
+     "label": "Centre X",
+     "kind": "length",
+     "default": 0.0,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": {
+      "about": "point"
+     },
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "cy",
+     "label": "Centre Y",
+     "kind": "length",
+     "default": 0.0,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": {
+      "about": "point"
+     },
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "rotate_copies",
+     "label": "Rotate copies",
+     "kind": "bool",
+     "default": true,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    }
+   ]
+  },
+  {
+   "id": "arrange.along",
+   "label": "Copy Along Vector...",
+   "menu": "Vectors/Arrange",
+   "min_selection": 2,
+   "shortcut": null,
+   "tooltip": "Select the vectors to copy and one open vector (or select the path last).",
+   "source": "builtin",
+   "params": [
+    {
+     "name": "count",
+     "label": "Number of copies",
+     "kind": "int",
+     "default": 5,
+     "min": 1,
+     "max": 10000,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "rotate",
+     "label": "Rotate copies to follow the vector",
+     "kind": "bool",
+     "default": true,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    },
+    {
+     "name": "delete_originals",
+     "label": "Delete the originals",
+     "kind": "bool",
+     "default": false,
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    }
+   ]
+  },
+  {
+   "id": "select.all",
+   "label": "Select All",
+   "menu": "Edit/Select",
+   "min_selection": 0,
+   "shortcut": "Ctrl+A",
+   "tooltip": "",
+   "source": "builtin",
+   "params": []
+  },
+  {
+   "id": "select.invert",
+   "label": "Invert Selection",
+   "menu": "Edit/Select",
+   "min_selection": 0,
+   "shortcut": "Ctrl+Shift+I",
+   "tooltip": "",
+   "source": "builtin",
+   "params": []
+  },
+  {
+   "id": "select.open",
+   "label": "Select Open Vectors",
+   "menu": "Edit/Select",
+   "min_selection": 0,
+   "shortcut": null,
+   "tooltip": "",
+   "source": "builtin",
+   "params": []
+  },
+  {
+   "id": "select.similar",
+   "label": "Select Similar...",
+   "menu": "Edit/Select",
+   "min_selection": 1,
+   "shortcut": null,
+   "tooltip": "",
+   "source": "builtin",
+   "params": [
+    {
+     "name": "tolerance",
+     "label": "Tolerance",
+     "kind": "length",
+     "default": 0.1,
+     "min": 0.0,
+     "max": null,
+     "step": null,
+     "choices": null,
+     "group": "",
+     "help": "",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    }
+   ]
+  }
+ ],
+ "posts": [
+  {
+   "id": "fanuc",
+   "name": "Fanuc / ISO mm",
+   "extension": "nc",
+   "description": "Fanuc compatible ISO G-code with tool length compensation and canned cycles",
+   "builtin": true,
+   "editable": false
+  },
+  {
+   "id": "linuxcnc",
+   "name": "LinuxCNC mm",
+   "extension": "ngc",
+   "description": "LinuxCNC (EMC2) with path blending and tool length offsets",
+   "builtin": true,
+   "editable": false
+  },
+  {
+   "id": "mach3",
+   "name": "Mach3 mm",
+   "extension": "tap",
+   "description": "ArtSoft Mach3, incremental IJ arcs",
+   "builtin": true,
+   "editable": false
+  },
+  {
+   "id": "mach4",
+   "name": "Mach4 mm",
+   "extension": "tap",
+   "description": "Newfangled Mach4 (mill / router profile) with tool length offsets",
+   "builtin": true,
+   "editable": false
+  },
+  {
+   "id": "ncstudio",
+   "name": "NcStudio (Weihong) mm",
+   "extension": "nc",
+   "description": "Weihong NcStudio / NK series routers, single spindle, one file per tool",
+   "builtin": true,
+   "editable": false
+  },
+  {
+   "id": "ncstudio_atc",
+   "name": "NcStudio (Weihong) ATC mm",
+   "extension": "nc",
+   "description": "Weihong NcStudio routers with automatic tool changer",
+   "builtin": true,
+   "editable": false
+  },
+  {
+   "id": "syntec",
+   "name": "Syntec mm",
+   "extension": "nc",
+   "description": "Syntec router / milling controllers (6MA, 21MA, ...), ATC with tool length offsets",
+   "builtin": true,
+   "editable": false
+  }
+ ],
+ "importers": [
+  {
+   "extensions": [
+    "icam"
+   ],
+   "label": "iyiCAM project"
+  },
+  {
+   "extensions": [
+    "dxf"
+   ],
+   "label": "AutoCAD DXF"
+  },
+  {
+   "extensions": [
+    "svg"
+   ],
+   "label": "Scalable Vector Graphics"
+  },
+  {
+   "extensions": [
+    "plt",
+    "hpgl",
+    "hpg"
+   ],
+   "label": "HPGL plotter file"
+  },
+  {
+   "extensions": [
+    "cdr"
+   ],
+   "label": "CorelDRAW"
+  }
+ ],
+ "exporters": [
+  {
+   "extension": "icam",
+   "label": "iyiCAM project",
+   "params": []
+  },
+  {
+   "extension": "dxf",
+   "label": "AutoCAD DXF",
+   "params": [
+    {
+     "name": "version",
+     "label": "AutoCAD version",
+     "kind": "choice",
+     "default": "R2010",
+     "min": null,
+     "max": null,
+     "step": null,
+     "choices": [
+      [
+       "R2018",
+       "AutoCAD 2018 and newer"
+      ],
+      [
+       "R2013",
+       "AutoCAD 2013"
+      ],
+      [
+       "R2010",
+       "AutoCAD 2010"
+      ],
+      [
+       "R2007",
+       "AutoCAD 2007"
+      ],
+      [
+       "R2004",
+       "AutoCAD 2004"
+      ],
+      [
+       "R2000",
+       "AutoCAD 2000"
+      ],
+      [
+       "R12",
+       "AutoCAD R12 (oldest, plain ASCII)"
+      ]
+     ],
+     "group": "",
+     "help": "The release other programs are told the file is from. Try an older one (2000, or R12) when a program does not take the file or does not show its layers.",
+     "visible": null,
+     "decimals": 3,
+     "advanced": false
+    }
+   ]
+  },
+  {
+   "extension": "svg",
+   "label": "Scalable Vector Graphics",
+   "params": []
+  }
+ ],
+ "tools": [
+  {
+   "name": "End Mill 3 mm",
+   "type": "end_mill",
+   "diameter": 3.0,
+   "number": 1,
+   "angle": 90.0,
+   "tip_diameter": 0.0,
+   "corner_radius": 0.0,
+   "flute_length": 12,
+   "flutes": 2,
+   "stepdown": 1.5,
+   "stepover": 1.2,
+   "feed_rate": 2000,
+   "plunge_rate": 600,
+   "spindle_speed": 20000,
+   "spindle_dir": "cw",
+   "coolant": "off",
+   "group": "End Mills",
+   "notes": "",
+   "id": "ee2259dff849"
+  },
+  {
+   "name": "End Mill 6 mm",
+   "type": "end_mill",
+   "diameter": 6.0,
+   "number": 2,
+   "angle": 90.0,
+   "tip_diameter": 0.0,
+   "corner_radius": 0.0,
+   "flute_length": 22.0,
+   "flutes": 2,
+   "stepdown": 3.0,
+   "stepover": 2.4,
+   "feed_rate": 3500,
+   "plunge_rate": 1000,
+   "spindle_speed": 18000,
+   "spindle_dir": "cw",
+   "coolant": "off",
+   "group": "End Mills",
+   "notes": "",
+   "id": "c54d26a75438"
+  },
+  {
+   "name": "Compression 6 mm",
+   "type": "end_mill",
+   "diameter": 6.0,
+   "number": 3,
+   "angle": 90.0,
+   "tip_diameter": 0.0,
+   "corner_radius": 0.0,
+   "flute_length": 25,
+   "flutes": 2,
+   "stepdown": 6.0,
+   "stepover": 2.4,
+   "feed_rate": 5000,
+   "plunge_rate": 1200,
+   "spindle_speed": 18000,
+   "spindle_dir": "cw",
+   "coolant": "off",
+   "group": "End Mills",
+   "notes": "",
+   "id": "56c30af5c739"
+  },
+  {
+   "name": "End Mill 8 mm",
+   "type": "end_mill",
+   "diameter": 8.0,
+   "number": 4,
+   "angle": 90.0,
+   "tip_diameter": 0.0,
+   "corner_radius": 0.0,
+   "flute_length": 30,
+   "flutes": 2,
+   "stepdown": 4.0,
+   "stepover": 3.2,
+   "feed_rate": 4000,
+   "plunge_rate": 1200,
+   "spindle_speed": 18000,
+   "spindle_dir": "cw",
+   "coolant": "off",
+   "group": "End Mills",
+   "notes": "",
+   "id": "f1f7b34c0dd3"
+  },
+  {
+   "name": "Ball Nose 3 mm",
+   "type": "ball_nose",
+   "diameter": 3.0,
+   "number": 5,
+   "angle": 90.0,
+   "tip_diameter": 0.0,
+   "corner_radius": 0.0,
+   "flute_length": 22.0,
+   "flutes": 2,
+   "stepdown": 1.0,
+   "stepover": 0.3,
+   "feed_rate": 2000,
+   "plunge_rate": 600,
+   "spindle_speed": 20000,
+   "spindle_dir": "cw",
+   "coolant": "off",
+   "group": "Ball Nose",
+   "notes": "",
+   "id": "8ff28e95a536"
+  },
+  {
+   "name": "Ball Nose 6 mm",
+   "type": "ball_nose",
+   "diameter": 6.0,
+   "number": 6,
+   "angle": 90.0,
+   "tip_diameter": 0.0,
+   "corner_radius": 0.0,
+   "flute_length": 22.0,
+   "flutes": 2,
+   "stepdown": 2.0,
+   "stepover": 0.6,
+   "feed_rate": 3000,
+   "plunge_rate": 800,
+   "spindle_speed": 18000,
+   "spindle_dir": "cw",
+   "coolant": "off",
+   "group": "Ball Nose",
+   "notes": "",
+   "id": "5d046625bd8c"
+  },
+  {
+   "name": "V-Bit 60°",
+   "type": "v_bit",
+   "diameter": 12.7,
+   "number": 7,
+   "angle": 60,
+   "tip_diameter": 0.0,
+   "corner_radius": 0.0,
+   "flute_length": 22.0,
+   "flutes": 2,
+   "stepdown": 3.0,
+   "stepover": 0.5,
+   "feed_rate": 2500,
+   "plunge_rate": 800,
+   "spindle_speed": 18000,
+   "spindle_dir": "cw",
+   "coolant": "off",
+   "group": "V-Bits",
+   "notes": "",
+   "id": "6709dc1b3450"
+  },
+  {
+   "name": "V-Bit 90°",
+   "type": "v_bit",
+   "diameter": 12.7,
+   "number": 8,
+   "angle": 90,
+   "tip_diameter": 0.0,
+   "corner_radius": 0.0,
+   "flute_length": 22.0,
+   "flutes": 2,
+   "stepdown": 3.0,
+   "stepover": 0.5,
+   "feed_rate": 2500,
+   "plunge_rate": 800,
+   "spindle_speed": 18000,
+   "spindle_dir": "cw",
+   "coolant": "off",
+   "group": "V-Bits",
+   "notes": "",
+   "id": "2bbb7ce48239"
+  },
+  {
+   "name": "Engraver 30° 0.2 mm",
+   "type": "engraving",
+   "diameter": 3.175,
+   "number": 9,
+   "angle": 30,
+   "tip_diameter": 0.2,
+   "corner_radius": 0.0,
+   "flute_length": 22.0,
+   "flutes": 2,
+   "stepdown": 0.5,
+   "stepover": 0.1,
+   "feed_rate": 1500,
+   "plunge_rate": 400,
+   "spindle_speed": 24000,
+   "spindle_dir": "cw",
+   "coolant": "off",
+   "group": "Engraving",
+   "notes": "",
+   "id": "61a3674c1e16"
+  },
+  {
+   "name": "Drill 5 mm",
+   "type": "drill",
+   "diameter": 5.0,
+   "number": 10,
+   "angle": 118,
+   "tip_diameter": 0.0,
+   "corner_radius": 0.0,
+   "flute_length": 22.0,
+   "flutes": 2,
+   "stepdown": 5.0,
+   "stepover": 2.4,
+   "feed_rate": 1000,
+   "plunge_rate": 600,
+   "spindle_speed": 12000,
+   "spindle_dir": "cw",
+   "coolant": "off",
+   "group": "Drills",
+   "notes": "",
+   "id": "9d272fcb22de"
+  },
+  {
+   "name": "Drill 8 mm",
+   "type": "drill",
+   "diameter": 8.0,
+   "number": 11,
+   "angle": 118,
+   "tip_diameter": 0.0,
+   "corner_radius": 0.0,
+   "flute_length": 22.0,
+   "flutes": 2,
+   "stepdown": 5.0,
+   "stepover": 2.4,
+   "feed_rate": 1000,
+   "plunge_rate": 600,
+   "spindle_speed": 10000,
+   "spindle_dir": "cw",
+   "coolant": "off",
+   "group": "Drills",
+   "notes": "",
+   "id": "8641c214948e"
+  }
+ ],
+ "cdr": {
+  "available": true,
+  "converters": [
+   {
+    "name": "builtin",
+    "path": "built in",
+    "version": "CorelDRAW 5 to X8"
+   },
+   {
+    "name": "libreoffice",
+    "path": "/usr/bin/soffice",
+    "version": ""
+   }
+  ],
+  "install": "Nothing has to be installed for most files. For the others LibreOffice (libreoffice.org) or, on Linux, the libcdr tools (apt install libcdr-tools) are used when they are on the computer. Or export the drawing from CorelDRAW as DXF or SVG (File > Export).",
+  "reads": "CorelDRAW 5 to X8",
+  "text": false,
+  "newer_tried": true
+ },
+ "layer_colors": [
+  "#1f77b4",
+  "#d62728",
+  "#2ca02c",
+  "#9467bd",
+  "#ff7f0e",
+  "#17becf",
+  "#8c564b",
+  "#e377c2",
+  "#7f7f7f",
+  "#bcbd22"
+ ],
+ "origins": [
+  "bottom_center",
+  "bottom_left",
+  "bottom_right",
+  "center",
+  "center_left",
+  "center_right",
+  "top_center",
+  "top_left",
+  "top_right"
+ ],
+ "dxf_versions": [
+  [
+   "R2018",
+   "AutoCAD 2018 and newer"
+  ],
+  [
+   "R2013",
+   "AutoCAD 2013"
+  ],
+  [
+   "R2010",
+   "AutoCAD 2010"
+  ],
+  [
+   "R2007",
+   "AutoCAD 2007"
+  ],
+  [
+   "R2004",
+   "AutoCAD 2004"
+  ],
+  [
+   "R2000",
+   "AutoCAD 2000"
+  ],
+  [
+   "R12",
+   "AutoCAD R12 (oldest, plain ASCII)"
+  ]
+ ],
+ "tool_types": [
+  [
+   "end_mill",
+   "End Mill"
+  ],
+  [
+   "ball_nose",
+   "Ball Nose"
+  ],
+  [
+   "bull_nose",
+   "Bull Nose (radiused)"
+  ],
+  [
+   "v_bit",
+   "V-Bit"
+  ],
+  [
+   "engraving",
+   "Engraving (tapered, flat tip)"
+  ],
+  [
+   "drill",
+   "Drill"
+  ]
+ ],
+ "sequence": {
+  "strategies": [
+   [
+    "auto",
+    "Auto: chosen for the vectors (the shortest of columns, rows and the route)",
+    "Automatic"
+   ],
+   [
+    "cols_bl",
+    "Columns: bottom left → top right",
+    "Columns"
+   ],
+   [
+    "cols_br",
+    "Columns: bottom right → top left",
+    "Columns"
+   ],
+   [
+    "cols_tl",
+    "Columns: top left → bottom right",
+    "Columns"
+   ],
+   [
+    "cols_tr",
+    "Columns: top right → bottom left",
+    "Columns"
+   ],
+   [
+    "rows_bl",
+    "Rows: bottom left → top right",
+    "Rows"
+   ],
+   [
+    "rows_br",
+    "Rows: bottom right → top left",
+    "Rows"
+   ],
+   [
+    "rows_tl",
+    "Rows: top left → bottom right",
+    "Rows"
+   ],
+   [
+    "rows_tr",
+    "Rows: top right → bottom left",
+    "Rows"
+   ],
+   [
+    "smart",
+    "Smart: shortest route (optimised)",
+    "Route (shortest travel)"
+   ],
+   [
+    "nearest",
+    "Shortest travel (nearest next)",
+    "Route (shortest travel)"
+   ],
+   [
+    "follow",
+    "Follow on: the next start point nearest the end of the last cut",
+    "Route (shortest travel)"
+   ],
+   [
+    "zigzag_up",
+    "Bottom → top (zig-zag rows)",
+    "Zig-zag"
+   ],
+   [
+    "zigzag_down",
+    "Top → bottom (zig-zag rows)",
+    "Zig-zag"
+   ],
+   [
+    "zigzag_right",
+    "Left → right (zig-zag columns)",
+    "Zig-zag"
+   ],
+   [
+    "zigzag_left",
+    "Right → left (zig-zag columns)",
+    "Zig-zag"
+   ],
+   [
+    "diag_bl",
+    "Diagonal: bottom left → top right",
+    "Diagonal"
+   ],
+   [
+    "diag_br",
+    "Diagonal: bottom right → top left",
+    "Diagonal"
+   ],
+   [
+    "diag_tl",
+    "Diagonal: top left → bottom right",
+    "Diagonal"
+   ],
+   [
+    "diag_tr",
+    "Diagonal: top right → bottom left",
+    "Diagonal"
+   ],
+   [
+    "small_first",
+    "Smallest parts first",
+    "Other"
+   ],
+   [
+    "centre_out",
+    "From the sheet centre outwards",
+    "Other"
+   ],
+   [
+    "edges_in",
+    "From the sheet edges inwards",
+    "Other"
+   ]
+  ],
+  "groupings": [
+   [
+    "depth",
+    "Inner pieces (göbek) of all parts first, then the outlines"
+   ],
+   [
+    "part",
+    "Part by part (its inner pieces, then its outline)"
+   ]
+  ],
+  "directions": [
+   [
+    "toolpath",
+    "As the toolpath says"
+   ],
+   [
+    "climb",
+    "Climb milling"
+   ],
+   [
+    "conventional",
+    "Conventional milling"
+   ],
+   [
+    "cw",
+    "Outlines clockwise"
+   ],
+   [
+    "ccw",
+    "Outlines counter-clockwise"
+   ],
+   [
+    "mirror",
+    "Mirrored with the sweep (clockwise for bottom left → top right)"
+   ]
+  ],
+  "defaults": {
+   "auto_order": true,
+   "strategy": "auto",
+   "big_last": true,
+   "grouping": "depth",
+   "band": 0.0,
+   "smart_starts": true,
+   "start_margin": 1.0,
+   "corner_distance": 0.0,
+   "direction": "toolpath"
+  }
+ },
+ "naming": {
+  "variables": [
+   {
+    "name": "project_name",
+    "text": {
+     "en": "Name of the project",
+     "tr": "Projenin adı"
+    }
+   },
+   {
+    "name": "sheet_name",
+    "text": {
+     "en": "Name of the sheet",
+     "tr": "Sacın adı"
+    }
+   },
+   {
+    "name": "sheet_number",
+    "text": {
+     "en": "Number of the sheet (1, 2 ...)",
+     "tr": "Sacın numarası (1, 2 ...)"
+    }
+   },
+   {
+    "name": "sheet_count",
+    "text": {
+     "en": "How many sheets",
+     "tr": "Kaç sac var"
+    }
+   },
+   {
+    "name": "post_name",
+    "text": {
+     "en": "Name of the post",
+     "tr": "Postun adı"
+    }
+   },
+   {
+    "name": "group",
+    "text": {
+     "en": "Group of toolpaths saved (or empty)",
+     "tr": "Kaydedilen takım yolu grubu (ya da boş)"
+    }
+   },
+   {
+    "name": "toolpath_count",
+    "text": {
+     "en": "Number of toolpaths in the file",
+     "tr": "Dosyadaki takım yolu sayısı"
+    }
+   },
+   {
+    "name": "tool_number",
+    "text": {
+     "en": "Number(s) of the tools in the file (1+2)",
+     "tr": "Dosyadaki takımların numaraları (1+2)"
+    }
+   },
+   {
+    "name": "tool_name",
+    "text": {
+     "en": "Name(s) of the tools in the file",
+     "tr": "Dosyadaki takımların adları"
+    }
+   },
+   {
+    "name": "tool_diameter",
+    "text": {
+     "en": "Diameter(s) of the tools in the file",
+     "tr": "Dosyadaki takımların çapları"
+    }
+   },
+   {
+    "name": "toolpath_name",
+    "text": {
+     "en": "Name(s) of the toolpaths in the file (A+B)",
+     "tr": "Dosyadaki takım yollarının adları (A+B)"
+    }
+   },
+   {
+    "name": "safe_z",
+    "text": {
+     "en": "Safe Z (the highest of the file)",
+     "tr": "Güvenli Z (dosyadaki en yüksek)"
+    }
+   },
+   {
+    "name": "cut_depth",
+    "text": {
+     "en": "Cut depth(s) of the toolpaths in the file",
+     "tr": "Dosyadaki takım yollarının kesim derinlikleri"
+    }
+   },
+   {
+    "name": "sheet_group",
+    "text": {
+     "en": "Group of the sheet (or empty)",
+     "tr": "Sacın grubu (ya da boş)"
+    }
+   },
+   {
+    "name": "revision",
+    "text": {
+     "en": "Revision number (counts up by itself, or typed)",
+     "tr": "Revizyon numarası (kendiliğinden artar, elle de yazılır)"
+    }
+   },
+   {
+    "name": "material_thickness",
+    "text": {
+     "en": "Thickness of the material",
+     "tr": "Malzeme kalınlığı"
+    }
+   },
+   {
+    "name": "sheet_width",
+    "text": {
+     "en": "Width of the sheet",
+     "tr": "Sac genişliği"
+    }
+   },
+   {
+    "name": "sheet_height",
+    "text": {
+     "en": "Height of the sheet",
+     "tr": "Sac yüksekliği"
+    }
+   },
+   {
+    "name": "date",
+    "text": {
+     "en": "Date (2026-11-18)",
+     "tr": "Tarih (2026-11-18)"
+    }
+   },
+   {
+    "name": "time",
+    "text": {
+     "en": "Time (0930)",
+     "tr": "Saat (0930)"
+    }
+   },
+   {
+    "name": "segments",
+    "text": {
+     "en": "A part for every toolpath of the file, a group stacked into one (see the part of a toolpath)",
+     "tr": "Dosyadaki her takım yolu için bir parça; bir grup tek parçada toplanır (takım yolu parçasına bak)"
+    }
+   }
+  ],
+  "segment_variables": [
+   {
+    "name": "side",
+    "text": {
+     "en": "i inside, o outside, a along the line (p pocket, d drill, v v-carve, e engrave ...)",
+     "tr": "i iç, o dış, a çizgi üstü (p cep, d delik, v v-oyma, e gravür ...)"
+    }
+   },
+   {
+    "name": "name",
+    "text": {
+     "en": "Name of the toolpath, without its digits (oyma01: oyma)",
+     "tr": "Takım yolunun adı, rakamları olmadan (oyma01: oyma)"
+    }
+   },
+   {
+    "name": "depth",
+    "text": {
+     "en": "Depth (a cut through: the thickness)",
+     "tr": "Derinlik (boydan boya: kalınlık)"
+    }
+   },
+   {
+    "name": "allowance",
+    "text": {
+     "en": "Allowance, only when it is not 0 (+ bigger, - smaller)",
+     "tr": "Pay, 0 değilse (+ büyük, - küçük)"
+    }
+   },
+   {
+    "name": "final_depth",
+    "text": {
+     "en": "Depth the tool goes to (with the cut below the bottom)",
+     "tr": "Takımın indiği derinlik (alt taşma ile)"
+    }
+   },
+   {
+    "name": "step",
+    "text": {
+     "en": "Depth of a pass, only when there is more than one",
+     "tr": "Paso derinliği, birden fazla paso varsa"
+    }
+   },
+   {
+    "name": "stepdown",
+    "text": {
+     "en": "Depth of a pass",
+     "tr": "Paso derinliği"
+    }
+   },
+   {
+    "name": "passes",
+    "text": {
+     "en": "How many passes",
+     "tr": "Kaç paso"
+    }
+   },
+   {
+    "name": "safe_z",
+    "text": {
+     "en": "Safe Z",
+     "tr": "Güvenli Z"
+    }
+   },
+   {
+    "name": "count",
+    "text": {
+     "en": "How many toolpaths are stacked, only when more than one",
+     "tr": "Kaç takım yolu toplandı, birden fazlaysa"
+    }
+   },
+   {
+    "name": "tool_diameter",
+    "text": {
+     "en": "Diameter of the tool",
+     "tr": "Takımın çapı"
+    }
+   },
+   {
+    "name": "tool_number",
+    "text": {
+     "en": "Number of the tool",
+     "tr": "Takımın numarası"
+    }
+   },
+   {
+    "name": "group",
+    "text": {
+     "en": "Group",
+     "tr": "Grup"
+    }
+   },
+   {
+    "name": "feed_rate",
+    "text": {
+     "en": "Feed rate (mm/min)",
+     "tr": "İlerleme hızı (mm/dk)"
+    }
+   }
+  ],
+  "default_segment": "{side}_{name}{depth}[a{allowance}][s{step}]z{safe_z}[m{count}]",
+  "default_segment_sep": "-",
+  "default_parts": [
+   "{project_name}"
+  ],
+  "default_sep": "_"
+ },
+ "plugin_errors": [],
+ "new_project": {
+  "presets": [
+   [
+    "2800 x 2100",
+    2800.0,
+    2100.0
+   ],
+   [
+    "3660 x 1830",
+    3660.0,
+    1830.0
+   ],
+   [
+    "2440 x 1220",
+    2440.0,
+    1220.0
+   ],
+   [
+    "2500 x 1250",
+    2500.0,
+    1250.0
+   ],
+   [
+    "3050 x 1220",
+    3050.0,
+    1220.0
+   ],
+   [
+    "1220 x 610",
+    1220.0,
+    610.0
+   ]
+  ],
+  "templates": [
+   {
+    "id": "",
+    "label": "One sheet of this size",
+    "description": "No toolpaths, one empty sheet of the size below",
+    "params": []
+   }
+  ]
+ }
+}
