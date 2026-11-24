@@ -33,6 +33,9 @@ iyicam agent --server https://iyicam.example.com --key ABCDEF-... --root ~/jobs 
 
 Options: `serve [--host --port --local --root DIR ... --pyodide DIR --show-key --new-key --trust-proxy --max-file-mb --quiet]`,
 `agent --server URL --key KEY [--root DIR ...] [--name --max-file-mb --quiet]` (the key can also be in `IYICAM_KEY`).
+On Windows: `packaging\web_windows.bat [--local --root D:\Jobs]` starts the server, `packaging\agent_windows.bat -ServerUrl URL
+-ServerKey KEY -Root D:\Jobs` keeps the settings of the agent and runs it in the background (`-Stop`, `-Restart`; its log is
+`%USERPROFILE%\.iyicam\agent.log`).
 `--pyodide DIR` serves a Pyodide 0.27.7 "full" folder (and the wheels of ezdxf, svgelements, pyparsing, typing_extensions,
 fonttools put beside it) instead of the jsDelivr CDN and PyPI, for a workshop without internet.
 

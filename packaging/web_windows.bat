@@ -1,7 +1,8 @@
 @echo off
-rem Starts the iyiCAM web page for a phone (docs\web.md): own environment in .venv, own key, no Qt needed.
+rem Starts the iyiCAM web app (docs\web.md): own environment in .venv, own key, no Qt needed. The CAM work runs in the
+rem browser; with --local the folders of THIS computer (--root D:\Jobs, repeatable) are shared with it, otherwise an agent shares them.
 rem Needs the 64-bit Python 3.11 or newer from python.org.
-rem Usage:  packaging\web_windows.bat [--port N] [--host 127.0.0.1]     (default: every network, port 8300)
+rem Usage:  packaging\web_windows.bat [--local --root D:\Jobs] [--port N] [--host 127.0.0.1]     (default: every network, port 8300)
 rem         packaging\web_windows.bat --show-key | --new-key
 setlocal
 cd /d "%~dp0\.."
@@ -21,7 +22,7 @@ if not exist ".venv\Scripts\python.exe" (
   echo Making the environment ^(.venv^) ...
   %PY% -m venv .venv || (pause & exit /b 1)
 )
-".venv\Scripts\python.exe" -c "import iyicam.service.server" >nul 2>nul
+".venv\Scripts\python.exe" -c "import iyicam.share.server" >nul 2>nul
 if errorlevel 1 (
   echo Installing iyiCAM ...
   ".venv\Scripts\python.exe" -m pip install --quiet --disable-pip-version-check -e . || (pause & exit /b 1)
