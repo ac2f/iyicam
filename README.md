@@ -69,7 +69,13 @@ with Python plugins.
 - **Toolpath packages** (Toolpaths ▸ Toolpath Packages / Use a Package): several toolpaths kept together (an outside cut 10 mm
   off at 2 mm deep, an inside cut 3 mm in at 1 mm deep, ... with one tool) and made at once on the selection; the tool, the
   depths and allowances can be changed for that time; names and a new toolpath group with `{variables}`
-  (`{package} S{sheet_number}-{n:02}` -> `Contour S3-01`, then `-02`). *Save Selected Toolpaths as a Package* makes one
+  (`{package} S{sheet_number}-{n:02}` -> `Contour S3-01`, then `-02`). *Save Selected Toolpaths as a Package* makes one.
+  A package goes on the selected vectors **or on layers**: each of its toolpaths on its own layers (by name: the outside
+  cut on `Outer`, the inside cut on `Inner`) or on the layers checked, changeable for that time
+- **Vector library** (Vectors ▸ Vector Library, a panel beside Project): drawings kept to be put in again, in **groups
+  within groups**, made, renamed, deleted, moved up / down and dragged into each other; the selection is kept with a name,
+  a double click puts it in the middle of the view (on the current layer or the layers it came from); search, a picture,
+  import / export of a group (`.icamlib`); `vector_library.json` in the user folder
 - **Every menu function has a keyboard shortcut that can be changed** (Edit ▸ Keyboard Shortcuts...); **Ctrl+R repeats** the
   last action with the same values (as in CorelDRAW); redo is Ctrl+Y or Ctrl+Shift+Z; Rotate... by numbers is Ctrl+Shift+R
 - **Node editing**: drag nodes and bezier handles, insert / delete nodes, convert spans

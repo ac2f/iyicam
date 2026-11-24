@@ -334,6 +334,11 @@ class MainWindow(QMainWindow):
         tabs.addTab(self.layers_panel, "Layers")
         tabs.addTab(self.sheets_panel, "Sheets")
         self.project_dock = self._dock("Project", tabs, Qt.LeftDockWidgetArea)
+        from .veclib_panel import VectorLibraryPanel
+        self.library_panel = VectorLibraryPanel(self)
+        self.library_dock = self._dock("Vector Library", self.library_panel, Qt.LeftDockWidgetArea)
+        self.tabifyDockWidget(self.project_dock, self.library_dock)
+        self.project_dock.raise_()
         self.props_panel = PropertiesPanel(c)
         self.props_dock = self._dock("Selection", self.props_panel, Qt.LeftDockWidgetArea)
         self.transform_panel = TransformPanel(c)
@@ -630,7 +635,7 @@ class MainWindow(QMainWindow):
             self.snap_actions[key] = self._act(m, label, lambda v, k=key: self.set_snap(k, v), shortcut, True,
                                                getattr(s, key))
         m.addSeparator()
-        for d in (self.project_dock, self.props_dock, self.transform_dock, self.toolpaths_dock, self.cutorder_dock,
+        for d in (self.project_dock, self.library_dock, self.props_dock, self.transform_dock, self.toolpaths_dock, self.cutorder_dock,
                   self.sim_dock, self.console_dock):
             m.addAction(d.toggleViewAction())
 
@@ -647,6 +652,9 @@ class MainWindow(QMainWindow):
             m.addAction(a)
 
         m = mb.addMenu("&Vectors")
+        self._act(m, "Vector &Library", self.show_library)
+        self._act(m, "Keep Selection in the Li&brary...", lambda: self.library_panel._safe(self.library_panel.add_selection))
+        m.addSeparator()
         self._act(m, "Trace &Bitmap...", self.trace_bitmap)
         self._act(m, "Text on &Curve...", self.text_on_curve)
         sp = m.addMenu("&Start Points")
@@ -725,7 +733,7 @@ class MainWindow(QMainWindow):
 
     # -- keyboard shortcuts and Repeat (Ctrl+R) -------------------------------------------------------------------------
     #: what Repeat does not do again (it would undo / redo, or only open a window or a panel)
-    NOT_REPEATED = ("Edit/Undo", "Edit/Redo", "Edit/Repeat", "Edit/Preferences", "Edit/Keyboard Shortcuts")
+    NOT_REPEATED = ("Edit/Undo", "Edit/Redo", "Edit/Repeat", "Edit/Preferences", "Edit/Keyboard Shortcuts", "Vectors/Vector Library")
     REPEATED_MENUS = ("Edit", "Vectors")
 
     def _apply_shortcuts(self) -> None:
@@ -819,7 +827,7 @@ class MainWindow(QMainWindow):
         name, ok = QInputDialog.getText(self, "Save as a package", f"Name of the package ({len(tps)} toolpath(s)):")
         if not ok or not name.strip():
             return
-        pkg = tp_packages.save(tp_packages.from_toolpaths(name.strip(), tps, self.ctrl.registry))
+        pkg = tp_packages.save(tp_packages.from_toolpaths(name.strip(), tps, self.ctrl.registry, self.ctrl.project))
         self.manage_packages(pkg["id"])
 
     def apply_package(self, pid: str) -> None:
@@ -830,10 +838,7 @@ class MainWindow(QMainWindow):
         if pkg is None:
             return
         ctrl = self.ctrl
-        ids = [o.id for o in ctrl.selected_objects()]
-        if not ids:
-            QMessageBox.information(self, "Package", "Select the vectors the toolpaths of the package are for first.")
-            return
+        ids = [o.id for o in ctrl.selected_objects()]              # (none: the package goes on layers)
         dlg = PackageApplyDialog(ctrl, pkg, ids, self)
         if not dlg.exec():
             return
@@ -871,6 +876,10 @@ class MainWindow(QMainWindow):
             a.triggered.connect(lambda checked=False, k=key: self._safe(self.show_transform, k))
             menu.insertAction(first, a)
         menu.insertSeparator(first)
+
+    def show_library(self) -> None:
+        self.library_dock.show()
+        self.library_dock.raise_()
 
     def show_transform(self, page: str = "position") -> None:
         """Open the transform panel (on a page)."""

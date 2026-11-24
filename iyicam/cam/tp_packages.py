@@ -1,6 +1,10 @@
 """Packages of toolpaths: several toolpaths kept together under a name, to make them all at once on the vectors that are
 selected (for one job: an outside cut 10 mm off at 2 mm deep, an inside cut 3 mm in at 1 mm deep, ... all with a 4 mm tool).
 
+A package is put on the selected vectors or on **layers** (every vector of them, on every sheet or on the open one): then each
+of its toolpaths machines the layers chosen, or the layers of its own (by name: an outside cut on ``Outer``, an inside cut on
+``Inner``).
+
 A package has
 
 * a **tool** that its toolpaths use (each one may have its own instead); when the package is put on a drawing another tool can
@@ -129,8 +133,9 @@ def check(pkg: dict) -> dict:
                 raise PackageError(f"the tool of toolpath {i + 1} cannot be read: {exc}") from exc
         params = it.get("params") if isinstance(it.get("params"), dict) else {}
         ask = [str(a) for a in (it.get("ask") or []) if isinstance(a, str)]
+        layers = [str(x) for x in (it.get("layers") or []) if isinstance(x, str) and x]
         items.append({"name": str(it.get("name") or it["op"]), "op": str(it["op"]), "params": params, "tool": own,
-                      "ask": ask, "safe_z": it.get("safe_z"), "clearance": it.get("clearance"),
+                      "ask": ask, "layers": layers, "safe_z": it.get("safe_z"), "clearance": it.get("clearance"),
                       "sequence": it.get("sequence") if isinstance(it.get("sequence"), dict) else {}})
     if tool is None and any(it["tool"] is None for it in items):
         raise PackageError("a toolpath of the package has no tool: give the package a tool")
@@ -143,7 +148,7 @@ def new(name: str, tool: Tool | None = None) -> dict:
     return check({"name": name, "tool": tool.to_dict() if tool is not None else None, "items": []})
 
 
-def item_from_toolpath(tdef: ToolpathDef, package_tool: dict | None, op_params=None) -> dict:
+def item_from_toolpath(tdef: ToolpathDef, package_tool: dict | None, op_params=None, project=None) -> dict:
     """A toolpath as an item of a package: its name, type, settings and (when it differs from the package's) its tool; the depth
     and the allowance are asked when the package is put on a drawing (when the type has them)."""
     own = None
@@ -151,12 +156,16 @@ def item_from_toolpath(tdef: ToolpathDef, package_tool: dict | None, op_params=N
         own = tdef.tool.to_dict()
     names = {p.name for p in op_params} if op_params is not None else set(tdef.params)
     seq = {k: _jsonable(v) for k, v in tdef.sequence.items() if k not in ("order", "auto_order")}
+    layers = []
+    if project is not None and tdef.selection.mode == "layers":             # (the layers it cut: by name, for the package on layers)
+        names_of = {l.id: l.name for l in project.layers}
+        layers = [names_of[i] for i in tdef.selection.layer_ids if i in names_of]
     return {"name": tdef.name, "op": tdef.op, "params": {k: _jsonable(v) for k, v in tdef.params.items()}, "tool": own,
             "ask": [a for a in DEFAULT_ASK if a in names], "safe_z": tdef.safe_z, "clearance": tdef.clearance,
-            "sequence": seq}
+            "sequence": seq, "layers": layers}
 
 
-def from_toolpaths(name: str, tdefs: list[ToolpathDef], registry=None) -> dict:
+def from_toolpaths(name: str, tdefs: list[ToolpathDef], registry=None, project=None) -> dict:
     """A package made of toolpaths: the tool of the first is the package's; the others keep theirs when it is another."""
     if not tdefs:
         raise PackageError("choose the toolpaths of the package")
@@ -164,7 +173,7 @@ def from_toolpaths(name: str, tdefs: list[ToolpathDef], registry=None) -> dict:
     items = []
     for t in tdefs:
         op = registry.operations.get(t.op) if registry is not None else None
-        items.append(item_from_toolpath(t, tool, op.params() if op is not None else None))
+        items.append(item_from_toolpath(t, tool, op.params() if op is not None else None, project))
     return check({"name": name, "tool": tool, "items": items})
 
 
@@ -201,13 +210,19 @@ def toolpath_name(template: str, pkg: dict, project, sheet, n: int = 1, group: s
 def build(pkg: dict, project, sheet, selection: Selection, registry, *, tool: Tool | None = None,
           values: dict[int, dict] | None = None, names: dict[int, str] | None = None, skip: set[int] | None = None,
           make_group: bool | None = None, group_template: str | None = None, this_sheet: bool | None = None,
-          item_tools: dict[int, Tool] | None = None) -> tuple[list[ToolpathDef], str]:
+          item_tools: dict[int, Tool] | None = None,
+          item_layers: dict[int, list[str]] | None = None) -> tuple[list[ToolpathDef], str]:
     """The toolpaths of the package on ``selection`` (new definitions; nothing is added to the project) and the name of the group
     they are in ("" for none).
 
     ``tool`` is the tool of the package for this time; ``values`` the asked settings of each item (by its index), ``names`` the
-    names typed for this time, ``skip`` the items left out, ``item_tools`` a tool for this time of an item that has its own."""
+    names typed for this time, ``skip`` the items left out, ``item_tools`` a tool for this time of an item that has its own.
+
+    On layers (``selection`` of mode ``layers``) a toolpath machines the layers of ``item_layers`` (ids, chosen for this time),
+    else the layers of its own (``layers``: names; those the project has), else the layers of ``selection``."""
     values, names, skip, item_tools = values or {}, names or {}, skip or set(), item_tools or {}
+    item_layers = item_layers or {}
+    by_name = {l.name: l.id for l in project.layers}
     make_group = pkg["make_group"] if make_group is None else make_group
     this_sheet = pkg["this_sheet"] if this_sheet is None else this_sheet
     group, n = group_name(pkg, project, sheet, group_template) if make_group else ("", 1)
@@ -235,7 +250,14 @@ def build(pkg: dict, project, sheet, selection: Selection, registry, *, tool: To
         if op.id == "profile" and "cut_depth" not in params and not params.get("through"):
             params["cut_depth"] = project.sheet_thickness(sheet)
         name = toolpath_name(names.get(i, it["name"]), pkg, project, sheet, n, group)
-        t = ToolpathDef(name, op.id, t_tool, params, copy.deepcopy(selection), True,
+        sel = copy.deepcopy(selection)
+        if selection.mode == "layers":
+            own = item_layers.get(i) or [by_name[n] for n in it.get("layers") or [] if n in by_name]
+            if own:
+                sel = Selection("layers", [], list(own))
+            if not sel.layer_ids:
+                raise PackageError(f"'{it['name']}': choose the layers it machines")
+        t = ToolpathDef(name, op.id, t_tool, params, sel, True,
                         [sheet.id] if this_sheet else None, safe_z=it.get("safe_z"), clearance=it.get("clearance"))
         t.sequence.update(copy.deepcopy(it.get("sequence") or {}))
         t.group = group

@@ -79,6 +79,21 @@ class PackageItemDialog(QDialog):
         trow.addWidget(tb)
         top.addRow(self.own)
         top.addRow("Tool", trow)
+        self.layers = QLineEdit(", ".join(item.get("layers") or []))
+        self.layers.setToolTip("When the package is put on layers: the layers this toolpath machines (names, with commas). "
+                               "Empty: the layers chosen when it is used")
+        lb = QToolButton()
+        lb.setText("▾")
+        lb.setPopupMode(QToolButton.InstantPopup)
+        lm = QMenu(lb)
+        for l in ctrl.project.layers:
+            lm.addAction(l.name, lambda n=l.name: self.layers.setText(
+                ", ".join(dict.fromkeys([x.strip() for x in self.layers.text().split(",") if x.strip()] + [n]))))
+        lb.setMenu(lm)
+        lrow = QHBoxLayout()
+        lrow.addWidget(self.layers, 1)
+        lrow.addWidget(lb)
+        top.addRow("Layers (on layers)", lrow)
         self.package_tool = package_tool
         self.own.toggled.connect(self._show_tool)
         lay.addLayout(top)
@@ -129,6 +144,7 @@ class PackageItemDialog(QDialog):
         it["params"] = {k: _jsonable(v) for k, v in self.form.values().items()}
         it["ask"] = [self.ask.item(i).data(Qt.UserRole) for i in range(self.ask.count())
                      if self.ask.item(i).checkState() == Qt.Checked]
+        it["layers"] = list(dict.fromkeys(x.strip() for x in self.layers.text().split(",") if x.strip()))
         return it
 
 
@@ -293,6 +309,8 @@ class PackagesDialog(RemembersSize, QDialog):
             op = self.ctrl.registry.operations.get(it["op"])
             row = QTreeWidgetItem([it["name"], op.label if op else it["op"],
                                    Tool.from_dict(it["tool"]).label if it["tool"] else "(package's)", ", ".join(it["ask"])])
+            if it.get("layers"):
+                row.setToolTip(0, "On layers: " + ", ".join(it["layers"]))
             self.items.addTopLevelItem(row)
 
     # -- packages ---------------------------------------------------------------------------------------------------------
@@ -374,7 +392,8 @@ class PackagesDialog(RemembersSize, QDialog):
         op = self.ctrl.registry.operations[op_id]
         names = {q.name for q in op.params()}
         item = {"name": f"{op.label.split(' (')[0]} {len(p['items']) + 1}", "op": op_id, "params": {}, "tool": None,
-                "ask": [a for a in P.DEFAULT_ASK if a in names], "safe_z": None, "clearance": None, "sequence": {}}
+                "ask": [a for a in P.DEFAULT_ASK if a in names], "safe_z": None, "clearance": None, "sequence": {},
+                "layers": []}
         if p["tool"] is None:
             item["tool"] = Tool().to_dict()
         dlg = PackageItemDialog(self.ctrl, item, p["tool"], self)
@@ -395,7 +414,7 @@ class PackagesDialog(RemembersSize, QDialog):
             return
         for t in tps:
             op = self.ctrl.registry.operations.get(t.op)
-            p["items"].append(P.item_from_toolpath(t, p["tool"], op.params() if op else None))
+            p["items"].append(P.item_from_toolpath(t, p["tool"], op.params() if op else None, self.ctrl.project))
         self._fill_items()
 
     def edit_item(self) -> None:
@@ -444,6 +463,7 @@ class PackageApplyDialog(RemembersSize, QDialog):
 
     def __init__(self, ctrl, pkg: dict, vector_ids: list[str], parent=None):
         super().__init__(parent)
+        from PySide6.QtWidgets import QButtonGroup, QComboBox, QRadioButton
         self.ctrl = ctrl
         self.pkg = pkg
         self.vector_ids = list(vector_ids)
@@ -452,7 +472,26 @@ class PackageApplyDialog(RemembersSize, QDialog):
         self.setWindowTitle(f"Package: {pkg['name']}")
         lay = QVBoxLayout(self)
         head = QFormLayout()
-        head.addRow("Vectors", QLabel(f"the {len(self.vector_ids)} selected vector(s)"))
+        # what it machines: the selected vectors, or every vector of layers
+        self.rb_sel = QRadioButton(f"The {len(self.vector_ids)} selected vector(s)")
+        self.rb_layers = QRadioButton("Vectors on layers (each toolpath its own layers, or these):")
+        grp = QButtonGroup(self)
+        grp.addButton(self.rb_sel)
+        grp.addButton(self.rb_layers)
+        head.addRow("Machine", self.rb_sel)
+        head.addRow("", self.rb_layers)
+        self.layer_list = QListWidget()
+        self.layer_list.setMaximumHeight(110)
+        for l in ctrl.project.layers:
+            it = QListWidgetItem(l.name)
+            it.setData(Qt.UserRole, l.id)
+            it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
+            it.setCheckState(Qt.Checked if l.id == ctrl.layer_id else Qt.Unchecked)
+            self.layer_list.addItem(it)
+        head.addRow("", self.layer_list)
+        (self.rb_sel if self.vector_ids else self.rb_layers).setChecked(True)
+        self.rb_sel.setEnabled(bool(self.vector_ids))
+        self._combo = QComboBox
         self.tool_label = QLabel(tool_text(self.tool))
         tb = QPushButton("Change tool...")
         tb.setToolTip("Another tool for this time (the package keeps its own)")
@@ -479,6 +518,7 @@ class PackageApplyDialog(RemembersSize, QDialog):
         lay.addLayout(head)
         body = QWidget()
         bl = QVBoxLayout(body)
+        self.layer_boxes: list = []
         self.boxes: list[tuple[QGroupBox, QLineEdit, QLabel, ParamForm | None]] = []
         for i, it in enumerate(pkg["items"]):
             op = ctrl.registry.operations.get(it["op"])
@@ -496,6 +536,24 @@ class PackageApplyDialog(RemembersSize, QDialog):
             shown = QLabel()
             shown.setStyleSheet("color: gray")
             fl.addWidget(shown)
+            lcombo = self._combo()
+            lcombo.addItem("(the layers checked above)", None)
+            for l in ctrl.project.layers:
+                lcombo.addItem(l.name, l.id)
+            own = [l.id for n in it.get("layers") or [] for l in ctrl.project.layers if l.name == n]
+            if own:
+                lcombo.setCurrentIndex(max(0, lcombo.findData(own[0])))
+            lcombo.setToolTip("On layers: the layer this toolpath machines" +
+                              (f" (the package says: {', '.join(it['layers'])})" if it.get("layers") else ""))
+            lcombo.currentIndexChanged.connect(self._show_names)
+            lrow = QHBoxLayout()
+            lrow.addWidget(QLabel("Layer"))
+            lrow.addWidget(lcombo, 1)
+            lwrap = QWidget()
+            lwrap.setLayout(lrow)
+            lrow.setContentsMargins(0, 0, 0, 0)
+            fl.addWidget(lwrap)
+            self.layer_boxes.append((lcombo, lwrap, own))
             if it["tool"] is not None:
                 lab = QLabel(f"Tool: {tool_text(it['tool'])}")
                 b = QPushButton("Change...")
@@ -522,8 +580,10 @@ class PackageApplyDialog(RemembersSize, QDialog):
         for w in (self.group_name,):
             w.textChanged.connect(self._show_names)
         self.make_group.toggled.connect(self._show_names)
+        self.rb_layers.toggled.connect(self._show_names)
+        self.layer_list.itemChanged.connect(self._show_names)
         self._show_names()
-        self.keep_size(ctrl, "package_apply", 520, 640)
+        self.keep_size(ctrl, "package_apply", 520, 680)
 
     def change_tool(self) -> None:
         t = pick_tool(self.ctrl, self, self.tool, f"Tool of the package {self.pkg['name']} (this time)")
@@ -539,7 +599,15 @@ class PackageApplyDialog(RemembersSize, QDialog):
             label.setText(f"Tool: {tool_text(self.item_tools[k])}")
             self._show_names()
 
+    def checked_layers(self) -> list[str]:
+        return [self.layer_list.item(i).data(Qt.UserRole) for i in range(self.layer_list.count())
+                if self.layer_list.item(i).checkState() == Qt.Checked]
+
     def _show_names(self, *_) -> None:
+        on_layers = self.rb_layers.isChecked()
+        self.layer_list.setEnabled(on_layers)
+        for _, wrap, _ in self.layer_boxes:
+            wrap.setVisible(on_layers)
         self.group_name.setEnabled(self.make_group.isChecked())
         try:
             tps, group = self.toolpaths()
@@ -565,15 +633,27 @@ class PackageApplyDialog(RemembersSize, QDialog):
             names[i] = name.text()
             if form is not None:
                 values[i] = form.values()
-        sel = Selection("vectors", list(self.vector_ids), [])
+        item_layers = {}
+        if self.rb_layers.isChecked():
+            sel = Selection("layers", [], self.checked_layers())
+            for i, (combo, _, _) in enumerate(self.layer_boxes):
+                if combo.currentData():
+                    item_layers[i] = [combo.currentData()]
+        else:
+            sel = Selection("vectors", list(self.vector_ids), [])
         return P.build(self.pkg, self.ctrl.project, self.ctrl.sheet, sel, self.ctrl.registry,
                        tool=Tool.from_dict(self.tool) if self.tool else None, values=values, names=names, skip=skip,
                        make_group=self.make_group.isChecked(), group_template=self.group_name.text() or P.DEFAULT_GROUP,
                        this_sheet=self.this_sheet.isChecked(),
-                       item_tools={k: Tool.from_dict(v) for k, v in self.item_tools.items()})
+                       item_tools={k: Tool.from_dict(v) for k, v in self.item_tools.items()}, item_layers=item_layers)
 
     def accept(self) -> None:
         if all(not box.isChecked() for box, *_ in self.boxes):
             QMessageBox.information(self, "Package", "Every toolpath of the package is left out.")
+            return
+        try:
+            self.toolpaths()
+        except P.PackageError as exc:
+            QMessageBox.information(self, "Package", str(exc))
             return
         super().accept()
