@@ -2,7 +2,7 @@
  * menudef.js; an item that has no entry in `registry` is shown greyed with "Not on the web yet". */
 import G from "./geom.js";
 import { h, uid, deepCopy, toast, store } from "./dom.js";
-import { app, Doc, addDoc, closeDoc, reopenClosed, setCur, settings, setSetting, emit, blankProject, rememberRecent, units } from "./state.js";
+import { app, Doc, addDoc, closeDoc, reopenClosed, setCur, settings, setSetting, emit, rememberRecent, units } from "./state.js";
 import { run, report, files as filesApi, cancelled } from "./engine.js";
 import { MENUS } from "./menudef.js";
 import { askBox, confirmBox, alertBox, promptBox } from "./dialog.js";
@@ -291,7 +291,6 @@ export async function recalc() {
     const bad = r.results.filter(x => x.error), warn = r.results.flatMap(x => x.warnings.map(w => `${x.name}: ${w}`));
     status(bad.length ? `${bad[0].name}: ${bad[0].error}` : `Calculated in ${r.seconds} s` + (warn.length ? ` — ${warn[0]}` : ""));
     if (bad.length) toast(`${bad[0].name}: ${bad[0].error}`, "error");
-    else if (warn.length) toast(warn[0], "error");
   } catch (e) { report(e, "Calculate"); }
 }
 export async function newToolpath(opId) {
@@ -616,4 +615,4 @@ export async function startDefault() {
   d.dirty = false;
   return d;
 }
-export { blankProject, store, fromB64, setCur };
+export { store, fromB64, setCur };

@@ -39,7 +39,8 @@ export function layersPanel() {
       name.addEventListener("dblclick", () => {
         const inp = h("input", { type: "text", value: l.name, class: "inline" });
         fill(name, inp); inp.focus(); inp.select();
-        const done = ok => { if (!inp.isConnected) return; if (ok && inp.value.trim() && inp.value.trim() !== l.name) A.layerOps.set(l.id, { name: inp.value.trim() }, "Rename layer"); else update(); };
+        let fin = false;
+        const done = ok => { if (fin || !inp.isConnected) return; fin = true; if (ok && inp.value.trim() && inp.value.trim() !== l.name) A.layerOps.set(l.id, { name: inp.value.trim() }, "Rename layer"); else update(); };
         inp.addEventListener("blur", () => done(true));
         inp.addEventListener("keydown", e => { if (e.key === "Enter") done(true); else if (e.key === "Escape") { done(false); } e.stopPropagation(); });
       });

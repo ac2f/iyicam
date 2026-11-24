@@ -19,7 +19,7 @@ async function open(opts = {}) {
   const page = await ctx.newPage();
   const errors = [];
   page.on("pageerror", e => errors.push("pageerror: " + e.message));
-  page.on("console", m => { if (m.type() === "error") errors.push("console: " + m.text()); });
+  page.on("console", m => { if (m.type() === "error" && !/status of 409/.test(m.text())) errors.push("console: " + m.text()); });   // (409: a file that exists, which the app asks about)
   await page.goto(URL_);
   if (process.env.KEY) {
     try { await page.waitForSelector(".login input", { timeout: 5000 }); await page.fill(".login input", process.env.KEY); await page.press(".login input", "Enter"); } catch { /* signed in already */ }

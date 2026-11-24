@@ -176,10 +176,11 @@ export class DrawingView {
     }
     ctx.strokeStyle = P.edge; ctx.lineWidth = 1.2; ctx.strokeRect(x0, y0, x1 - x0, y1 - y0);
 
+    const layers = new Map(d.project.layers.map(l => [l.id, l]));
+    if (settings.showStarts) this._starts(ctx, sh, layers, s);
     ctx.save();
     ctx.translate(v.ox, v.oy); ctx.scale(s, -s);
     ctx.lineJoin = "round"; ctx.lineCap = "round";
-    const layers = new Map(d.project.layers.map(l => [l.id, l]));
     const selected = new Set(d.selection);
     const dragging = this.drag && this.drag.kind === "move" && this.drag.moved;
     // vectors, a layer's colour each
@@ -210,7 +211,6 @@ export class DrawingView {
     ctx.setLineDash([]);
     ctx.restore();                                           // (back to screen pixels)
 
-    if (settings.showStarts) this._starts(ctx, sh, layers, s);
     this._guides(ctx, d, w, hh);
     this._selectionBox(ctx, P, d, selected);
     this._draft(ctx, P, s);

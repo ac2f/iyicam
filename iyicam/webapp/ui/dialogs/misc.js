@@ -287,5 +287,5 @@ export function shortcutsDialog() {
 export function aboutDialog() {
   dialog({ title: "About iyiCAM", width: 380, body: h("div", { class: "about" }, h("h2", null, "iyiCAM"), h("p", null, `Version ${app.schema ? app.schema.iyicam : ""} (web)`),
     h("p", { class: "muted" }, "2D / 2.5D CAM for CNC routers. The toolpaths are calculated in this browser, by the same program as the desktop's."),
-    app.fake ? h("p", { class: "dlg-warn" }, "Development stand-in for the engine.") : null) });
+    h("p", { class: "muted" }, `Engine ${app.engine && app.engine.version ? app.engine.version : ""}`)) });
 }

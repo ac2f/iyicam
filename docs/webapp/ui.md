@@ -20,7 +20,6 @@ dependency, no build step. The page is `iyicam/webapp/index.html` (+ `app.css`);
 | `dialog.js`, `dialogs/*.js` | modal and modeless windows; Toolpath window (`toolpath.js`), Tool Database and tool editor (`tools.js`), Material, New, Sheet, Nesting, Preferences, Export, Save G-code, shortcuts, About (`misc.js`), command forms (`command.js`, `common.js`) |
 | `files.js` | files of this device (picker, download, File System Access API) and of the agent (file browser) |
 | `theme.js`, `icons.js`, `dom.js` | light / dark, the tool bar icons, element helpers |
-| `devfake.js` | **temporary** stand-in used only when `engine/engine.js` is not served (a plain static server); delete it with the `fake` branch of `engine.js` |
 
 ## How things work
 
@@ -63,6 +62,6 @@ Stock of plates / leftovers, Set / Clear Sheet Outline, Plugin Manager, Python C
 ## Testing (Playwright)
 
 `tests/webapp/ui_scripts/`: `lib.js` (start the page, sign in), `check_ui.js` (select, move, undo, shortcuts, menus),
-`check_flows.js` (toolpath, G-code, simulate, nest, import, new, layers / sheets, agent files), `shot_main.js`,
+`check_flows.js` (toolpath, G-code, simulate, nest, import, new, agent files), `check_panels.js` (layers, sheets, Selection and Transform panels, handles, docks, drawing tools, snapping, units), `check_touch.js` (phone: drawers, pinch, two-finger pan), `shot_main.js`,
 `shot_dialogs.js`, `shot_phone.js` (screenshots in `/tmp/iyicam-ui-shots`). They need `iyicam serve --local --root DIR` and its key:
 `KEY=... NODE_PATH=$(npm root -g) node check_ui.js`. `window.__iyicam = {app, A}` is exposed for them.

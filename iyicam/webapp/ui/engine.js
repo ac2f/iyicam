@@ -4,17 +4,8 @@ import { app, emit } from "./state.js";
 import { toast } from "./dom.js";
 
 export async function startEngine(onStatus) {
-  let real = false;
-  try { real = (await fetch("./engine/engine.js", { method: "HEAD" })).ok; } catch { real = false; }
-  if (real) {
-    const { Engine } = await import("../engine/engine.js");
-    app.engine = await Engine.start({ onStatus });
-    app.fake = false;
-  } else {
-    const { FakeEngine } = await import("./devfake.js");     // (removed when the real engine is served everywhere)
-    app.engine = await FakeEngine.start({ onStatus });
-    app.fake = true;
-  }
+  const { Engine } = await import("../engine/engine.js");
+  app.engine = await Engine.start({ onStatus: (text, fraction) => onStatus && onStatus(text, fraction) });
   return app.engine;
 }
 

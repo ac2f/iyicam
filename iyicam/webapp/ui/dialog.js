@@ -37,6 +37,7 @@ export function dialog(o) {
   api.buttons = buttons;
   function onKey(e) {
     if (root !== topRoot()) return;
+    if (o.modeless && !root.contains(e.target)) return;      // (a window beside the drawing: the drawing keeps its own keys)
     if (e.key === "Escape") { e.stopPropagation(); e.preventDefault(); close(undefined); }
     else if (e.key === "Enter" && !e.shiftKey && !(e.target instanceof HTMLTextAreaElement) && !(e.target instanceof HTMLButtonElement) && !e.isComposing) {
       const p = buttons.find(b => b.primary);

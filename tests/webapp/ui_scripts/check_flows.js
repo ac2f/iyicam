@@ -69,14 +69,17 @@ const SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="50"><re
   const hasAgent = await page.locator(".dlg button:has-text('this computer'), .dlg .choose .btn.big").count();
   ok("Open offers the device and the workshop PC", hasAgent >= 2, String(hasAgent));
   await page.click(".dlg .choose .btn.big >> nth=1"); await page.waitForSelector(".filebrowser .fb-row"); await shot(page, "flow_browser");
-  await page.click(".fb-row:has-text('jobs')"); await page.waitForSelector(".fb-row:has-text('demo.icam')");
+  await page.click(".fb-row >> nth=0"); await page.click(".fb-row:has-text('jobs')"); await page.waitForSelector(".fb-row:has-text('demo.icam')");
   await page.dblclick(".fb-row:has-text('demo.icam')"); await waitIdle();
   await page.waitForFunction(() => window.__iyicam.app.docs.length === 3, null, { timeout: 60000 });
   d = await doc(); ok("a project of the agent opens", d.n === 19 && d.name === "demo", `${d.name} ${d.n}`);
   // -- save to the agent
   await page.evaluate(() => window.__iyicam.A.runItem("file.save_as")); await page.waitForSelector(".dlg");
-  await page.click(".dlg .choose .btn.big >> nth=1"); await page.waitForSelector(".filebrowser .fb-row"); await page.click(".fb-row:has-text('jobs')"); await page.waitForSelector(".fb-row:has-text('demo.icam')");
-  await page.fill(".filebrowser input[type=text]", "copy.icam"); await page.click(".dlg .btn.primary"); await waitIdle(); await page.waitForTimeout(500);
+  await page.click(".dlg .choose .btn.big >> nth=1"); await page.waitForSelector(".filebrowser .fb-row"); await page.click(".fb-row >> nth=0"); await page.click(".fb-row:has-text('jobs')"); await page.waitForSelector(".fb-row:has-text('demo.icam')");
+  await page.fill(".filebrowser input[type=text]", "copy.icam"); await page.click(".dlg .btn.primary");
+  const replace = page.locator(".dlg .btn.primary:has-text('Replace')");          // (the file is there from an earlier run)
+  await Promise.race([replace.waitFor({ timeout: 4000 }).then(() => replace.click()).catch(() => {}), waitIdle()]);
+  await waitIdle(); await page.waitForTimeout(500);
   d = await doc(); ok("Save As writes to the agent and clears the dirty mark", !d.dirty);
   console.log(errors.join("\n") || "no page errors");
   ok("no page errors", errors.length === 0);

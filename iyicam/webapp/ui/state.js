@@ -116,7 +116,7 @@ export class Doc {
 }
 
 export const app = {
-  schema: null, engine: null, fake: false,
+  schema: null, engine: null,
   docs: [], cur: null,
   tool: "select",
   clipboard: null,                 // {vectors: [...]}  (copied vectors, layers by name)
@@ -147,15 +147,4 @@ export function rememberRecent(name, path) {
   store.set("iyicam.recent", app.recent);
 }
 
-/** a project with one empty sheet, for when the engine is not there to make one */
-export function blankProject(width = 1200, height = 800, thickness = 18, name = "Untitled") {
-  const layer = { id: uid(), name: "Default", color: "#1f77b4", visible: true, locked: false };
-  return {
-    format: "iyicam-project", version: 1, name, units: "mm",
-    material: { thickness, z_zero: "top", safe_z: 10, clearance: 2, home: [0, 0, 20], xy_origin: "bottom_left", rapid_rate: 8000,
-      rotary: false, rotary_diameter: 100, z_rapid_rate: 3000, accel: 200, corner_dev: 0.05, time_scale: 1 },
-    layers: [layer], sheets: [{ id: uid(), name: "Sheet 1", width, height, thickness: null, vectors: [], outline: null }],
-    stock: [], toolpaths: [], metadata: {},
-  };
-}
 export { deepCopy };

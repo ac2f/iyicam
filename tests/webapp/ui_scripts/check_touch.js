@@ -1,0 +1,41 @@
+/* Touch on a phone-sized window: the drawers, a tap to select, pinch to zoom and two fingers to pan (CDP touch events). */
+const { open, shot, loadFixture } = require("./lib");
+const results = [];
+const ok = (name, cond, extra = "") => { results.push(cond); console.log(cond ? "ok  " : "FAIL", name, extra); };
+(async () => {
+  const { browser, page, errors, ctx } = await open({ viewport: { width: 390, height: 844 }, touch: true, dpr: 2 });
+  await loadFixture(page);
+  const view = () => page.evaluate(() => ({ ...window.__iyicam.app.cur.view }));
+  const cdp = await ctx.newCDPSession(page);
+  const rect = await page.evaluate(() => { const r = document.querySelector("canvas.drawing").getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height }; });
+  const cx = rect.x + rect.w / 2, cy = rect.y + rect.h / 2;
+  const touch = (type, pts) => cdp.send("Input.dispatchTouchEvent", { type, touchPoints: pts.map(([x, y], id) => ({ x, y, id })) });
+  const v0 = await view();
+  await touch("touchStart", [[cx - 40, cy], [cx + 40, cy]]);
+  for (let i = 1; i <= 8; i++) await touch("touchMove", [[cx - 40 - i * 10, cy], [cx + 40 + i * 10, cy]]);
+  await touch("touchEnd", []);
+  const v1 = await view();
+  ok("pinch zooms in", v1.s > v0.s * 1.8, `${v0.s.toFixed(3)} -> ${v1.s.toFixed(3)}`);
+  await touch("touchStart", [[cx - 40, cy], [cx + 40, cy]]);
+  for (let i = 1; i <= 6; i++) await touch("touchMove", [[cx - 40 + i * 10, cy + i * 8], [cx + 40 + i * 10, cy + i * 8]]);
+  await touch("touchEnd", []);
+  const v2 = await view();
+  ok("two fingers pan", Math.abs(v2.ox - v1.ox - 60) < 3 && Math.abs(v2.oy - v1.oy - 48) < 3 && Math.abs(v2.s - v1.s) < 1e-6, `${v2.ox - v1.ox}, ${v2.oy - v1.oy}`);
+  await page.evaluate(() => window.__iyicam.app.ui.canvas.zoomExtents());
+  // a tap on a vector line selects it
+  const [tx, ty] = await page.evaluate(() => { const c = window.__iyicam.app.ui.canvas, r = c.canvas.getBoundingClientRect(), [sx, sy] = c.w2s(100, 60); return [r.left + sx, r.top + sy]; });
+  await page.touchscreen.tap(tx, ty);
+  ok("a tap selects", (await page.evaluate(() => window.__iyicam.app.cur.selection.length)) === 1);
+  await page.tap("#quickbar .narrow-only >> nth=0"); await page.waitForTimeout(500);
+  const box = await page.locator("#left").boundingBox();
+  ok("the Project drawer slides over", box && box.x >= 0 && box.x < 200, JSON.stringify(box));
+  await shot(page, "phone_left");
+  await page.touchscreen.tap(380, 500); await page.waitForTimeout(400);
+  await page.tap("#quickbar .narrow-only >> nth=1"); await page.waitForTimeout(500);
+  const rb = await page.locator("#right").boundingBox();
+  ok("the Toolpaths drawer slides over", rb && rb.x + rb.width <= 392 && rb.x > 20, JSON.stringify(rb));
+  await shot(page, "phone_right");
+  console.log(errors.join("\n") || "no page errors");
+  await browser.close();
+  process.exit(results.every(Boolean) && !errors.length ? 0 : 1);
+})().catch(e => { console.error(e); process.exit(2); });
