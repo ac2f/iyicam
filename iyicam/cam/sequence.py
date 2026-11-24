@@ -404,25 +404,38 @@ def _smart(items: list[SeqItem], pos: Pt, wait: dict[str, set[str]] | None = Non
 
 
 def _rows(ys: np.ndarray, sizes: list[float], band: float) -> np.ndarray:
-    """Row number (0, 1, 2, ... without gaps) of every item along ``ys``.
+    """Row number (0, 1, 2, ... without gaps) of every item along ``ys`` (the edge where the sweep reaches it; ``sizes``:
+    how far it reaches on from there).
 
-    With a ``band`` the rows are bands of that height; otherwise a new row starts
-    wherever the next item is more than half a typical item size further on.
+    With a ``band`` the rows are bands of that height. Otherwise a row is no wider than the typical size of the items (their
+    median) from its first item, and a new row also starts where an item lies beyond everything of the row so far (a clear
+    gap: nested parts make their own rows). So a row is never a sliver: the rule before (a new row more than half the smaller of two neighbours
+    further on) made a row of almost every part where small and big parts lie together, and the sweep ran up and down
+    the sheet for each of them.
     """
-    if band > 0:
+    n = len(ys)
+    if n == 0:
+        return np.zeros(0, int)
+    if band > 0:                                   # (a band given: bands of exactly that width, as the person asked)
         raw = np.floor((ys - ys.min()) / band + 1e-9)
-    else:
-        med = max(1.0, float(np.median(sizes)))
-        order = np.argsort(ys, kind="stable")
-        raw = np.empty(len(ys))
-        r = 0
-        for n, i in enumerate(order):
-            # a new row starts where the next item is more than half the smaller of the two further on (never less
-            # than an eighth of the typical size): a wide part does not swallow the narrow column beside it
-            if n and ys[i] - ys[order[n - 1]] > 0.5 * max(min(sizes[i], sizes[order[n - 1]]), 0.25 * med):
-                r += 1
-            raw[i] = r
-    return np.searchsorted(np.unique(raw), raw)
+        return np.searchsorted(np.unique(raw), raw)
+    sz = np.asarray(sizes, float)
+    width = max(1.0, float(np.median(sz)))
+    order = np.argsort(ys, kind="stable")
+    row = np.empty(n, int)
+    r = 0
+    start = reach = None
+    for i in order:
+        y = float(ys[i])
+        if start is not None and (y - start >= width - 1e-9 or y > reach + 1e-6):
+            r += 1
+            start = reach = None
+        if start is None:
+            start, reach = y, y + float(sz[i])
+        else:
+            reach = max(reach, y + float(sz[i]))
+        row[i] = r
+    return row
 
 
 def rank(items: list[SeqItem], strategy: str, pos: Pt, band: float = 0.0,
@@ -458,11 +471,52 @@ def rank(items: list[SeqItem], strategy: str, pos: Pt, band: float = 0.0,
         if pat == "diag":
             idx.sort(key=lambda i: (round(xs[i] + ys[i], 6), xs[i]))
         else:
+            across = [it.bbox.height if pat == "rows" else it.bbox.width for it in items]    # (along the rows' axis)
+            along = [it.bbox.width if pat == "rows" else it.bbox.height for it in items]     # (along a row)
             if pat == "cols":
                 xs, ys = ys, xs  # columns are rows of the transposed layout
-            row = _rows(ys, [it.bbox.height if pat == "rows" else it.bbox.width for it in items], band)
+            row = _rows(ys, across, band)
             idx.sort(key=lambda i: (row[i], -xs[i] if zig and row[i] % 2 else xs[i], ys[i]))
+            idx = _side_by_side_first(idx, row, xs, ys, across, along)
     return [items[i] for i in idx]
+
+
+def _side_by_side_first(idx: list[int], row: np.ndarray, xs: np.ndarray, ys: np.ndarray, across, along,
+                        step: float = 1.0, facing: float = 4.0) -> list[int]:
+    """In a row (a column, for the column strategies) a part that stands wholly before another one across the rows and
+    beside it (they face each other) is cut first: two parts side by side in one column go left one first, then up, the
+    way a person reads the column (``audit``'s column rule). The order is changed as little as can be."""
+    import heapq
+    pos = {i: k for k, i in enumerate(idx)}
+    after: dict[int, list[int]] = defaultdict(list)
+    need = dict.fromkeys(idx, 0)
+    by_row: dict[int, list[int]] = defaultdict(list)
+    for i in idx:
+        by_row[int(row[i])].append(i)
+    for members in by_row.values():
+        if len(members) < 2:
+            continue
+        for a in members:
+            for b in members:
+                if a == b or ys[a] + across[a] > ys[b] + step:
+                    continue                                     # (a not wholly before b across the rows)
+                lo, hi = max(xs[a], xs[b]), min(xs[a] + along[a], xs[b] + along[b])
+                if hi - lo > facing and pos[b] < pos[a]:
+                    after[a].append(b)
+                    need[b] += 1
+    if not after:
+        return idx
+    ready = [(pos[i], i) for i in idx if need[i] == 0]
+    heapq.heapify(ready)
+    out = []
+    while ready:
+        _, i = heapq.heappop(ready)
+        out.append(i)
+        for b in after[i]:
+            need[b] -= 1
+            if need[b] == 0:
+                heapq.heappush(ready, (pos[b], b))
+    return out if len(out) == len(idx) else idx
 
 
 def order_items(items: list[SeqItem], strategy: str = "nearest", grouping: str = "depth",
@@ -1353,39 +1407,65 @@ def pull_reach(n: int) -> int:
 
 
 def enforce_holds(order: list[str], strength: dict[tuple[str, str], float], items: dict[str, SeqItem], rp: "Replayer",
-                  settle) -> list[str]:
+                  settle, most: int = 150) -> list[str]:
     """The last word about the support: every wish "a before b" (``strength``: a stands on the side where the sheet holds
     b... the other way round: b stands on the hold side of a) that can be had together is had. Each cut keeps its place
-    except that those that have to be before it come first (stable); kept only when no cut runs in loose scrap because of
-    it, else the order is left as it was."""
+    except that those that have to be before it come first (stable); a cut may not run in loose scrap because of it.
+
+    All of them at once when that is so; else one at a time, the strongest first, each kept when it leaves no cut in loose
+    scrap (at most ``most`` tries). Before, one wish that set scrap loose threw all of them away, and the parts that a long
+    bar or a big letter beside them stood on were cut after it, held by nothing."""
     pos = {k: i for i, k in enumerate(order)}
-    edges: dict[str, set[str]] = {}
-    for (a, b) in strength:
-        edges.setdefault(a, set()).add(b)
-    wishes = _acyclic(edges, pos, strength)
-    first: dict[str, list[str]] = defaultdict(list)          # what has to be before a cut
-    for a, bs in wishes.items():
-        for b in bs:
-            first[b].append(a)
-    placed: set[str] = set()
-    out: list[str] = []
 
-    def place(k: str) -> None:
-        if k in placed:
-            return
-        placed.add(k)
-        for a in sorted(first.get(k, ()), key=pos.get):
-            place(a)
-        out.append(k)
+    def made(pairs) -> list[str]:
+        edges: dict[str, set[str]] = {}
+        for (a, b) in pairs:
+            edges.setdefault(a, set()).add(b)
+        wishes = _acyclic(edges, pos, strength)
+        first: dict[str, list[str]] = defaultdict(list)          # what has to be before a cut
+        for a, bs in wishes.items():
+            for b in bs:
+                first[b].append(a)
+        placed: set[str] = set()
+        out: list[str] = []
 
-    for k in order:
-        place(k)
-    if out == order:
-        return order
-    out, _, _ = settle(out)
-    if rp.first_loose(out) is None or rp.first_loose(order) is not None:
+        def place(k: str) -> None:
+            if k in placed:
+                return
+            placed.add(k)
+            for a in sorted(first.get(k, ()), key=pos.get):
+                place(a)
+            out.append(k)
+
+        for k in order:
+            place(k)
+        if out == order:
+            return order
+        out, _, _ = settle(out)
         return out
-    return order
+
+    every = made(strength)
+    if every == order:
+        return order
+    if rp.first_loose(order) is not None or rp.first_loose(every) is None:
+        return every
+    kept: list[tuple[str, str]] = []
+    cur = order
+    tries = 0
+    most = min(most, max(0, 20000 // max(1, len(order))))      # (every try replays the order: a big job tries fewer)
+    for ab in sorted(strength, key=lambda ab: -strength[ab]):
+        at = {k: i for i, k in enumerate(cur)}
+        a, b = ab
+        if a not in at or b not in at or at[a] < at[b]:
+            continue                                            # (kept already)
+        if tries >= most:
+            break
+        tries += 1
+        trial = made(kept + [ab])
+        if trial != cur and rp.first_loose(trial) is None:
+            kept.append(ab)
+            cur = trial
+    return cur
 
 
 def _acyclic(edges: dict[str, set[str]], pos: dict[str, int], weight: dict[tuple[str, str], float] | None = None
