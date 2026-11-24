@@ -3,7 +3,6 @@
 Each script prints ok / FAIL lines and exits non-zero on a failure (or 2 when it crashes).  One server and one temp
 IYICAM_HOME serve them all.  Skipped when node, Playwright or the Pyodide CDN are missing.
 """
-import os
 import subprocess
 
 import pytest
@@ -11,23 +10,6 @@ import pytest
 import webapp_env as w
 
 SCRIPT_NAMES = ["check_ui", "check_panels", "check_export", "check_flows", "check_touch"]
-
-
-@pytest.fixture(scope="module")
-def local_server(tmp_path_factory):
-    node, nenv = w.node_env()
-    base = tmp_path_factory.mktemp("ui")
-    jobs = base / "jobs"
-    jobs.mkdir()
-    (jobs / "demo.icam").write_bytes((w.FIXTURES / "project.json").read_bytes())
-    env = {**os.environ, "IYICAM_HOME": str(base / "home")}
-    port = w.free_port()
-    proc = w.iyicam(["serve", "--local", "--root", str(jobs), "--port", str(port), "--quiet"], env)
-    try:
-        w.wait_http(f"http://127.0.0.1:{port}/app/config.json", proc)
-        yield node, nenv, f"http://127.0.0.1:{port}/app/", w.show_key(env), base
-    finally:
-        w.stop(proc)
 
 
 @pytest.mark.parametrize("script", SCRIPT_NAMES)
