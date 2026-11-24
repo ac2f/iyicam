@@ -61,12 +61,12 @@ def test_the_tabs_do_not_share_anything(rwin):
     # the panels show the tab that is open
     assert any(second.project.layers[-1].name in win.layers_panel.tree.topLevelItem(i).text(0)
                for i in range(win.layers_panel.tree.topLevelItemCount()))
-    assert win.sheets_panel.list.count() == 2
+    assert len(win.sheets_panel.sheet_items()) == 2
     win.tabs.setCurrentIndex(0)
     process()
     assert win.ctrl is first and win.canvas.ctrl is first
     assert len(first.sheet.vectors) == n_first and len(first.project.sheets) == 1
-    assert win.sheets_panel.list.count() == 1
+    assert len(win.sheets_panel.sheet_items()) == 1
     assert [first.sheet.vectors[0].id] == first.selection         # the selection of the tab was kept
     assert win.props_panel.ctrl is first and win.console.ctrl is first
     # undo from the menu acts on the open tab only

@@ -230,59 +230,167 @@ class LayersPanel(DocPanel):
         self.ctrl.select([o.id for o in self.ctrl.sheet.vectors if o.layer_id == lid])
 
 
+class SheetTree(QTreeWidget):
+    """The sheets, those of a group stacked under it; dragging a sheet onto a group puts it in, out to the top takes it out."""
+
+    def __init__(self, panel):
+        super().__init__()
+        self.panel = panel
+        self.setHeaderHidden(True)
+        self.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.setDragDropMode(QAbstractItemView.InternalMove)
+        self.setDefaultDropAction(Qt.MoveAction)
+
+    def dropEvent(self, ev) -> None:
+        super().dropEvent(ev)
+        QTimer.singleShot(0, self.panel._dropped)        # (after the tree is as the drop left it)
+
+
 class SheetsPanel(DocPanel):
+    """The sheets of the project; a group of sheets is a heading with its sheets stacked under it (folded and unfolded),
+    dragged into and out of."""
     signals = ("changed", "sheet_changed")
+    ID_ROLE = Qt.UserRole
+    GROUP_ROLE = Qt.UserRole + 1
 
     def __init__(self, ctrl, parent=None):
         super().__init__(parent)
         self.ctrl = ctrl
         lay = QVBoxLayout(self)
         lay.setContentsMargins(2, 2, 2, 2)
-        self.list = QListWidget()
-        self.list.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        self.list.currentRowChanged.connect(self._row_changed)
-        self.list.itemDoubleClicked.connect(lambda *_: self.properties())
-        self.list.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.list.customContextMenuRequested.connect(self._menu)
-        lay.addWidget(self.list)
+        self.tree = SheetTree(self)
+        self.tree.currentItemChanged.connect(self._current_changed)
+        self.tree.itemDoubleClicked.connect(self._double_clicked)
+        self.tree.itemExpanded.connect(lambda it: self._folded.discard(it.data(0, self.GROUP_ROLE)))
+        self.tree.itemCollapsed.connect(lambda it: self._folded.add(it.data(0, self.GROUP_ROLE)))
+        self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self._menu)
+        lay.addWidget(self.tree)
         row = QHBoxLayout()
         for text, tip, slot in (("+", "Add sheet", self.add), ("⧉", "Duplicate sheet", self.duplicate),
                                 ("−", "Delete sheet", self.delete), ("▲", "Move the sheet up", lambda: self.move(-1)),
-                                ("▼", "Move the sheet down", lambda: self.move(1)), ("⚙", "Sheet properties", self.properties)):
+                                ("▼", "Move the sheet down", lambda: self.move(1)), ("⚙", "Sheet properties", self.properties),
+                                ("▣", "New group of the selected sheets (they are stacked under it; drag sheets in and out)",
+                                 self.new_group)):
             row.addWidget(small_button(text, tip, slot))
         row.addStretch(1)
         lay.addLayout(row)
         self._updating = False
+        self._folded: set[str] = set()
         self._connect(ctrl)
         self.refresh()
 
+    # -- the tree -------------------------------------------------------------------------------------------------------
     def refresh(self) -> None:
         self._updating = True
-        self.list.clear()
+        self.tree.clear()
         u = self.ctrl.units
+        heads: dict[str, QTreeWidgetItem] = {}
+        current = None
         for s in self.ctrl.project.sheets:
             t = self.ctrl.project.sheet_thickness(s)
             shape = "  (shape)" if s.outline else ""
-            it = QListWidgetItem(f"{s.name}  —  {u.fmt(s.width)} x {u.fmt(s.height)} x {u.fmt(t)}{shape}  "
-                                 f"[{len(s.vectors)}]" + (f"   ▣ {s.group}" if s.group else ""))
-            it.setData(Qt.UserRole, s.id)
-            self.list.addItem(it)
+            it = QTreeWidgetItem([f"{s.name}  —  {u.fmt(s.width)} x {u.fmt(s.height)} x {u.fmt(t)}{shape}  [{len(s.vectors)}]"])
+            it.setData(0, self.ID_ROLE, s.id)
+            it.setFlags((it.flags() | Qt.ItemIsDragEnabled) & ~Qt.ItemIsDropEnabled)
+            if s.group:
+                head = heads.get(s.group)
+                if head is None:                         # (the group stands where its first sheet comes)
+                    head = QTreeWidgetItem([s.group])
+                    head.setData(0, self.GROUP_ROLE, s.group)
+                    head.setFlags(head.flags() | Qt.ItemIsDropEnabled | Qt.ItemIsDragEnabled)
+                    f = QFont(head.font(0))
+                    f.setBold(True)
+                    head.setFont(0, f)
+                    self.tree.addTopLevelItem(head)
+                    heads[s.group] = head
+                head.addChild(it)
+            else:
+                self.tree.addTopLevelItem(it)
             if s.id == self.ctrl.sheet_id:
-                self.list.setCurrentItem(it)
+                current = it
+        for g, head in heads.items():
+            sheets = self.ctrl.sheets_in(g)
+            n = sum(len(s.vectors) for s in sheets)
+            head.setText(0, f"▣ {g}  ({len(sheets)} sheet{'s' if len(sheets) != 1 else ''}, {n} vectors)")
+            head.setToolTip(0, f"Group {g}: its sheets are stacked under it. Drag a sheet onto it to put it in, out to the "
+                               "top to take it out; right click for the group.")
+            head.setExpanded(g not in self._folded or (current is not None and current.parent() is head))
+        if current is not None:
+            self.tree.setCurrentItem(current)
         self._updating = False
 
-    def _row_changed(self, row: int) -> None:
-        if not self._updating and row >= 0:
-            self.ctrl.set_sheet(self.list.item(row).data(Qt.UserRole))
+    def sheet_items(self) -> list[QTreeWidgetItem]:
+        """Every row of a sheet, in the order of the tree."""
+        out = []
+        for i in range(self.tree.topLevelItemCount()):
+            top = self.tree.topLevelItem(i)
+            if top.data(0, self.GROUP_ROLE):
+                out += [top.child(k) for k in range(top.childCount())]
+            else:
+                out.append(top)
+        return out
+
+    def _current_changed(self, cur, prev) -> None:
+        if self._updating or cur is None:
+            return
+        sid = cur.data(0, self.ID_ROLE)
+        if sid:
+            self.ctrl.set_sheet(sid)
+
+    def _double_clicked(self, it, col) -> None:
+        if it.data(0, self.ID_ROLE):
+            self.properties()
+
+    def _dropped(self) -> None:
+        """A drag moved sheets: the project takes the order and the groups of the tree."""
+        order, groups = [], {}
+        for i in range(self.tree.topLevelItemCount()):
+            top = self.tree.topLevelItem(i)
+            g = top.data(0, self.GROUP_ROLE)
+            if g:
+                for k in range(top.childCount()):
+                    sid = top.child(k).data(0, self.ID_ROLE)
+                    if sid:
+                        order.append(sid)
+                        groups[sid] = g
+            elif top.data(0, self.ID_ROLE):
+                order.append(top.data(0, self.ID_ROLE))
+                groups[top.data(0, self.ID_ROLE)] = ""
+                for k in range(top.childCount()):        # (a sheet dropped onto a sheet: beside it)
+                    sid = top.child(k).data(0, self.ID_ROLE)
+                    if sid:
+                        order.append(sid)
+                        groups[sid] = ""
+        if not self.ctrl.arrange_sheets(order, groups):
+            self.refresh()
 
     def selected_ids(self) -> list[str]:
-        return [it.data(Qt.UserRole) for it in self.list.selectedItems()] or [self.ctrl.sheet_id]
+        """The selected sheets (a selected group: all of its sheets); none selected: the sheet that is open."""
+        out = []
+        for it in self.tree.selectedItems():
+            g = it.data(0, self.GROUP_ROLE)
+            if g:
+                out += [s.id for s in self.ctrl.sheets_in(g)]
+            elif it.data(0, self.ID_ROLE):
+                out.append(it.data(0, self.ID_ROLE))
+        return list(dict.fromkeys(out)) or [self.ctrl.sheet_id]
 
     def move(self, delta: int) -> None:
         self.ctrl.move_sheet(self.ctrl.sheet_id, delta)
 
     def _menu(self, pos) -> None:
         m = QMenu(self)
+        it = self.tree.itemAt(pos)
+        head = it.data(0, self.GROUP_ROLE) if it is not None else None
+        if head:
+            m.addAction(f"Rename the group {head}...", lambda n=head: self.rename_group(n))
+            m.addAction("Select its sheets", lambda n=head: self._select_group(n))
+            m.addAction("Nest onto this group...", lambda n=head: self.nest_on(n))
+            m.addAction("New toolpath for this group", lambda n=head: self.toolpath_for(n))
+            m.addAction("Ungroup (the sheets stay)", lambda n=head: self.ctrl.set_sheet_group(
+                [s.id for s in self.ctrl.sheets_in(n)], ""))
+            m.addSeparator()
         g = m.addMenu("Group")
         g.addAction("New group from the selected...", self.new_group)
         for name in self.ctrl.sheet_groups():
@@ -295,7 +403,7 @@ class SheetsPanel(DocPanel):
         g.addSeparator()
         g.addAction("Take the selected out of their group", lambda: self.ctrl.set_sheet_group(self.selected_ids(), ""))
         m.addAction("Properties...", self.properties)
-        menus.show_menu(m, self.list.mapToGlobal(pos))
+        menus.show_menu(m, self.tree.viewport().mapToGlobal(pos))
 
     def new_group(self) -> None:
         name, ok = QInputDialog.getText(self, "Group of sheets", "Name of the group:")
@@ -310,12 +418,17 @@ class SheetsPanel(DocPanel):
             for t in self.ctrl.project.toolpaths:          # (the toolpaths of the group follow its name)
                 if t.sheet_group == old:
                     t.sheet_group = name.strip()
+            if old in self._folded:
+                self._folded.discard(old)
+                self._folded.add(name.strip())
             self.ctrl.toolpaths_changed.emit()
 
     def _select_group(self, name: str) -> None:
         ids = {s.id for s in self.ctrl.sheets_in(name)}
-        for i in range(self.list.count()):
-            self.list.item(i).setSelected(self.list.item(i).data(Qt.UserRole) in ids)
+        for it in self.sheet_items():
+            it.setSelected(it.data(0, self.ID_ROLE) in ids)
+            if it.parent() is not None and it.data(0, self.ID_ROLE) in ids:
+                it.parent().setExpanded(True)
 
     def nest_on(self, name: str) -> None:
         win = self.window()

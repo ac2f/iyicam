@@ -18,7 +18,7 @@ const TXT = {
     "open.pick": "Bu cihazdan seç…", "open.thickness": "Malzeme kalınlığı (mm)", "open.add": "Açık projeye ekle",
     "open.done": "{0} açıldı.", "report.title": "Dosyadan okunan", "report.notes": "Notlar", "report.errors": "Hatalar",
     "proj.none": "Henüz proje yok", "proj.none2": "Yukarıdan bir çizim dosyası aç.",
-    "proj.name": "Proje adı", "proj.sheets": "Tezgahlar", "proj.layers": "Katmanlar", "proj.material": "Malzeme",
+    "proj.name": "Proje adı", "sg.count": "{0} tabaka, {1} vektör", "proj.sheets": "Tezgahlar", "proj.layers": "Katmanlar", "proj.material": "Malzeme",
     "proj.vectors": "{0} vektör", "proj.width": "Genişlik (mm)", "proj.height": "Yükseklik (mm)",
     "proj.thickness": "Kalınlık (mm)", "proj.safez": "Güvenli Z (mm)", "proj.clear": "Dalış payı (mm)",
     "proj.zzero": "Z sıfırı", "proj.top": "Malzeme üstü", "proj.bottom": "Tezgah yüzeyi",
@@ -98,7 +98,7 @@ const TXT = {
     "open.pick": "From this device…", "open.thickness": "Material thickness (mm)", "open.add": "Add to the open project",
     "open.done": "{0} opened.", "report.title": "Read from the file", "report.notes": "Notes", "report.errors": "Errors",
     "proj.none": "No project yet", "proj.none2": "Open a drawing file above.",
-    "proj.name": "Project name", "proj.sheets": "Sheets", "proj.layers": "Layers", "proj.material": "Material",
+    "proj.name": "Project name", "sg.count": "{0} sheet(s), {1} vector(s)", "proj.sheets": "Sheets", "proj.layers": "Layers", "proj.material": "Material",
     "proj.vectors": "{0} vectors", "proj.width": "Width (mm)", "proj.height": "Height (mm)",
     "proj.thickness": "Thickness (mm)", "proj.safez": "Safe Z (mm)", "proj.clear": "Plunge clearance (mm)",
     "proj.zzero": "Z zero", "proj.top": "Material top", "proj.bottom": "Machine bed",
@@ -1379,19 +1379,40 @@ function viewProject() {
   out.push(h("div", { class: "card" }, h("h2", {}, t("proj.name")), nameIn));
 
   // sheets
-  out.push(h("div", { class: "card" }, h("h2", {}, t("proj.sheets")), h("div", { class: "list" }, p.sheets.map(s => {
+  // (the sheets of a group are stacked under it, folded and unfolded; it stands where its first sheet comes)
+  const sheetItem = s => {
     const on = activeSheet().id === s.id;
     const w = numberInput(s.width, v => { s.width = v; touch(); }), hh = numberInput(s.height, v => { s.height = v; touch(); });
     return h("div", { class: "item", style: "flex-wrap:wrap" },
       h("button", { class: "small" + (on ? " primary" : ""), onclick: () => { S.sheetId = s.id; render(); } }, on ? "✓" : "○"),
       h("button", { class: "small", title: t("sh.up"), "aria-label": t("sh.up"), disabled: p.sheets[0] === s, onclick: () => moveSheet(s, -1) }, "↑"),
       h("button", { class: "small", title: t("sh.down"), "aria-label": t("sh.down"), disabled: p.sheets[p.sheets.length - 1] === s, onclick: () => moveSheet(s, 1) }, "↓"),
-      h("div", { class: "grow" }, h("b", {}, s.name), s.group ? h("span", { class: "muted small" }, "  ▣ " + s.group) : null, h("div", { class: "muted small" }, t("proj.vectors", s.vectors.length))),
+      h("div", { class: "grow" }, h("b", {}, s.name), h("div", { class: "muted small" }, t("proj.vectors", s.vectors.length))),
       h("label", { class: "f", style: "width:100%" }, h("span", {}, t("sg.label")), sheetGroupInput(s)),
       h("div", { class: "grid2", style: "width:100%" },
         h("label", { class: "f" }, h("span", {}, t("proj.width")), w), h("label", { class: "f" }, h("span", {}, t("proj.height")), hh),
         h("label", { class: "f" }, h("span", {}, t("proj.sheetthk")), thicknessOverride(s))));
-  })), window.IyiPage.editor ? window.IyiPage.editor.sheetTools() : null));
+  };
+  const folded = new Set(JSON.parse(store.get("iyicam.sheetFold") || "[]"));
+  const stacked = [], seenGroups = new Set();
+  for (const s of p.sheets) {
+    if (!s.group) { stacked.push(sheetItem(s)); continue; }
+    if (seenGroups.has(s.group)) continue;
+    seenGroups.add(s.group);
+    const g = s.group, members = p.sheets.filter(x => x.group === g);
+    const nv = members.reduce((a, x) => a + x.vectors.length, 0);
+    const open = !folded.has(g) || members.some(x => x.id === activeSheet().id);
+    const box = h("details", { class: "sheetgroup", open },
+      h("summary", {}, h("b", {}, "▣ " + g), h("span", { class: "muted small" }, "  " + t("sg.count", members.length, nv))),
+      h("div", { class: "list" }, members.map(sheetItem)));
+    box.addEventListener("toggle", () => {
+      if (box.open) folded.delete(g); else folded.add(g);
+      store.set("iyicam.sheetFold", JSON.stringify([...folded]));
+    });
+    stacked.push(box);
+  }
+  out.push(h("div", { class: "card" }, h("h2", {}, t("proj.sheets")), h("div", { class: "list" }, stacked),
+    window.IyiPage.editor ? window.IyiPage.editor.sheetTools() : null));
 
   // material
   const m = p.material, zz = h("select", {}, h("option", { value: "top" }, t("proj.top")), h("option", { value: "bottom" }, t("proj.bottom")));

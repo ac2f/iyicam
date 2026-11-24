@@ -605,6 +605,26 @@ class Controller(CutControl, QObject):
         self.calc_if_auto()
         return len(todo)
 
+    def arrange_sheets(self, order: list[str], groups: dict[str, str]) -> bool:
+        """The sheets in a new order (``order``: their ids) and their groups (``groups``: id -> group, "" for none), as the
+        sheets panel was dragged: one undo step. False when nothing changes."""
+        sh = {s.id: s for s in self.project.sheets}
+        new = [sh[i] for i in order if i in sh] + [s for s in self.project.sheets if s.id not in set(order)]
+        same = [s.id for s in new] == [s.id for s in self.project.sheets] and \
+            all(sh[i].group == (groups.get(i, sh[i].group) or "") for i in sh)
+        if same:
+            return False
+        with self.edit("Arrange sheets", geometry=False):
+            self.project.sheets = new
+            for i, g in groups.items():
+                if i in sh:
+                    sh[i].group = (g or "").strip()
+        self.refresh_stale()
+        self.toolpaths_changed.emit()
+        self.sheet_changed.emit()
+        self.calc_if_auto()
+        return True
+
     def move_toolpath(self, tid: str, delta: int) -> None:
         tps = self.project.toolpaths
         i = next((k for k, t in enumerate(tps) if t.id == tid), None)

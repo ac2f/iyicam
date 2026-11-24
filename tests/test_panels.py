@@ -65,7 +65,7 @@ def test_sheets_panel(rwin):
     sp.add()
     sp.duplicate()
     sp.properties()
-    sp.list.setCurrentRow(0)
+    sp.tree.setCurrentItem(sp.sheet_items()[0])
     sp.delete()
     ok(win, robot, "delete the sheet a toolpath was made for")
     while len(c.project.sheets) > 1:
