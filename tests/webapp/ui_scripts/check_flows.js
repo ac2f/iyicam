@@ -44,10 +44,10 @@ const SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="50"><re
   d = await doc(); ok("Simulate gives a picture of the cut", d.sim); await shot(page, "flow_sim");
   // -- G-code downloaded
   await page.evaluate(() => window.__iyicam.A.runItem("file.save_g_code")); await page.waitForSelector(".dlg"); await shot(page, "flow_gcode");
-  const agentBtn = await page.locator(".dlg button:has-text('Download to this device')").count();
   const dl = page.waitForEvent("download", { timeout: 60000 });
-  await page.click(".dlg .btn.primary"); 
-  if (agentBtn) await page.click(".dlg button:has-text('Download to this device')");
+  await page.click(".dlg .btn.primary");
+  await page.waitForSelector(".dlg .choose", { timeout: 60000 });          // (where to: this device or the agent)
+  await page.click(".dlg button:has-text('Download to this device')");
   const download = await dl; const path = await download.path();
   const text = require("fs").readFileSync(path, "utf8");
   ok("Save G-code downloads a file with G-code", /G0|G1|M3/.test(text), download.suggestedFilename());
