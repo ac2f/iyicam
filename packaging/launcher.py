@@ -13,4 +13,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    import multiprocessing
+    multiprocessing.freeze_support()      # (the nesting starts helper processes: in the packaged program they are this program)
     sys.exit(main())

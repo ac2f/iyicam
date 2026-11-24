@@ -19,10 +19,14 @@ new sheets are only started when the leftovers are full.
 """
 from __future__ import annotations
 
+import hashlib
 import itertools
 import math
+import os
 import random
+import threading
 import time
+from collections import OrderedDict
 from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Sequence
 
@@ -211,35 +215,76 @@ def prepare_convex(p: IntPath) -> tuple[tuple[int, int], list[tuple[int, int]]]:
 
 def convex_minkowski(a, b) -> IntPath:
     """Minkowski sum of two counter-clockwise convex polygons (O(n + m) edge merge); each is a path or
-    already :func:`prepare_convex`d."""
+    already :func:`prepare_convex`d. (The hottest loop of nesting: a million sums for a sheet of curved parts.)"""
     (ax, ay), ea = prepare_convex(a) if isinstance(a, list) else a
     (bx, by), eb = prepare_convex(b) if isinstance(b, list) else b
     x, y = ax + bx, ay + by
     out = [(x, y)]
+    put = out.append
+    na, nb = len(ea), len(eb)
     i = j = 0
-    while i < len(ea) or j < len(eb):
-        if j >= len(eb):
-            e = ea[i]
+    while i < na and j < nb:
+        ex, ey = ea[i]
+        fx, fy = eb[j]
+        cr = ex * fy - ey * fx
+        if cr > 0:
+            x += ex
+            y += ey
             i += 1
-        elif i >= len(ea):
-            e = eb[j]
+        elif cr < 0:
+            x += fx
+            y += fy
             j += 1
         else:
-            cr = ea[i][0] * eb[j][1] - ea[i][1] * eb[j][0]
-            if cr > 0:
-                e = ea[i]
-                i += 1
-            elif cr < 0:
-                e = eb[j]
-                j += 1
-            else:
-                e = (ea[i][0] + eb[j][0], ea[i][1] + eb[j][1])
-                i += 1
-                j += 1
-        x, y = x + e[0], y + e[1]
-        out.append((x, y))
+            x += ex + fx
+            y += ey + fy
+            i += 1
+            j += 1
+        put((x, y))
+    for ex, ey in ea[i:]:
+        x += ex
+        y += ey
+        put((x, y))
+    for fx, fy in eb[j:]:
+        x += fx
+        y += fy
+        put((x, y))
     out.pop()  # back at the start
     return out
+
+
+# No-fit polygons kept between nestings (the same parts nested again, with another sheet, gap ... changed: the pairs of
+# outlines that are the same are not worked out again). Keyed by a digest of the two outlines exactly as they are and the
+# merging of their pieces; kept as arrays, at most NFP_STORE_POINTS points (about 16 bytes a point), the oldest go first.
+NFP_STORE_POINTS = 2_000_000
+_nfp_store: "OrderedDict[tuple, tuple]" = OrderedDict()
+_nfp_store_points = 0
+_nfp_store_lock = threading.Lock()
+
+
+def _stored_nfp(key) -> list | None:
+    with _nfp_store_lock:
+        hit = _nfp_store.get(key)
+        if hit is None:
+            return None
+        _nfp_store.move_to_end(key)
+    return [[tuple(q) for q in arr.tolist()] for arr in hit]
+
+
+def _store_nfp(key, paths: list) -> None:
+    global _nfp_store_points
+    arrs = tuple(np.asarray(p, dtype=np.int64).reshape(-1, 2) for p in paths)
+    n = sum(len(a) for a in arrs)
+    if n > NFP_STORE_POINTS // 4:
+        return
+    with _nfp_store_lock:
+        if key in _nfp_store:
+            return
+        _nfp_store[key] = arrs
+        _nfp_store_points += n
+        while _nfp_store_points > NFP_STORE_POINTS and _nfp_store:
+            _, old = _nfp_store.popitem(last=False)
+            _nfp_store_points -= sum(len(a) for a in old)
 
 
 def _cross(o, a, b) -> float:
@@ -359,7 +404,7 @@ def merge_pieces(pieces: list[IntPath], tol: float) -> list[IntPath]:
 
 
 class _Variant:
-    __slots__ = ("paths", "bbox", "area", "convex", "pieces", "sig", "holes", "solid", "_prep", "_negprep")
+    __slots__ = ("paths", "bbox", "area", "convex", "pieces", "sig", "holes", "solid", "_prep", "_negprep", "_digest")
 
     def __init__(self, paths: list[IntPath], holes: list[IntPath] | None = None, merge: float = 0.0):
         self.paths = paths
@@ -388,6 +433,18 @@ class _Variant:
         self.pieces = pieces
         self._prep = None
         self._negprep = None
+        self._digest = None
+
+    def digest(self) -> bytes:
+        """The outline and the holes exactly (16 bytes): what a no-fit polygon kept between nestings is found by."""
+        if self._digest is None:
+            h = hashlib.blake2b(digest_size=16)
+            for tag, group in ((b"p", self.paths), (b"h", self.holes)):
+                for path in group:
+                    h.update(tag)
+                    h.update(np.asarray(path, dtype=np.int64).tobytes())
+            self._digest = h.digest()
+        return self._digest
 
     def prep(self) -> list:
         """The convex pieces ready for summing (made once)."""
@@ -509,6 +566,31 @@ class _Box:
         margin = margin - self.relief
         region = clip.normalize(c.region)
         self.material = abs(clip.area(region))
+        # a rectangular plate with parts that stay on it: the plate is the rectangle and the parts are obstacles, taken out
+        # with their no-fit polygons like parts placed on it (cheap, from convex pieces). Taken out of the outline of the
+        # plate instead, they made it a polygon of hundreds of points, and where every part fits in it cost a second or
+        # more for every part and angle: three minutes before the first part was placed
+        self.plate = None
+        self.obstacles: list[tuple[list[list[Pt]], list[list[Pt]]]] = []      # (outline, its holes), grown by half the gap
+        prect = _axis_rect(region) if c.obstacles else None
+        if prect:
+            x0, y0, x1, y1 = prect
+            self.plate = (round((x0 + margin - half) * S), round((y0 + margin - half) * S),
+                          round((x1 - margin + half) * S), round((y1 - margin + half) * S))
+            t0 = min(max(0.02, tol / 2), 0.1)
+            grown = clip.offset(clip.normalize(c.obstacles, "nonzero"), half + 1.5 * t0, "round", arc_tol=t0 / 2)
+            for outer, holes in clip.polytree(grown):
+                o = simplify_polyline(list(outer) + [outer[0]], t0)[:-1]
+                if len(o) < 3:
+                    continue
+                if polygon_area(o) < 0:
+                    o = o[::-1]
+                rooms = []
+                for h in holes:
+                    h = simplify_polyline(list(h) + [h[0]], t0)[:-1]
+                    if len(h) >= 3 and abs(polygon_area(h)) > 1.0:
+                        rooms.append(h if polygon_area(h) > 0 else h[::-1])
+                self.obstacles.append((o, rooms))
         rect = None if c.obstacles else _axis_rect(region)
         if rect:
             x0, y0, x1, y1 = rect
@@ -555,6 +637,91 @@ class _Box:
     def usable(self) -> bool:
         return self.bbox is not None and (self.rect is None or (self.rect[2] >= self.rect[0]
                                                                 and self.rect[3] >= self.rect[1]))
+
+
+def nfp_of(VA: "_Variant", VB: "_Variant") -> list[IntPath]:
+    """The no-fit polygon of ``VB`` against ``VA``: where the reference of B may not be put (both at the origin)."""
+    A, B = VA.paths, VB.paths
+    if len(A) == 1 and len(B) == 1 and VA.convex[0] and VB.convex[0]:
+        res = [convex_minkowski(VA.convex[0], [(-x, -y) for x, y in VB.convex[0]])]
+    elif VA.pieces is not None and VB.pieces is not None:
+        # Minkowski sums distribute over unions: combine the convex pieces
+        # (all the sums turn counter-clockwise: they are joined a few at a time, which is far faster than all at once)
+        negs = VB.negprep()
+        res = clip.union_all([convex_minkowski(pa, nb) for pa in VA.prep() for nb in negs])
+    else:
+        pc = clip.Clipper()
+        added = False
+        for pa in A:
+            for pb in B:
+                # pyclipper.MinkowskiDiff(p, q) = {q - p}: the NFP {a - b} is (pb, pa).  The
+                # result only covers the band swept along the boundary, so the interior is
+                # filled with A shifted by one point of B.
+                for r in pyclipper.MinkowskiDiff(pb, pa):
+                    if len(r) >= 3:
+                        pc.AddPath(r, pyclipper.PT_SUBJECT, True)
+                        added = True
+                bx, by = pb[0]
+                pc.AddPath([(x - bx, y - by) for x, y in pa], pyclipper.PT_SUBJECT, True)
+        res = pc.Execute(pyclipper.CT_UNION, pyclipper.PFT_NONZERO, pyclipper.PFT_NONZERO) if added else []
+    if VA.holes or VB.holes:
+        res = list(res) + room_terms(VA, VB)
+    return res
+
+
+def room_terms(VA: "_Variant", VB: "_Variant") -> list[IntPath]:
+    """Where the no-fit polygon of two parts does not apply: when one lies inside a hole of the other.
+    They are clockwise paths, which cancel the (counter-clockwise) no-fit polygon where they lie."""
+    terms: list[IntPath] = []
+    wb, hb = VB.bbox[2] - VB.bbox[0], VB.bbox[3] - VB.bbox[1]
+    for h in VA.holes:  # B inside a hole of A
+        xs, ys = [q[0] for q in h], [q[1] for q in h]
+        if max(xs) - min(xs) >= wb and max(ys) - min(ys) >= hb:
+            terms += [list(reversed(p)) for p in Nester._ifp_paths([h], VB)]
+    wa, ha = VA.bbox[2] - VA.bbox[0], VA.bbox[3] - VA.bbox[1]
+    for h in VB.holes:  # A inside a hole of B: B's reference is where A's would be, mirrored
+        xs, ys = [q[0] for q in h], [q[1] for q in h]
+        if max(xs) - min(xs) >= wa and max(ys) - min(ys) >= ha:
+            terms += [list(reversed([(-x, -y) for x, y in p])) for p in Nester._ifp_paths([h], VA)]
+    return terms
+
+
+# The no-fit polygons of a sheet of many different curved parts are worked out on the processors of the computer at once
+# (the first layout spent half a minute making them one after the other). Below this many sums of convex pieces (about
+# 5 s on one processor) it is not worth starting the helpers. IYICAM_NEST_PROCESSES: how many helpers (0 or 1: none).
+PARALLEL_WORK = 300_000
+
+
+def nest_processes() -> int:
+    import multiprocessing as mp
+    if mp.parent_process() is not None:      # (in a helper, or a script without a __main__ guard started again: no helpers)
+        return 0
+    raw = os.environ.get("IYICAM_NEST_PROCESSES", "").strip()
+    if raw:
+        try:
+            return max(0, int(raw))
+        except ValueError:
+            return 0
+    return max(1, min(8, (os.cpu_count() or 1) - 1))
+
+
+_worker_variants: dict = {}
+
+
+def _nfp_batch(task):
+    """In a helper process: the no-fit polygons of one part against a few others."""
+    a, merge, (apaths, aholes), others = task
+    key = (a, merge, len(apaths), sum(len(p) for p in apaths), apaths[0][0] if apaths and apaths[0] else None)
+    VA = _worker_variants.get(key)
+    if VA is None:
+        VA = _worker_variants[key] = _Variant(apaths, aholes, merge)
+        if len(_worker_variants) > 256:
+            _worker_variants.clear()
+            _worker_variants[key] = VA
+    out = []
+    for b, rel, bpaths, bholes in others:
+        out.append((b, rel, [list(map(tuple, p)) for p in nfp_of(VA, _Variant(bpaths, bholes, merge))]))
+    return a, out
 
 
 class Nester:
@@ -683,51 +850,96 @@ class Nester:
         if hit is not None:
             return hit
         self._check()
-        self.stats["nfp"] += 1
         VA, VB = self._variant(a, 0.0), self._variant(b, rel)
-        A, B = VA.paths, VB.paths
-        if len(A) == 1 and len(B) == 1 and VA.convex[0] and VB.convex[0]:
-            res = [convex_minkowski(VA.convex[0], [(-x, -y) for x, y in VB.convex[0]])]
-        elif VA.pieces is not None and VB.pieces is not None:
-            # Minkowski sums distribute over unions: combine the convex pieces
-            # (all the sums turn counter-clockwise: they are joined a few at a time, which is far faster than all at once)
-            negs = VB.negprep()
-            res = clip.union_all([convex_minkowski(pa, nb) for pa in VA.prep() for nb in negs])
-        else:
-            pc = clip.Clipper()
-            added = False
-            for pa in A:
-                for pb in B:
-                    # pyclipper.MinkowskiDiff(p, q) = {q - p}: the NFP {a - b} is (pb, pa).  The
-                    # result only covers the band swept along the boundary, so the interior is
-                    # filled with A shifted by one point of B.
-                    for r in pyclipper.MinkowskiDiff(pb, pa):
-                        if len(r) >= 3:
-                            pc.AddPath(r, pyclipper.PT_SUBJECT, True)
-                            added = True
-                    bx, by = pb[0]
-                    pc.AddPath([(x - bx, y - by) for x, y in pa], pyclipper.PT_SUBJECT, True)
-            res = pc.Execute(pyclipper.CT_UNION, pyclipper.PFT_NONZERO, pyclipper.PFT_NONZERO) if added else []
-        if VA.holes or VB.holes:
-            res = list(res) + self._room_terms(VA, VB)
+        gkey = (VA.digest(), VB.digest(), self._merge)
+        res = _stored_nfp(gkey)
+        if res is not None:                       # (worked out in an earlier nesting)
+            self._nfp0_cache[key] = res
+            return res
+        self.stats["nfp"] += 1
+        res = nfp_of(VA, VB)
         self._nfp0_cache[key] = res
+        _store_nfp(gkey, res)
         return res
 
+    def pair_jobs(self) -> list[tuple[int, int, float]]:
+        """Every no-fit polygon a layout can ask for (a pair of classes, the angle between them) that is not known yet."""
+        angs: dict[int, set] = {}
+        for i, c in enumerate(self.cls):
+            if c >= 0:
+                angs.setdefault(c, set()).update(self.angles[i])
+        out = []
+        cs = sorted(angs)
+        for x in cs:
+            for y in cs:
+                if y < x:
+                    continue
+                for rel in sorted({round((by - ax) % 360.0, 6) for ax in angs[x] for by in angs[y]}):
+                    if (x, y, rel) in self._nfp0_cache:
+                        continue
+                    VA, VB = self._variant(x, 0.0), self._variant(y, rel)
+                    if (VA.digest(), VB.digest(), self._merge) in _nfp_store:
+                        continue
+                    out.append((x, y, rel))
+        return out
+
+    def precompute(self, workers: int | None = None, progress: Callable[[int, int], None] | None = None) -> int:
+        """Work out the no-fit polygons of every pair of parts at once on the processors of the computer (they are what the
+        first layout spends nearly all its time on, one after the other). Only when it is worth it: a few parts are done
+        as they come. Returns how many were made; anything that goes wrong leaves the rest to the usual way."""
+        workers = nest_processes() if workers is None else workers
+        if workers < 2:
+            return 0
+        jobs = self.pair_jobs()
+        if any(self._variant(a, 0.0).pieces is None or self._variant(b, r).pieces is None for a, b, r in jobs):
+            return 0
+        work = sum(len(self._variant(a, 0.0).pieces) * len(self._variant(b, r).pieces) for a, b, r in jobs)
+        if work < PARALLEL_WORK:
+            return 0
+        by_first: dict[int, list] = {}
+        for a, b, r in jobs:
+            by_first.setdefault(a, []).append((b, r))
+        tasks = []
+        for a, rest in by_first.items():
+            VA = self._variant(a, 0.0)
+            for k in range(0, len(rest), 16):                # (small batches: the processors stay busy to the end)
+                tasks.append((a, self._merge, (VA.paths, VA.holes),
+                              [(b, r, self._variant(b, r).paths, self._variant(b, r).holes) for b, r in rest[k:k + 16]]))
+        tasks.sort(key=lambda t: -len(self._variant(t[0], 0.0).pieces) * len(t[3]))   # (the biggest first)
+        import concurrent.futures as cf
+        import multiprocessing as mp
+        done = 0
+        try:
+            pool = cf.ProcessPoolExecutor(max_workers=min(workers, len(tasks)), mp_context=mp.get_context("spawn"))
+        except Exception:  # noqa: BLE001  (no processes here: the usual way)
+            return 0
+        try:
+            pending = {pool.submit(_nfp_batch, t) for t in tasks}
+            while pending:
+                self._check()
+                finished, pending = cf.wait(pending, timeout=0.2)
+                if progress is not None:
+                    progress(len(tasks) - len(pending), len(tasks))
+                for f in finished:
+                    a, results = f.result()
+                    VA = self._variant(a, 0.0)
+                    for b, r, res in results:
+                        if (a, b, r) not in self._nfp0_cache:
+                            self._nfp0_cache[(a, b, r)] = res
+                            _store_nfp((VA.digest(), self._variant(b, r).digest(), self._merge), res)
+                            self.stats["nfp"] += 1
+                            done += 1
+        except NestCancelled:
+            pool.shutdown(wait=False, cancel_futures=True)
+            raise
+        except Exception:  # noqa: BLE001  (a helper that failed: what is missing is made the usual way)
+            pool.shutdown(wait=False, cancel_futures=True)
+            return done
+        pool.shutdown(wait=True)
+        return done
+
     def _room_terms(self, VA: _Variant, VB: _Variant) -> list[IntPath]:
-        """Where the no-fit polygon of two parts does not apply: when one lies inside a hole of the other.
-        They are clockwise paths, which cancel the (counter-clockwise) no-fit polygon where they lie."""
-        terms: list[IntPath] = []
-        wb, hb = VB.bbox[2] - VB.bbox[0], VB.bbox[3] - VB.bbox[1]
-        for h in VA.holes:  # B inside a hole of A
-            xs, ys = [q[0] for q in h], [q[1] for q in h]
-            if max(xs) - min(xs) >= wb and max(ys) - min(ys) >= hb:
-                terms += [list(reversed(p)) for p in self._ifp_paths([h], VB)]
-        wa, ha = VA.bbox[2] - VA.bbox[0], VA.bbox[3] - VA.bbox[1]
-        for h in VB.holes:  # A inside a hole of B: B's reference is where A's would be, mirrored
-            xs, ys = [q[0] for q in h], [q[1] for q in h]
-            if max(xs) - min(xs) >= wa and max(ys) - min(ys) >= ha:
-                terms += [list(reversed([(-x, -y) for x, y in p])) for p in self._ifp_paths([h], VA)]
-        return terms
+        return room_terms(VA, VB)
 
     def _check(self) -> None:
         if self.cancel is not None and self.cancel():
@@ -761,6 +973,15 @@ class Nester:
         self._feasible_cache[key] = res
         return res
 
+    def _obstacle_variants(self, box: _Box) -> list[_Variant]:
+        """The parts that stay on a plate as outlines with convex pieces (made once per plate)."""
+        key = ("obstacles", box.index, box.relief)
+        got = self._feasible_cache.get(key)
+        if got is None:
+            got = [_Variant([clip.to_int(o)], [clip.to_int(h) for h in rooms], self._merge) for o, rooms in box.obstacles]
+            self._feasible_cache[key] = got
+        return got
+
     def _compute_feasible(self, box: _Box, v: _Variant):
         if not box.usable:
             return None
@@ -776,10 +997,35 @@ class Nester:
                 y1 += 1
             ifp = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
             return [ifp], (x0, y0, x1, y1)
-        cx0, cy0, cx1, cy1 = box.bbox
-        if bx1 - bx0 > cx1 - cx0 or by1 - by0 > cy1 - cy0:
-            return None
-        feas = self._ifp_paths(box.paths, v)
+        if box.plate is not None:
+            ux0, uy0, ux1, uy1 = box.plate
+            x0, x1, y0, y1 = ux0 - bx0, ux1 - bx1, uy0 - by0, uy1 - by1
+            if x1 < x0 or y1 < y0:
+                return None
+            feas = [[(x0, y0), (x1, y0), (x1, y1), (x0, y1)]]
+            pc = clip.Clipper()
+            added = 0
+            for ov in self._obstacle_variants(box):
+                ox0, oy0, ox1, oy1 = ov.bbox                    # (an obstacle the part cannot reach from the plate: left out)
+                if ox1 - bx0 < x0 or ox0 - bx1 > x1 or oy1 - by0 < y0 or oy0 - by1 > y1:
+                    continue
+                gkey = (ov.digest(), v.digest(), self._merge)
+                paths = _stored_nfp(gkey)
+                if paths is None:
+                    self._check()
+                    paths = nfp_of(ov, v)
+                    _store_nfp(gkey, paths)
+                for path in paths:
+                    pc.AddPath(path, pyclipper.PT_CLIP, True)
+                    added += 1
+            if added:
+                pc.AddPaths(feas, pyclipper.PT_SUBJECT, True)
+                feas = pc.Execute(pyclipper.CT_DIFFERENCE, pyclipper.PFT_NONZERO, pyclipper.PFT_NONZERO)
+        else:
+            cx0, cy0, cx1, cy1 = box.bbox
+            if bx1 - bx0 > cx1 - cx0 or by1 - by0 > cy1 - cy0:
+                return None
+            feas = self._ifp_paths(box.paths, v)
         if not feas:
             return None
         xs = [q[0] for p in feas for q in p]
@@ -941,7 +1187,7 @@ class Nester:
                 x, y = int(V[i, 0]), int(V[i, 1])
                 if (x, y) in off_plate:
                     continue
-                if box.rect is None and not self._inside(box, v, x, y):
+                if box.rect is None and box.plate is None and not self._inside(box, v, x, y):   # (with obstacles the area is exact)
                     off_plate.add((x, y))
                     continue
                 conflicts = [j for j in range(len(placed)) if j not in included
@@ -1464,26 +1710,52 @@ def nest(shapes: Sequence[NestShape], settings: NestSettings, progress: Callable
     :meth:`Nester.polish`). One attempt is the plain layout (biggest first, the gravity chosen).
 
     ``progress(done, total)`` counts the parts placed over all attempts."""
+    started = time.perf_counter()
     budget = point_budget(shapes, settings)
     if budget != settings.max_points:          # (hundreds of curved parts and a short time limit: a little coarser)
         settings = replace(settings, max_points=budget)
-    n = Nester(shapes, settings)
-    n.cancel = cancel
     squeezing = (settings.squeeze_angle > 0 or settings.squeeze_margin > 0) and settings.arrange == "free"
     tries = max(1, settings.iterations)
     attempts = tries + (1 if squeezing else 0)
-    plan = n.candidates(tries)
     count = sum(max(0, sh.quantity) for sh in shapes)
+    total = max(1, attempts * count)
+    shown = [0, 0.0, 0]                        # (what was said last, when, and the parts placed it came from)
+
+    def report(k: int) -> None:
+        """Progress never goes back, and with a time limit it also follows the clock: the first layout, which works out
+        the no-fit polygons of every pair of parts, takes most of the time (it stood at 0 % for half a minute)."""
+        if progress is None:
+            return
+        shown[2] = k = max(k, shown[2])
+        if settings.time_limit > 0:
+            # (the layouts are improved until the time is up: the clock moves it on, the parts placed half of what is left)
+            tf = min(0.99, (time.perf_counter() - started) / settings.time_limit)
+            k = int(total * min(0.99, tf + (1.0 - tf) * 0.5 * k / total))
+        k = min(total, max(k, shown[0]))
+        shown[0], shown[1] = k, time.perf_counter()
+        progress(k, total)
+
+    def checking() -> bool:
+        """``cancel`` as the nester asks it, all the time: the clock moves the progress on in the meantime."""
+        if settings.time_limit > 0 and progress is not None and time.perf_counter() - shown[1] > 0.2:
+            report(shown[2])
+        return bool(cancel()) if cancel is not None else False
+
+    n = Nester(shapes, settings)
+    n.cancel = checking
+    # (many curved parts: their no-fit polygons on every processor at once; most of the first layout, as progress)
+    n.precompute(progress=lambda d, t: report(int(0.9 * count * d / max(1, t))))
+    plan = n.candidates(tries)
 
     def share(i: int):
         """Progress of attempt ``i`` as part of all of them."""
-        return None if progress is None else (lambda k, t: progress(i * count + k, attempts * count))
+        return None if progress is None else (lambda k, t: report(i * count + k))
 
     if settings.stock_order == "best" and plan:
         n.choose_plate_order(*plan[0])
     rng = random.Random(settings.seed)
     best = order = grav = None
-    t0 = time.perf_counter()
+    t0 = started                               # (the time limit counts from the start: the work before the layouts is in it)
 
     def out_of_time() -> bool:
         return settings.time_limit > 0 and time.perf_counter() - t0 > settings.time_limit
@@ -1501,7 +1773,7 @@ def nest(shapes: Sequence[NestShape], settings: NestSettings, progress: Callable
                 a = rng.randrange(len(cand))
                 j = min(len(cand) - 1, a + rng.randint(1, 3))
                 cand[a], cand[j] = cand[j], cand[a]
-        r = n.run_order(cand, share(i), cancel, gravity=g)
+        r = n.run_order(cand, share(i), checking, gravity=g)
         if best is None or n.quality(r) < n.quality(best):
             best, order, grav = r, cand, g
     if tries > 1 and settings.arrange == "free" and not out_of_time():     # (strips are tidy: nothing to polish)
@@ -1522,7 +1794,7 @@ def nest(shapes: Sequence[NestShape], settings: NestSettings, progress: Callable
                 j = rng.randrange(len(cand)) if rng.random() < 0.3 else min(len(cand) - 1, i + rng.randint(1, 4))
                 cand[i], cand[j] = cand[j], cand[i]
             g = grav if rng.random() < 0.6 else rng.choice(gravs)
-            r = n.run_order(cand, None, cancel, gravity=g)
+            r = n.run_order(cand, None, checking, gravity=g)
             if n.quality(r)[:3] > n.quality(best)[:3]:
                 continue
             n.polish(r, 20, rng, deadline, patience=max(40, 2 * len(cand)))
@@ -1533,12 +1805,12 @@ def nest(shapes: Sequence[NestShape], settings: NestSettings, progress: Callable
         from . import rects
         if rects.eligible(n):
             alt = rects.pack_rects(n, plan[0][0] if plan else n.default_order(), tries, settings.time_limit,
-                                   settings.seed, cancel)
+                                   settings.seed, checking)
             if alt is not None and n.quality(alt) < n.quality(best):
                 best, order = alt, alt_order(best, order)
     if squeezing and (best.unplaced or best.sheets > 1):
         # squeezing parts in may place what did not fit or save a plate: offered as a suggestion
-        r = n.run_order(order, share(attempts - 1), cancel, squeeze=True, gravity=grav)
+        r = n.run_order(order, share(attempts - 1), checking, squeeze=True, gravity=grav)
         if r.squeezed and n.quality(r)[:3] < n.quality(best)[:3]:
             best.suggestion = r
     return best
