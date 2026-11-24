@@ -31,13 +31,37 @@ class ComputeCancelled(BaseException):
 
 
 def sheets_for(project: Project, tdef: ToolpathDef) -> list[Sheet]:
-    """The sheets a toolpath is calculated on: the ones listed, else the sheets of its sheet group, else every sheet."""
+    """The sheets a toolpath is calculated on: the ones listed, else the sheets of its sheet group, else every sheet.
+
+    A toolpath of chosen vectors is calculated where its vectors are: on those of the sheets above that hold some of them,
+    and when none of them does (the vectors were nested onto another sheet, or chosen on another sheet than the one the
+    window was opened on), on the sheets that hold them. A toolpath of layers kept to sheets where those layers have no
+    vector goes to the sheets where they have. Before, it was calculated on a sheet without its vectors and made nothing,
+    without a word."""
     if tdef.sheet_ids is None and tdef.sheet_group:
-        return [s for s in project.sheets if s.group == tdef.sheet_group]
-    if tdef.sheet_ids is None:
-        return list(project.sheets)
-    wanted = set(tdef.sheet_ids)
-    return [s for s in project.sheets if s.id in wanted]
+        base = [s for s in project.sheets if s.group == tdef.sheet_group]
+    elif tdef.sheet_ids is None:
+        base = list(project.sheets)
+    else:
+        wanted = set(tdef.sheet_ids)
+        base = [s for s in project.sheets if s.id in wanted]
+    sel = tdef.selection
+    if tdef.sheet_ids is None:                     # (every sheet, or the sheets of a group: as they are)
+        return base
+    if sel.mode != "layers" and sel.vector_ids:
+        ids = set(sel.vector_ids)
+        holding = [s for s in project.sheets if any(v.id in ids for v in s.vectors)]
+        if holding:
+            hold = {s.id for s in holding}
+            return [s for s in base if s.id in hold] or holding
+    elif sel.mode == "layers" and sel.layer_ids:
+        # (a toolpath of layers kept to some sheets where those layers have nothing: on the sheets where they have)
+        lids = set(sel.layer_ids)
+        if not any(v.layer_id in lids for s in base for v in s.vectors):
+            holding = [s for s in project.sheets if any(v.layer_id in lids for v in s.vectors)]
+            if holding:
+                return holding
+    return base
 
 
 def compute_toolpath(project: Project, tdef: ToolpathDef, sheet: Sheet,
@@ -53,6 +77,9 @@ def compute_toolpath(project: Project, tdef: ToolpathDef, sheet: Sheet,
         return res
     objects = project.vectors_for(tdef, sheet)
     if not objects:
+        if tdef.selection.mode != "layers" and tdef.selection.vector_ids and \
+                not any(v.id in set(tdef.selection.vector_ids) for s in project.sheets for v in s.vectors):
+            res.warnings.append("The vectors of this toolpath are gone: select vectors and edit the toolpath")
         return res
     reach = 2.0 * max(sheet.width, sheet.height, 100.0)
     if tdef.tool.diameter > reach:                       # (a cutter wider than the sheet makes the offset ask the geometry for the impossible)

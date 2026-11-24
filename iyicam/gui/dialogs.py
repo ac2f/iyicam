@@ -1210,6 +1210,11 @@ class ToolpathDialog(RemembersSize, QDialog):
             sheets = list(self.tdef.sheet_ids)            # (a toolpath of some sheets stays on them: not moved to the sheet that is open)
         else:
             sheets = [self._open_sheet_id]
+            if sel.mode == "vectors" and sel.vector_ids:       # (the sheet of the vectors chosen, not the one the window opened on)
+                ids = set(sel.vector_ids)
+                holding = [s.id for s in self.ctrl.project.sheets if any(v.id in ids for v in s.vectors)]
+                if holding and self._open_sheet_id not in holding:
+                    sheets = holding
         params = {k: v for k, v in self.form.values().items()}
         safe_z, clearance = self.heights()
         if self.tdef:
