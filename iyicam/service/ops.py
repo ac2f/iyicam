@@ -244,6 +244,24 @@ def op_new_project(payload: dict) -> dict:
     return {"project": p.to_dict()}
 
 
+# -- the tool database of the user ------------------------------------------------------------------------------------
+def op_tools_save(payload: dict) -> dict:
+    """Keep the tool database of the user (``tools``: the tools as ``schema`` gives them; ``groups``: the groups in their
+    order, empty ones too). The whole database is replaced: what an interface leaves out is removed."""
+    ensure_ready()
+    raw = payload.get("tools")
+    if not isinstance(raw, list) or not all(isinstance(d, dict) for d in raw):
+        raise ServiceError("bad_request", "'tools' must be a list of tools", field="tools")
+    try:
+        tools = [Tool.from_dict(d) for d in raw]
+    except Exception as exc:  # noqa: BLE001
+        raise ServiceError("bad_request", f"a tool cannot be read: {exc}", field="tools") from exc
+    groups = [str(g) for g in payload.get("groups") or [] if isinstance(g, str)]
+    lib = ToolLibrary(tools, paths.tools_file(), groups)
+    lib.save()
+    return {"tools": [t.to_dict() for t in lib.tools], "groups": lib.groups()}
+
+
 # -- presets of toolpaths -----------------------------------------------------------------------------------------
 def _tp_of(project: Project, d) -> "object":
     from ..core.document import toolpath_from_dict
