@@ -14,6 +14,8 @@ async function open(opts = {}) {
   const browser = await chromium.launch({ proxy });
   const ctx = await browser.newContext({ ignoreHTTPSErrors: !!proxy, viewport: opts.viewport || { width: 1440, height: 900 }, hasTouch: !!opts.touch, isMobile: !!opts.touch,
     colorScheme: opts.dark ? "dark" : "light", deviceScaleFactor: opts.dpr || 1, acceptDownloads: true });
+  // (the File System Access picker cannot be driven: Save falls back to a download, which can)
+  await ctx.addInitScript(() => { try { delete window.showSaveFilePicker; } catch { /* kept */ } });
   const page = await ctx.newPage();
   const errors = [];
   page.on("pageerror", e => errors.push("pageerror: " + e.message));
