@@ -400,11 +400,6 @@ def test_the_service_explains_a_line(host):
         assert host.handle("gcode_explain", bad)["error"] == "bad_request"
 
 
-def test_the_posts_the_page_may_call_are_in_the_interface():
-    from iyicam.service.api import API_OPS
-    assert {"posts", "post_save", "post_delete", "post_preview", "gcode_explain"} <= API_OPS
-
-
 def test_a_saved_post_is_in_the_schema_and_makes_gcode(host):
     from conftest import add_tp, end_mill, make_project
     from iyicam.core import shapes

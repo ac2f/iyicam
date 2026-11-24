@@ -10,9 +10,9 @@
     python -m iyicam nest job.icam --leftover 900x600:2 --stock leftovers.json -o nested.icam
     python -m iyicam nest job.icam --angles 0,22.5,90 --rotate-layer Grain=none -o nested.icam
     python -m iyicam nest job.icam --squeeze-angle 5 --squeeze-margin 3 --apply-squeeze -o nested.icam
-    python -m iyicam serve --host 0.0.0.0           # a web page for a phone, with its own key (docs/web.md)
-    python -m iyicam serve --hub --trust-proxy      # a hub on a server: agents connect to it (docs/web.md)
-    python -m iyicam agent --server-url https://hub.example.com --server-key KEY   # the agent of this computer
+    python -m iyicam serve --local --root ~/jobs    # the web app (the CAM runs in the browser); files of this computer (docs/web.md)
+    python -m iyicam serve --host 0.0.0.0           # ... for a phone on the same network; files come from an agent
+    python -m iyicam agent --server https://iyicam.example.com --key KEY --root ~/jobs   # shares folders of this computer
 """
 from __future__ import annotations
 
@@ -52,30 +52,22 @@ def cmd_selftest(a) -> int:
 
 
 def cmd_serve(a) -> int:
-    """The web page for a phone (own key, no other program needed); see docs/web.md."""
-    from .service import server
+    """The web app and the meeting point of browsers and the agent (no CAM here: it runs in the browser); see docs/web.md."""
+    from .service.keys import KeyStore
+    from .share import server
     if a.show_key or a.new_key:
-        keys = server.KeyStore()
+        keys = KeyStore()
         print(keys.rotate() if a.new_key else keys.get())
         return 0
-    if a.no_plugins:
-        os.environ["IYICAM_SERVICE_PLUGINS"] = "0"
-    if a.no_plugin_install:
-        os.environ["IYICAM_PLUGIN_INSTALL"] = "off"
-    return server.serve(a.host, a.port, trust_proxy=a.trust_proxy, max_body=a.max_upload_mb * 1024 * 1024,
-                        verbose=not a.quiet, roots=a.root or None, files=not a.no_files, hub=a.hub,
-                        fallback=not a.no_fallback)
+    return server.serve(a.host, a.port, local=a.local, roots=a.root or None, pyodide_dir=a.pyodide,
+                        trust_proxy=a.trust_proxy, max_file_mb=a.max_file_mb, verbose=not a.quiet)
 
 
 def cmd_agent(a) -> int:
-    """The agent of this computer for a hub (``iyicam serve --hub``): its engine and its files; see docs/web.md."""
-    from .service import agent
-    if a.no_plugins:
-        os.environ["IYICAM_SERVICE_PLUGINS"] = "0"
-    if a.no_plugin_install:
-        os.environ["IYICAM_PLUGIN_INSTALL"] = "off"
-    return agent.run(a.server_url, a.server_key, name=a.name, roots=a.root or None, no_files=a.no_files,
-                     show_key=a.show_key, new_key=a.new_key, setup=a.setup)
+    """The agent of this computer: shares folders with the web app through a server; see docs/web.md."""
+    from .share import agent
+    return agent.run(a.server, a.key or os.environ.get("IYICAM_KEY", ""), roots=a.root or None, name=a.name,
+                     max_file_mb=a.max_file_mb, quiet=a.quiet)
 
 
 def cmd_posts(a) -> int:
@@ -338,48 +330,34 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("plugins", help="list plugins")
     s = sub.add_parser("selftest", help="use every part of the program once and report what does not work")
     s.add_argument("--no-gui", action="store_true", help="leave out the window (a machine without Qt)")
-    s = sub.add_parser("serve", help="a web page for a phone or any browser, with a key of its own")
+    s = sub.add_parser("serve", help="the web app for any browser (the CAM runs in the browser), with a key of its own")
     s.add_argument("--host", default="127.0.0.1",
                    help="address to listen on; 0.0.0.0 = every network of this computer (a phone needs it)")
     s.add_argument("--port", type=int, default=8300)
+    s.add_argument("--local", action="store_true",
+                   help="the files of THIS computer are shared with the app (the folders of --root); without it files come "
+                        "from an agent (iyicam agent) and the app still opens and saves files of the device itself")
+    s.add_argument("--root", action="append", metavar="FOLDER",
+                   help="with --local: a folder the app may open and save files in (repeat it for more; "
+                        "default: IYICAM_ROOTS, else the home folder)")
+    s.add_argument("--pyodide", metavar="DIR",
+                   help="a Pyodide 0.27.7 'full' folder to serve instead of the jsDelivr CDN (offline use); wheels of ezdxf, "
+                        "svgelements and their dependencies put in it are installed from there instead of from PyPI")
     s.add_argument("--show-key", action="store_true", help="print the key and stop")
     s.add_argument("--new-key", action="store_true",
-                   help="make a new key and print it; every signed-in browser is signed out at once")
+                   help="make a new key and print it; every signed-in browser and agent is signed out at once")
     s.add_argument("--trust-proxy", action="store_true",
                    help="behind a reverse proxy: take the client address and scheme from X-Forwarded-For / -Proto")
-    s.add_argument("--max-upload-mb", type=int, default=64, help="largest request (a drawing as base64), MB")
-    s.add_argument("--root", action="append", metavar="FOLDER",
-                   help="a folder of this computer the page may open and save files in (repeat it for more; "
-                        "default: IYICAM_ROOTS, else the home folder)")
-    s.add_argument("--no-files", action="store_true",
-                   help="the page cannot open or save files of this computer (it can still upload and download)")
-    s.add_argument("--hub", action="store_true",
-                   help="a hub: no engine and no files here, agents (iyicam agent) connect to it and a browser signs in "
-                        "with the client key of an agent; the key of this server only lets agents register")
-    s.add_argument("--no-plugin-install", action="store_true",
-                   help="the page cannot install or remove plugins (a plugin is a program that runs with your rights); "
-                        "also IYICAM_PLUGIN_INSTALL=off")
-    s.add_argument("--no-fallback", action="store_true",
-                   help="with --hub: a browser whose agent is not connected is told so; without it the engine of this "
-                        "server answers then (an agent that is connected always does the work)")
+    s.add_argument("--max-file-mb", type=int, default=64, help="largest file that is read or written through the server, MB")
     s.add_argument("--quiet", action="store_true", help="do not log every request")
-    s = sub.add_parser("agent", help="the agent of this computer: its engine and files for a hub (iyicam serve --hub)")
-    s.add_argument("--server-url", metavar="URL", help="address of the hub (https://...); kept for the next runs")
-    s.add_argument("--server-key", metavar="KEY",
-                   help="the server key of the hub ('iyicam serve --show-key' there; or IYICAM_SERVER_KEY); kept")
-    s.add_argument("--name", help="name of this computer as the hub shows it (default: the computer name)")
-    s.add_argument("--no-plugin-install", action="store_true",
-                   help="the page cannot install or remove plugins on this computer (IYICAM_PLUGIN_INSTALL=off)")
+    s = sub.add_parser("agent", help="share folders of this computer with the web app, through a server (no CAM here)")
+    s.add_argument("--server", metavar="URL", required=True, help="address of the server (iyicam serve), e.g. https://iyicam.example.com")
+    s.add_argument("--key", metavar="KEY", help="the key of the server (iyicam serve --show-key there; or IYICAM_KEY)")
     s.add_argument("--root", action="append", metavar="FOLDER",
-                   help="a folder of this computer the page may open and save files in (repeat it for more; kept; "
-                        "default: IYICAM_ROOTS, else the home folder)")
-    s.add_argument("--no-files", action="store_true", help="no access to files of this computer (kept)")
-    s.add_argument("--setup", action="store_true",
-                   help="keep the settings and register at the hub (this checks the address and the server key), "
-                        "print the client key and stop; nothing is kept when the hub does not take it")
-    s.add_argument("--show-key", action="store_true", help="print the client key (what a browser signs in with) and stop")
-    s.add_argument("--new-key", action="store_true",
-                   help="make a new client key and register it at the hub; the old one stops working at once")
+                   help="a folder to share (repeat it for more; default: IYICAM_ROOTS, else the home folder)")
+    s.add_argument("--name", help="name of this computer as the app shows it (default: the computer name)")
+    s.add_argument("--max-file-mb", type=int, default=64, help="largest file that is read or written, MB")
+    s.add_argument("--quiet", action="store_true", help="log only problems")
     s = sub.add_parser("info", help="summarise a project")
     s.add_argument("project")
     s = sub.add_parser("gcode", help="calculate toolpaths and write G-code")
@@ -466,7 +444,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--apply-squeeze", action="store_true",
                    help="take the squeezed layout when it is better (else it is only suggested)")
     a = ap.parse_args(argv)
-    if a.cmd not in ("serve", "agent"):        # (the service registers everything itself, plugins included)
+    if a.cmd not in ("serve", "agent"):        # (serve and agent do no CAM)
         _setup(not a.no_plugins)
     try:
         return {"posts": cmd_posts, "plugins": cmd_plugins, "info": cmd_info, "gcode": cmd_gcode,

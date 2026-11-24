@@ -1,7 +1,7 @@
 """Keys: the key of a server or of an agent is 24 letters and digits, made once and kept in a file.
 
-Shared by the web server (``iyicam serve``, :mod:`iyicam.service.server`), the hub in it (:mod:`iyicam.service.hub`)
-and the agent (:mod:`iyicam.service.agent`).  Nothing here talks to a network.
+Used by the web server (``iyicam serve``, :mod:`iyicam.share.server`), which the agent (:mod:`iyicam.share.agent`) signs in
+to with the same key.  Nothing here talks to a network.
 """
 from __future__ import annotations
 

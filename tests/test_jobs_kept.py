@@ -317,11 +317,6 @@ def test_the_operations_are_checked(tmp_path):
     assert host.handle("jobs", {})["jobs"] == []                           # (only a long calculation is kept)
 
 
-def test_the_page_can_call_the_new_operations():
-    from iyicam.service.api import API_OPS
-    assert {"jobs", "job.dismiss"} <= API_OPS
-
-
 def test_a_default_service_keeps_its_jobs_in_the_user_folder(tmp_path, monkeypatch):
     monkeypatch.setenv("IYICAM_HOME", str(tmp_path / "home"))
     host = ServiceHost()
@@ -335,74 +330,3 @@ def test_a_default_service_keeps_its_jobs_in_the_user_folder(tmp_path, monkeypat
 
 def _settings():
     return {"width": 1000, "height": 800, "iterations": 1}
-
-
-def test_the_web_server_gives_the_new_operations_to_a_signed_in_browser(tmp_path):
-    import http.client
-
-    from iyicam.service import server as srv
-    key = "ABCDEF-GHJKMN-PQRSTU-VWXYZ2"
-    s = srv.make_server("127.0.0.1", 0, key=key, service=ServiceHost(store=tmp_path / "jobs"), files=False)
-    threading.Thread(target=s.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True).start()
-    try:
-        cookie = {}
-
-        def call(path, body):
-            conn = http.client.HTTPConnection("127.0.0.1", s.server_address[1], timeout=60)
-            conn.request("POST", path, json.dumps(body), {"Content-Type": "application/json", **cookie})
-            r = conn.getresponse()
-            data = json.loads(r.read() or b"null")
-            sc = r.getheader("Set-Cookie")
-            if sc:
-                cookie["Cookie"] = sc.split(";", 1)[0]
-            conn.close()
-            return r.status, data
-
-        assert call("/api/jobs", {})[0] == 401                                    # (not without the key)
-        assert call("/api/login", {"key": key})[0] == 200
-        status, out = call("/api/job.start", {"op": "nest", "payload": {"project": nest_project(), "settings": _settings()},
-                                              "keep": meta("through the server"), "wait": 20000})
-        assert status == 200 and out["state"] == "done"
-        status, listing = call("/api/jobs", {"device": LAPTOP})
-        assert status == 200 and listing["jobs"][0]["title"] == "through the server" and not listing["jobs"][0]["delivered"]
-        status, got = call("/api/job.result", {"id": out["id"], "device": LAPTOP})
-        assert status == 200 and got["project"]
-        assert call("/api/jobs", {"device": LAPTOP})[1]["jobs"][0]["delivered"] is True
-        assert call("/api/job.dismiss", {"id": out["id"]})[0] == 200 and call("/api/jobs", {})[1]["jobs"] == []
-        assert call("/api/job.dismiss", {"id": out["id"]})[0] == 404                   # (job_not_found)
-    finally:
-        s.shutdown()
-        s.server_close()
-
-
-def test_a_kept_job_runs_at_the_agent_and_waits_there_for_a_phone_that_comes_back(tmp_path):
-    """The phone starts a nesting through the hub and is gone (a new session, nothing in its hands but its device id): the job
-    went on at the agent, and the phone, back, is told what it has not received and asks for it."""
-    from test_hub import Setup
-    folder = tmp_path / "files"
-    folder.mkdir()
-    setup = Setup(tmp_path, folder)
-    try:
-        setup.agent()
-        phone = setup.browser()
-        status, started = phone.api("job.start", {"op": "nest", "payload": {"project": nest_project(), "settings": _settings()},
-                                                  "keep": meta("through the hub")})
-        assert status == 200 and started["state"] in ("queued", "done")
-        # the phone is gone: its cookie and its page are lost, the device id is what it keeps
-        back = setup.browser()
-        deadline = time.time() + 30
-        row = None
-        while time.time() < deadline:
-            row = back.api("jobs", {"device": PHONE})[1]["jobs"][0]
-            if row["state"] in ("done", "error"):
-                break
-            time.sleep(0.1)
-        assert row["state"] == "done" and row["mine"] and row["title"] == "through the hub" and row["has_result"]
-        if started["state"] == "queued":
-            assert not row["delivered"]                                         # (finished and not given: the page asks)
-        status, got = back.api("job.result", {"id": row["id"], "device": PHONE})
-        assert status == 200 and got["project"]["sheets"]
-        assert back.api("jobs", {"device": PHONE})[1]["jobs"][0]["delivered"]
-        assert not back.api("jobs", {"device": LAPTOP})[1]["jobs"][0]["delivered"]  # (another device can still ask for it)
-    finally:
-        setup.close()

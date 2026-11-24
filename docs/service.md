@@ -1,8 +1,10 @@
 # iyiCAM as a service (`iyicam.service`)
 
-The engine behind a plain JSON interface: no window, no `Controller`, no files the caller has to name. It is what the
-mobile page of the [CNC-Assistant](https://github.com/ac2f/Cnc-Assistant) project talks to (through its agent), and
-it is just as useful from a script or another program.
+The engine behind a plain JSON interface: no window, no `Controller`, no files the caller has to name. The **web app runs
+it in the browser** (Pyodide in a Web Worker, through `iyicam/webapp/bridge.py`, which calls the `op_<name>` functions of
+`iyicam/service/ops.py`; see [web.md](web.md) and [webapp/](webapp/)). `ServiceHost` below (with its jobs) is for scripts,
+other programs and the tests: there is no longer a server that does the CAM work, and the old `/api/<operation>`, hub and
+agent of the earlier web page are gone.
 
 Every operation takes the **whole project as data** (the `.icam` JSON) and returns data. Nothing is remembered between
 calls: the project lives where it is edited, this runs where the heavy work and the files are. What the GUI's

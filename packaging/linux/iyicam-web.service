@@ -1,7 +1,7 @@
 # iyiCAM web service (systemd). packaging/linux/install.sh fills in this template
 # and installs it as /etc/systemd/system/iyicam-web.service.
 [Unit]
-Description=iyiCAM web service (the CAM engine behind a page for a phone or any browser)
+Description=iyiCAM web app server (the app and the files; the CAM runs in the browser)
 After=network.target
 
 [Service]
@@ -21,12 +21,12 @@ Environment=IYICAM_ROOTS=@ROOTS@
 
 # Runs with the venv python. By default it listens on 127.0.0.1 only and a reverse proxy adds HTTPS;
 # @PROXY@ is "--trust-proxy" exactly in that case (see docs/web.md before listening on another address).
-# @FILES@ is "--no-files" when the page is not to open or save files of this computer at all.
-# @HUB@ is "--hub" for a hub: no files here (the engine of the server answers only while an agent is away), agents (iyicam agent, on the computers of the people)
-# connect to it and a browser signs in with the client key of an agent (docs/web.md).
+# @LOCAL@ is "--local" when the page is to open and save files of THIS computer (the folders of IYICAM_ROOTS above); it is
+# empty for a server that only passes files to an agent (iyicam agent, on the workshop PC: it connects out to this server)
+# or that shares no files at all. The CAM itself always runs in the browser (docs/web.md).
 # The key is made at the first start (/var/lib/iyicam/server.key) and stays valid until it is replaced
-# with:  iyicam serve --new-key  (a running server notices it at once). For a hub it is the key that lets agents in.
-ExecStart=@APP@/venv/bin/python -m iyicam serve --host @HOST@ --port @PORT@ @PROXY@ @FILES@ @HUB@ --quiet
+# with:  iyicam serve --new-key  (a running server notices it at once). Browsers and agents sign in with it.
+ExecStart=@APP@/venv/bin/python -m iyicam serve --host @HOST@ --port @PORT@ @PROXY@ @LOCAL@ --quiet
 
 Restart=on-failure
 RestartSec=3

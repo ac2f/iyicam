@@ -179,23 +179,3 @@ def test_a_plugin_that_was_not_found_or_an_odd_action_is_said(host):
         with pytest.raises(ServiceError) as e:
             host.call("plugin_set", {"key": key, "action": action})
         assert e.value.code == code
-
-
-def test_a_hubs_own_engine_never_installs_a_plugin():
-    """The engine of a hub server is shared by agents that are away: the plugins are for the computer of the agent."""
-    from iyicam.service.hub import NEEDS_AGENT, Fallback
-    assert {"plugins", "plugin_install", "plugin_set"} <= set(NEEDS_AGENT)
-    status, out = Fallback(None).call("a" * 32, "plugin_install", {"name": "x.py", "data_b64": b64(HELLO)})
-    assert (status, out["error"]) == (503, "needs_agent")
-
-
-def test_the_operations_are_part_of_the_api_and_the_command_line_can_turn_installing_off(monkeypatch):
-    from iyicam import cli
-    from iyicam.service.api import API_OPS
-    assert {"plugins", "plugin_install", "plugin_set"} <= API_OPS
-    monkeypatch.delenv("IYICAM_PLUGIN_INSTALL", raising=False)
-    seen = {}
-    from iyicam.service import server
-    monkeypatch.setattr(server, "serve", lambda *a, **k: seen.update(env=__import__("os").environ.get("IYICAM_PLUGIN_INSTALL")) or 0)
-    assert cli.main(["--no-plugins", "serve", "--no-plugin-install"]) == 0
-    assert seen["env"] == "off"

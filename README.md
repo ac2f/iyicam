@@ -197,18 +197,11 @@ G-code, simulation and nesting, with the project passed as data and long work as
 [CNC-Assistant](https://github.com/ac2f/Cnc-Assistant) mobile page uses it to open the drawings on a computer from a
 phone; see [docs/service.md](docs/service.md).
 
-`iyicam serve` puts that service behind a web page of its own, with a key: open a drawing on a phone, **edit it**
-(select, move to coordinates you type, draw, edit nodes, Shift / Ctrl / Alt as buttons, layers to reorder and select, every
-vector command of the program, nesting, undo; **a nesting goes on at the server when the connection is lost or the browser is closed, and the last three jobs can be asked for again**), add toolpaths with their cut
-order, calculate, **look at the toolpaths (colours by depth, arrows, a playback) and see, reorder and tap the cut order on the Preview tab, with the change calculated and shown first**, write G-code and download it, with nothing else installed (no Qt, no CNC-Assistant); the page can also
-browse, open and save files of the computer it runs on, inside the folders you name (`--root`); see
-[docs/web.md](docs/web.md). On a Linux server `packaging/linux/install.sh` installs it as a systemd service
-(`iyicam-web`), and ready-made Caddy, nginx and HAProxy examples put HTTPS in front of it
-([how](docs/web.md#a-server-linux-systemd-and-https)). When the server is not the computer with the drawings, run
-`iyicam serve --hub` on the server and `iyicam agent` on that computer (it connects outward; the phone signs in with the
-key the agent shows and works with the files of that computer, and while the agent is away the server's own engine answers,
-a connected agent always doing the work;
-[how](docs/web.md#a-hub-and-an-agent-the-server-somewhere-else-the-files-here)).
+`iyicam serve` serves the **web app**: the desktop program's interface in a browser, where **the browser does all the CAM
+work** (this same Python package runs in the page with Pyodide, so the toolpaths and the G-code are the desktop's). The server
+only serves the app and signs people in with a key; `iyicam agent` on the workshop PC (it connects outward) shares folders so the
+app can open and save files there, or `iyicam serve --local --root DIR` shares the folders of the computer it runs on. See
+[docs/web.md](docs/web.md) and [docs/webapp/](docs/webapp/).
 
 ## Installation
 
@@ -323,10 +316,9 @@ iyicam/
   plugins/     plugin API and manager
   builtins/    built-in features, registered like a plugin
   gui/         PySide6 user interface (controller, canvas, tools, panels, dialogs)
-  service/     the engine behind a JSON interface (no window): used by the mobile page, see docs/service.md;
-               server.py is `iyicam serve`, files.py its access to folders, hub.py and agent.py the hub and
-               the agent of a server apart from the computer, see docs/web.md
-  web/         the page `iyicam serve` shows (plain HTML, CSS and JavaScript, no build step)
+  service/     the engine behind a JSON interface (no window): ops.py is what the web app calls in the browser, see docs/service.md
+  webapp/      the web app (plain HTML, CSS and JavaScript, no build step) and the engine that runs this package in the browser
+  share/       `iyicam serve` (the app, the key, the files API) and `iyicam agent` (shares folders), see docs/web.md
   cli.py       command line interface
 examples/plugins/   example plugins (surfacing toolpath, G-code statistics, box maker)
 docs/               plugin, post-processor and service documentation

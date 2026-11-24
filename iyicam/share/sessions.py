@@ -7,7 +7,7 @@ that is restarted (an update, a reboot of the computer) does not sign everybody 
 
 Only a hash of a token is kept (in memory and in the file): the file is of no use to anyone who reads it.  A session
 also holds a proof of the key it was made with (a digest), so **a new key ends every session**, the old ones in the file
-too.  Shared by the server (:mod:`iyicam.service.server`) and the hub (:mod:`iyicam.service.hub`).
+too.  Used by the server (:mod:`iyicam.share.server`).
 """
 from __future__ import annotations
 

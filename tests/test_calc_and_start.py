@@ -13,7 +13,6 @@ from iyicam.core.calc import evaluate, is_sum
 from iyicam.core.registry import REGISTRY
 from iyicam.post.export import post_toolpaths
 
-WEB = Path(__file__).resolve().parents[1] / "iyicam" / "web"
 
 
 @pytest.mark.parametrize("text,want", [("12+3.5", 15.5), ("(100-8)/2", 46.0), ("2*7,5", 15.0), ("1,5+2,5", 4.0), ("-3+5", 2.0),
@@ -55,25 +54,6 @@ def test_spin_boxes_take_sums():
     assert o.value() == 2.5
     o.setText("")
     assert o.value() is None
-
-
-def test_the_page_works_out_sums_the_same_way():
-    node = subprocess.run(["node", "--version"], capture_output=True)
-    if node.returncode:
-        pytest.skip("no node")
-    src = (WEB / "app.js").read_text(encoding="utf-8")
-    m = re.search(r"function calc\(text\) \{.*?\n\}\nconst isSum", src, re.S)
-    assert m
-    body = m.group(0)[: -len("const isSum")]
-    cases = [("12+3.5", 15.5), ("(100-8)/2", 46), ("2*7,5", 15), ("-3+5", 2), ("2^3", 8), ("1,5+2,5", 4), ("3x4", 12)]
-    bad = ["", "abc", "12+", "1.2.3", "10/0", "()", "alert(1)"]
-    js = body + "\nconst out=[" + ",".join(f"calc({t!r})" for t, _ in cases) + "];\nconst bad=[" + ",".join(
-        f"calc({t!r})" for t in bad) + "];\nconsole.log(JSON.stringify([out, bad.map(Number.isNaN)]));"
-    r = subprocess.run(["node", "-e", js], capture_output=True, text=True)
-    assert r.returncode == 0, r.stderr
-    import json
-    out, isnan = json.loads(r.stdout)
-    assert out == [w for _, w in cases] and all(isnan)
 
 
 def first_lines(home_z=None, header=None, n=2, **options):

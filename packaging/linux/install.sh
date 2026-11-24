@@ -20,12 +20,9 @@
 #    IYICAM_ROOTS=/var/lib/iyicam/files
 #                            the folders (separated by ":") in which the page may open and save files; the
 #                            default is made here. A folder of your own must be writable by the user "iyicam".
-#    IYICAM_FILES=off        the page cannot open or save files of this computer at all
-#    IYICAM_HUB=on           a hub: this server has no files; the agents (iyicam agent) on the computers of
-#                            the people connect to it, and a browser signs in with the client key of an agent
-#                            (docs/web.md). An agent that is connected always does the work; while it is away
-#                            the engine of this server answers
-#    IYICAM_HUB_FALLBACK=off with IYICAM_HUB=on: a browser whose agent is away is only told so (--no-fallback)
+#    IYICAM_FILES=off        the page cannot open or save files of this computer (serve without --local)
+#    IYICAM_HUB=on           this server has no files of its own: an agent (iyicam agent) on the workshop PC connects
+#                            to it and the page works with that PC's folders (docs/web.md). The CAM always runs in the browser.
 #    PYTHON=python3.12       the Python to use (3.11 or newer)
 #  The project directory must NOT be under /root or /home (the service user
 #  cannot read it); recommended: /opt/iyicam
@@ -55,66 +52,14 @@ for r in "${ROOT_LIST[@]}"; do
   [[ "$r" == /* ]] || die "IYICAM_ROOTS: '$r' is not an absolute folder name."
   RW_PATHS+="-$r "                      # ("-": a folder that is missing when the service starts does not stop it)
 done
-FILES_FLAG=""
+LOCAL_FLAG="--local"                  # (the files of this computer; not with an agent, not when switched off)
 case "${IYICAM_FILES:-on}" in
-  off|OFF|no|0) FILES_FLAG="--no-files" ;;
+  off|OFF|no|0) LOCAL_FLAG="" ;;
 esac
-HUB_FLAG=""
+HUB=""
 case "${IYICAM_HUB:-off}" in
-  on|ON|yes|1) HUB_FLAG="--hub" ;;
+  on|ON|yes|1) HUB=1; LOCAL_FLAG="" ;;
 esac
-if [[ -n "$HUB_FLAG" ]]; then
-  case "${IYICAM_HUB_FALLBACK:-on}" in
-    off|OFF|no|0) HUB_FLAG="--hub --no-fallback" ;;
-  esac
-fi
-case "$APP" in
-  /root|/root/*|/home|/home/*)
-    die "The project directory ($APP) is not accessible to the service user. Example:
-       git clone <repo> /opt/iyicam && sudo bash /opt/iyicam/packaging/linux/install.sh" ;;
-esac
-[[ -f "$APP/packaging/linux/$SERVICE.service" ]] || die "$APP/packaging/linux/$SERVICE.service is missing."
-
-# "--trust-proxy" makes the server believe X-Forwarded-For / -Proto. That is only safe when nothing but the
-# reverse proxy can reach it, i.e. when it listens on this computer only.
-case "$HOST" in
-  127.*|::1|localhost) PROXY="--trust-proxy" ;;
-  *) PROXY="" ;;
-esac
-
-echo "iyiCAM web service installation  ->  $APP"
-
-# 1) Python 3.11+ and the venv module
-py_ok() { "$1" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' >/dev/null 2>&1; }
-find_python() {
-  local c
-  for c in python3.13 python3.12 python3.11 python3; do
-    if command -v "$c" >/dev/null 2>&1 && py_ok "$c"; then command -v "$c"; return 0; fi
-  done
-  return 1
-}
-if [[ -n "${PYTHON:-}" ]]; then
-  command -v "$PYTHON" >/dev/null 2>&1 && py_ok "$PYTHON" || die "PYTHON=$PYTHON is not a Python 3.11 or newer."
-  PY="$(command -v "$PYTHON")"
-else
-  PY="$(find_python)" || PY=""
-  if [[ -z "$PY" ]] && command -v apt-get >/dev/null; then
-    apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3
-    PY="$(find_python)" || PY=""
-  fi
-  [[ -n "$PY" ]] || die "iyiCAM needs Python 3.11 or newer and this system has $(python3 --version 2>&1 || echo none).
-       Install a newer one (Debian 12 / Ubuntu 24.04 have it; Ubuntu 22.04: the deadsnakes PPA, or uv),
-       then:  sudo PYTHON=python3.12 bash packaging/linux/install.sh"
-fi
-if ! "$PY" -c 'import ensurepip, venv' >/dev/null 2>&1; then
-  command -v apt-get >/dev/null || die "the venv module of $PY is missing; install the 'python3-venv' package."
-  apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3-venv
-  "$PY" -c 'import ensurepip, venv' >/dev/null 2>&1 \
-    || die "the venv module of $PY is missing; install the matching package (for example python3.12-venv)."
-fi
-step 1/4 "python ready: $("$PY" --version) ($PY)"
-
-# 2) service user
 if ! id "$SERVICE_USER" >/dev/null 2>&1; then
   useradd --system --no-create-home --home-dir /nonexistent \
           --shell /usr/sbin/nologin "$SERVICE_USER"
@@ -122,7 +67,7 @@ fi
 
 # the folders of the page: the default one is made here (inside the state folder, owned by the service user, so
 # that systemd leaves it as it is); a folder of your own that is missing is made, one that exists is left alone
-if [[ -z "$FILES_FLAG" && -z "$HUB_FLAG" ]]; then        # (a hub has no files of its own)
+if [[ -n "$LOCAL_FLAG" ]]; then        # (a server for an agent has no files of its own)
   for r in "${ROOT_LIST[@]}"; do
     if [[ "$r" == "$DEFAULT_ROOT" ]]; then
       install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0700 "$STATE_DIR" "$DEFAULT_ROOT"
@@ -150,13 +95,13 @@ trap 'rm -f "$PIP_LOG"' EXIT
   && "$APP/venv/bin/python" -m pip install --quiet --disable-pip-version-check -e "$APP"; } \
   >"$PIP_LOG" 2>&1 || { cat "$PIP_LOG" >&2
     die "pip installation failed (if a package had to be compiled: apt-get install build-essential python3-dev)."; }
-"$APP/venv/bin/python" -c 'import iyicam.service.server' || die "iyiCAM was installed but the web service cannot be imported."
+"$APP/venv/bin/python" -c 'import iyicam.share.server' || die "iyiCAM was installed but the web server cannot be imported."
 step 3/4 "venv ready: $APP/venv/bin/python"
 
 # 4) systemd
 sed -e "s|@APP@|$APP|g" -e "s|@SERVICE_USER@|$SERVICE_USER|g" \
     -e "s|@HOST@|$HOST|g" -e "s|@PORT@|$PORT|g" -e "s|@PROXY@|$PROXY|g" \
-    -e "s|@FILES@|$FILES_FLAG|g" -e "s|@HUB@|$HUB_FLAG|g" -e "s|@ROOTS@|$ROOTS|g" -e "s|@RW_PATHS@|$RW_PATHS|g" \
+    -e "s|@LOCAL@|$LOCAL_FLAG|g" -e "s|@ROOTS@|$ROOTS|g" -e "s|@RW_PATHS@|$RW_PATHS|g" \
     "$APP/packaging/linux/$SERVICE.service" > "/etc/systemd/system/$SERVICE.service"
 systemctl daemon-reload
 systemctl enable "$SERVICE" >/dev/null 2>&1
@@ -178,20 +123,20 @@ echo "======================================================================"
 if [[ -n "${HEALTHY:-}" ]]; then echo "  INSTALLATION COMPLETE - the service is running at http://$HOST:$PORT"
 else echo "  The service was started but the health check did not pass:  journalctl -u $SERVICE -n 50"; fi
 echo
-if [[ -n "$HUB_FLAG" ]]; then
-  echo "  Mode            : HUB (no engine and no files here; the agents have them)"
-  echo "  Server key      : $STATE_DIR/server.key   (made at the first start; it lets AGENTS register, it is not typed on the page)"
+if [[ -n "$HUB" ]]; then
+  echo "  Mode            : for an AGENT (no files here; the agent on the workshop PC shares its folders)"
+  echo "  Key             : $STATE_DIR/server.key   (made at the first start; typed on the page AND given to the agent)"
   echo "                    to view it:  sudo cat $STATE_DIR/server.key"
-  echo "  On the computer : iyicam agent --server-url https://<this server's host name> --server-key <the server key>"
-  echo "                    (docs/web.md; the agent shows the CLIENT key: that is what is typed on the page)"
-  echo "  New server key  : sudo -u $SERVICE_USER IYICAM_HOME=$STATE_DIR $APP/venv/bin/iyicam serve --new-key"
-  echo "                    (every agent then needs the new one:  iyicam agent --server-key <new key>)"
+  echo "  On the computer : iyicam agent --server https://<this server's host name> --key <the key> --root <folder>"
+  echo "                    (docs/web.md)"
+  echo "  New key         : sudo -u $SERVICE_USER IYICAM_HOME=$STATE_DIR $APP/venv/bin/iyicam serve --new-key"
+  echo "                    (every browser is signed out and every agent then needs the new one)"
 else
   echo "  Key             : $STATE_DIR/server.key   (made at the first start; type it on the page)"
   echo "                    to view it:  sudo cat $STATE_DIR/server.key"
   echo "  New key         : sudo -u $SERVICE_USER IYICAM_HOME=$STATE_DIR $APP/venv/bin/iyicam serve --new-key"
   echo "                    (prints it; every signed-in browser is signed out at once)"
-  if [[ -n "$FILES_FLAG" ]]; then
+  if [[ -z "$LOCAL_FLAG" ]]; then
     echo "  Files           : off (the page cannot open or save files of this computer)"
   else
     echo "  Files           : the page opens and saves files in:  ${ROOTS//:/  }"
