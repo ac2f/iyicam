@@ -1674,6 +1674,10 @@ class NestingDialog(RemembersSize, QDialog):
             Param("margin", "Border gap", "length", 10.0, min=0.0, group="Sheets"),
             Param("spacing", "Gap between parts", "length", tool_d + 2.0, min=0.0, group="Sheets",
                   help="Usually the cutter diameter plus a little clearance"),
+            Param("min_leftover", "Leftover narrower than this is not used", "length", 150.0, min=0.0, group="Sheets",
+                  help="On a sheet with parts on it and on leftover plates: the strips between the cuts already made and "
+                       "the pockets the parts close in, narrower than this, are left alone (no part is put there). "
+                       "0 = every free spot is used"),
             Param("target", "Place on", "choice", "current",
                   choices=[("current", "Current sheet first (around what stays on it), then the stock"),
                            ("all", "All sheets first (around what stays on them), then the stock")]
@@ -1998,7 +2002,7 @@ class NestingDialog(RemembersSize, QDialog):
                           corner=v["corner"], stock_order=v["plate_order"], reserve_quantity=int(v["reserve_quantity"]),
                           squeeze_angle=v["squeeze_angle"] if squeezing else 0.0,
                           squeeze_margin=v["squeeze_margin"] if squeezing else 0.0,
-                          squeeze_step=v["squeeze_step"])
+                          squeeze_step=v["squeeze_step"], min_leftover=v["min_leftover"])
         quantities = {p.root.id: sp.value() for p, sp in zip(self.parts, self.qty)}
         part_rules = {p.root.id: ed.rule() for p, ed in zip(self.parts, self.rules)
                       if ed.rule()["mode"] != "inherit"}

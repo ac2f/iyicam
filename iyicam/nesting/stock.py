@@ -10,16 +10,38 @@ from .parts import _region, group_parts, part_outline
 __all__ = ["StockItem", "to_container", "sheet_container", "stock_from_vectors", "leftover_of_sheet", "use_up"]
 
 
-def to_container(item: StockItem) -> Container:
-    return Container(item.region(), [], item.quantity, item.leftover, item.name, item)
+def wide_enough(polys, min_width: float):
+    """The part of the material ``polys`` where a disc of ``min_width`` fits (its corners kept sharp): strips and pockets
+    narrower than that are left out."""
+    if min_width <= 0 or not polys:
+        return polys
+    opened = clip.offset(clip.offset(polys, -min_width / 2, "round"), min_width / 2, "miter")
+    return clip.boolean(opened, polys, "intersection") if opened else []
 
 
-def sheet_container(sheet: Sheet, moving: set[str] | None = None, tol: float = 0.05) -> Container:
+def to_container(item: StockItem, min_width: float = 0.0) -> Container:
+    """A plate of the stock; a leftover of a shape of its own without its arms narrower than ``min_width``. A plain
+    rectangle, and a plate narrower than that as a whole, are as they are: they were kept on purpose."""
+    region = item.region()
+    if min_width > 0 and item.leftover and item.outline and min(item.width, item.height) >= min_width:
+        wide = wide_enough(clip.normalize(region), min_width)
+        if wide:
+            region = wide
+    return Container(region, [], item.quantity, item.leftover, item.name, item)
+
+
+def sheet_container(sheet: Sheet, moving: set[str] | None = None, tol: float = 0.05, min_width: float = 0.0) -> Container:
     """The free area of a sheet: its material, with the parts that stay on it as obstacles.
 
-    Vectors in ``moving`` (the ones being nested) do not count."""
+    Vectors in ``moving`` (the ones being nested) do not count. With ``min_width`` the material left between those parts
+    that is narrower than that (strips between cuts, pockets closed in by parts) is an obstacle too: no part is put there."""
     fixed = [o for o in sheet.vectors if not moving or o.id not in moving]
     obstacles = [p for part in group_parts(fixed, tol) for p in part_outline(part, tol)]
+    if min_width > 0 and obstacles and min(sheet.width, sheet.height) >= min_width:   # (a narrow sheet as a whole: as it is)
+        material = clip.boolean(clip.normalize(sheet.region()), clip.normalize(obstacles, "nonzero"), "difference")
+        narrow = clip.boolean(material, wide_enough(material, min_width), "difference") if material else []
+        narrow = [q for q in narrow if abs(clip.area([q])) > 1.0 or clip.area([q]) < 0]
+        obstacles = obstacles + narrow
     return Container(sheet.region(), obstacles, 1, True, sheet.name, sheet)
 
 

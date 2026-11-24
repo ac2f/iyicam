@@ -56,7 +56,7 @@
     "proj.new": "＋ Boş proje", "proj.newname": "Yeni proje", "proj.sheetthk": "Kalınlık (bu sayfa)",
     "proj.home": "Ev konumu (makine sonunda gider)", "proj.rapid": "Hızlı hareket (mm/dk)", "proj.rotary": "Döner eksen (A)", "proj.rotdia": "Döner eksen çapı (mm)",
     "nest.title": "Yerleştirme (nesting)", "nest.plate": "Tabaka / rezerve plaka ebadı", "nest.w": "Genişlik (mm)", "nest.h": "Yükseklik (mm)", "nest.margin": "Kenar boşluğu (mm)",
-    "nest.spacing": "Parça aralığı (mm)", "nest.rot": "Dönüş adımı (°, 0 = dönme)", "nest.iter": "Arama (deneme sayısı)", "nest.sel": "Yalnız seçilileri yerleştir",
+    "nest.minLeftover": "Bundan dar fire kullanılmasın (mm, 0 = hepsi)", "nest.spacing": "Parça aralığı (mm)", "nest.rot": "Dönüş adımı (°, 0 = dönme)", "nest.iter": "Arama (deneme sayısı)", "nest.sel": "Yalnız seçilileri yerleştir",
     "nest.copies": "Her parçadan kaç tane", "nest.run": "Yerleştir", "nest.result": "{0} parça yerleşti, {1} sığmadı, {2} plaka.",
     "nest.nothing": "Yerleştirilecek vektör yok.", "nest.squeeze": "Sıkıştırma önerisi (°, 0 = yok)",
     "nest.how": "Dizme", "nest.arrange": "Parçalar nasıl dizilsin?", "nest.a.free": "Serbest (iç içe geçer, en az malzeme)",
@@ -143,7 +143,7 @@
     "proj.new": "＋ Empty project", "proj.newname": "New project", "proj.sheetthk": "Thickness (this sheet)",
     "proj.home": "Home position (where the machine ends)", "proj.rapid": "Rapid rate (mm/min)", "proj.rotary": "Rotary axis (A)", "proj.rotdia": "Rotary diameter (mm)",
     "nest.title": "Nesting", "nest.plate": "Sheet / reserve plate size", "nest.w": "Width (mm)", "nest.h": "Height (mm)", "nest.margin": "Border gap (mm)",
-    "nest.spacing": "Part spacing (mm)", "nest.rot": "Rotation step (°, 0 = no turning)", "nest.iter": "Search (attempts)", "nest.sel": "Nest only the selected",
+    "nest.minLeftover": "Leftover narrower than this is not used (mm, 0 = all)", "nest.spacing": "Part spacing (mm)", "nest.rot": "Rotation step (°, 0 = no turning)", "nest.iter": "Search (attempts)", "nest.sel": "Nest only the selected",
     "nest.copies": "Copies of each part", "nest.run": "Nest", "nest.result": "{0} part(s) placed, {1} did not fit, {2} plate(s).",
     "nest.nothing": "There is nothing to nest.", "nest.squeeze": "Squeeze suggestion (°, 0 = none)",
     "nest.how": "Arrangement", "nest.arrange": "How are the parts put down?", "nest.a.free": "Free (they interlock, least material)",
@@ -1100,7 +1100,7 @@
     toast(t("nest.result", n(r.placed), n(r.unplaced), S.project.sheets.length), "ok");
   }
   B.jobApply.nest = r => applyNest(r);                  // (jobs.js applies the result of a nesting asked for again)
-  const nestState = Object.assign({ arrange: "free", corner: "bl", gravity: "auto", plates: [], order: "listed", reserveQty: 0, noReserve: false, onSheet: false }, JSON.parse(B.store.get("iyicam.nest") || "null") || { margin: 10, spacing: 8, rotation: 90, iterations: 8, copies: 1, squeeze: 0 });
+  const nestState = Object.assign({ arrange: "free", corner: "bl", gravity: "auto", plates: [], order: "listed", reserveQty: 0, noReserve: false, onSheet: false, minLeftover: 150 }, JSON.parse(B.store.get("iyicam.nest") || "null") || { margin: 10, spacing: 8, rotation: 90, iterations: 8, copies: 1, squeeze: 0 });
   /** what the engine is asked: the plate, the gaps, the turning, and how the parts are put down (``arrange``: free, or in rows
    *  along X / columns along Y from a corner; free nesting may be kept to one direction) */
   /** the fields every shape of a plate asks for (the service builds the outline: ``iyicam.core.stock.shaped_outline``) */
@@ -1118,7 +1118,7 @@
   }
   function nestSettings(s) {
     const o = { width: s.width, height: s.height, margin: s.margin, spacing: s.spacing, rotation: s.rotation, iterations: s.iterations, squeeze_angle: s.squeeze || 0,
-                arrange: s.arrange || "free" };
+                arrange: s.arrange || "free", min_leftover: s.minLeftover ?? 150 };
     if (o.arrange !== "free") o.corner = s.corner || "bl";
     else if (s.gravity && s.gravity !== "auto") { o.gravity = s.gravity; o.gravity_only = true; }
     const plates = (s.plates || []).filter(p => p.quantity > 0 || p.quantity === 0);
@@ -1215,6 +1215,7 @@
       h("label", { class: "chk" }, noRes, t("nest.noreserve")), h("label", { class: "chk" }, onSheet, t("nest.onsheet")), onGroupBox,
       h("div", { class: "group-h" }, t("nest.how")),
       h("div", { class: "grid2" }, num(t("nest.margin"), "margin"), num(t("nest.spacing"), "spacing")),
+      num(t("nest.minLeftover"), "minLeftover"),
       h("div", { class: "grid2" }, num(t("nest.rot"), "rotation"), num(t("nest.copies"), "copies", { kind: "int", min: 1 })),
       h("div", { class: "grid2" }, num(t("nest.iter"), "iterations", { kind: "int", min: 1 }), num(t("nest.squeeze"), "squeeze")),
       arrangeBox,

@@ -227,8 +227,8 @@ def prepare_nesting(project: Project, objects: list[VectorObject], settings: Nes
     use_plates = stock is not None or use_sheets is not None
     if use_plates:
         moving_ids = {o.id for p in parts for o in p.objects}
-        containers = [sheet_container(s, moving_ids) for s in use_sheets or []]
-        containers += [to_container(it) for it in stock or []]
+        containers = [sheet_container(s, moving_ids, min_width=settings.min_leftover) for s in use_sheets or []]
+        containers += [to_container(it, settings.min_leftover) for it in stock or []]
         if new_sheets:          # the reserve plate: used last, when the plates before it are full
             containers.append(Container.rect(settings.sheet_width, settings.sheet_height, quantity=settings.reserve_quantity,
                                              name="Reserve", reserve=True))

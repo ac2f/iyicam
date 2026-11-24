@@ -104,6 +104,10 @@ class NestSettings:
     squeeze_angle: float = 0.0
     squeeze_margin: float = 0.0
     squeeze_step: float = 2.0
+    # on the free area of a sheet with parts on it and on leftover plates: what is narrower than this (mm) is not used: the
+    # strips between the cuts already made (a gap of 4.1 mm beside a cut of a 4 mm tool) and the pockets the parts close
+    # in. 0 = everything is used
+    min_leftover: float = 0.0
 
 
 GRAVITIES = ("left", "bottom", "compact", "reach_x", "reach_y", "diag")
