@@ -32,6 +32,7 @@ include = ["iyicam*"]
 
 [tool.setuptools.package-data]
 "iyicam.post" = ["builtin/*.toml"]
+"iyicam.core" = ["fonts/*"]           # the letters of Text (the browser has no system fonts)
 "iyicam.webapp" = ["**/*"]          # the web app: plain files, served as they are (no build step)
 
 [tool.pytest.ini_options]

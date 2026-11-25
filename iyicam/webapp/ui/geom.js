@@ -343,6 +343,13 @@ const G = {};
     return G.polyline(Array.from({ length: sides }, (_, i) => [cx + r * Math.cos(base + 2 * Math.PI * i / sides), cy + r * Math.sin(base + 2 * Math.PI * i / sides)]), true);
   };
 
+  /** a star: ``points`` tips on ``outer``, the valleys on ``inner`` (the same as the engine's shapes.star) */
+  G.star = (cx, cy, outer, inner, points, rotationDeg = 0) => {
+    points = Math.max(3, Math.round(points));
+    const base = rotationDeg * Math.PI / 180 + Math.PI / 2;
+    return G.polyline(Array.from({ length: points * 2 }, (_, i) => { const r = i % 2 === 0 ? outer : inner, a = base + Math.PI * i / points; return [cx + r * Math.cos(a), cy + r * Math.sin(a)]; }), true);
+  };
+
   // ------------------------------------------------------------------------------------ node editing (one contour)
   /** a node moved by (dx, dy), with the handles of the beziers that belong to it */
   G.moveNode = (c, k, dx, dy) => {

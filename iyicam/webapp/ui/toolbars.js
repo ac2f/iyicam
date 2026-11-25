@@ -59,7 +59,7 @@ export function buildToolbars(quick, draw) {
       b.classList.toggle("disabled", !ok);
       b.setAttribute("aria-disabled", String(!ok));
       b.classList.toggle("on", !!(r && r.checked && r.checked()));
-      if (!r && id !== "toolpaths.new") b.title = b.title.replace(/ — Not on the web yet$/, "") + " — Not on the web yet";
+      b.title = b.title.replace(/ — Not on the web yet$/, "") + (!r && id !== "toolpaths.new" ? " — Not on the web yet" : "");     // (a feature registered later loses the note)
     }
   }
   for (const e of ["docs", "project", "selection", "tool", "settings", "results"]) on(e, refresh);
