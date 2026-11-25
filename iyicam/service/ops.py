@@ -78,11 +78,13 @@ def load_project(d) -> Project:
         raise ServiceError("bad_request", "the project must be given as an object (the .icam JSON)")
     try:
         return project_from_dict(d)
-    except (ValueError, KeyError, TypeError, IndexError) as exc:
+    except (ValueError, KeyError, TypeError, IndexError, AttributeError) as exc:     # (a part of it of the wrong kind)
         raise ServiceError("invalid_project", f"not a valid iyiCAM project: {type(exc).__name__}: {exc}") from exc
 
 
 def _sheet_of(project: Project, sid) -> "object":
+    if not project.sheets:                          # (a blank project: nothing is on a sheet yet)
+        raise ServiceError("no_sheet", "the project has no sheet yet: add one first")
     if sid is None:
         return project.sheets[0]
     s = project.sheet(str(sid))

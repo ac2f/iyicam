@@ -612,11 +612,7 @@ def op_sheet_scope(payload: dict) -> dict:
     ``sheets`` a nesting made into the group ``name``, ``null``: the group of the sheet ``sheet``).  Answers ``{project,
     group}``: the project as it is after, and the group it is about."""
     from ..core import scope
-    from ..core.document import project_from_dict
-    d = payload.get("project")
-    if not isinstance(d, dict):
-        raise ServiceError("bad_request", "the project must be given as an object (the .icam JSON)")
-    project = project_from_dict(d)
+    project = _ops().load_project(payload.get("project"))
     act = str(payload.get("action") or "")
     ids = [str(x) for x in payload.get("sheets") or []]
     name = payload.get("name")

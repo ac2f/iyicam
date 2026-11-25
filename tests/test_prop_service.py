@@ -88,7 +88,7 @@ def _home(tmp_path, monkeypatch):
 def test_an_operation_answers_or_says_what_is_wrong(name):
     fn = getattr(ops, name)
 
-    @settings(max_examples=15 if name in SLOW else 60, deadline=None, database=None,
+    @settings(max_examples=int(os.environ.get("FUZZ_N", 15 if name in SLOW else 60)), deadline=None, database=None,
               suppress_health_check=list(HealthCheck))
     @given(payloads())
     def run(payload):
