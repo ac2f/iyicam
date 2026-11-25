@@ -125,7 +125,7 @@ export async function browse({ mode = "open", title = "Workshop PC", exts = [], 
 
 /** Where to open a file from: "This device" or the workshop PC.  Resolves `{name, bytes, path?}` or null. */
 export async function openFile({ title = "Open", accept = "", exts = [] } = {}) {
-  const st = await agent();
+  const st = await agent(true);                                        // (asked afresh: the agent may have come or gone since)
   if (!st.agent) { const f = await pickDeviceFiles(accept); return f[0] || null; }
   let choice;
   const dlg = dialog({ title, width: 380, body: h("div", { class: "choose" },
@@ -142,7 +142,7 @@ export async function openFile({ title = "Open", accept = "", exts = [] } = {}) 
 
 /** Where to save: this device (download) or the agent.  Resolves `{where: "device", name}` or `{where: "agent", path, name}` or null. */
 export async function saveWhere({ title = "Save", name, ext, folderOnly = false }) {
-  const st = await agent();
+  const st = await agent(true);
   if (!st.agent) return { where: "device", name };
   const dlg = dialog({ title, width: 380, body: h("div", { class: "choose" },
     h("button", { class: "btn big", onclick: () => dlg.close("device") }, icon("save", 18), " Download to this device"),

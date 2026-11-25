@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from iyicam.service import ops
+import webapp_env as w
 from iyicam.service.keys import KeyStore
 from iyicam.share import server as share_server
 
@@ -66,19 +66,18 @@ def test_the_browser_engine_gives_what_the_native_engine_gives(tmp_path):
     assert not [p for p in got["problems"] if p.startswith("pageerror")]
 
     # the same schema, project, toolpaths and G-code as the native engine for the same payloads
-    ops.ensure_ready()
     project = json.loads((FIXTURES / "project.json").read_text())
-    native_schema = json.loads(json.dumps(ops.op_schema()))
+    native_schema = w.native("schema")
     for schema in (got["schema"], native_schema):          # (the default tools get new ids at each start; a browser has no LibreOffice for .cdr)
         schema["tools"] = [{k: v for k, v in t.items() if k != "id"} for t in schema["tools"]]
         schema["cdr"].pop("converters")
     assert got["schema"] == native_schema
-    native = ops.op_compute({"project": project})
+    native = w.native("compute", {"project": project})
     assert [(r["toolpath"], r["sheet"], r["stats"], r["warnings"], r["preview"]) for r in got["compute"]["results"]] == \
-        [(r["toolpath"], r["sheet"], r["stats"], r["warnings"], r["preview"]) for r in json.loads(json.dumps(native))["results"]]
+        [(r["toolpath"], r["sheet"], r["stats"], r["warnings"], r["preview"]) for r in native["results"]]
     assert got["compute"]["totals"] == native["totals"]
     assert got["progress"] >= 1
-    nat_g = ops.op_gcode({"project": project, "post": got["schema"]["posts"][0]["id"]})
+    nat_g = w.native("gcode", {"project": project, "post": got["schema"]["posts"][0]["id"]})
     assert [f["name"] for f in got["gcode"]["files"]] == [f["name"] for f in nat_g["files"]]
     for a, b in zip(got["gcode"]["files"], nat_g["files"]):
         assert _gcode_text(a["text"]) == _gcode_text(b["text"]) and len(a["text"]) > 200

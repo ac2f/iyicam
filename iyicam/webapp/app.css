@@ -255,6 +255,10 @@ table.kv td, table.kv th { padding: 3px 8px; text-align: left; border-bottom: 1p
   #left { left: 46px; transform: translateX(calc(-100% - 60px)); border-right: 1px solid var(--border); }
   #right { right: 0; transform: translateX(105%); }
   #left.open, #right.open { transform: none; }
+  /* (a short phone: the two docks of a drawer keep the height they need and the drawer scrolls, rather than one dock
+     squeezed under the other with its buttons covered) */
+  .col { overflow-y: auto; overscroll-behavior: contain; }
+  .col > .dockgroup { flex-shrink: 0 !important; min-height: min(440px, 82vh); }
   .scrim.on { display: block; position: absolute; inset: 0; z-index: 35; background: rgba(10, 14, 24, .35); }
   .dlg-root { padding: 0; align-items: flex-end; }
   .dlg, .dlg-root.modeless .dlg { width: 100% !important; max-height: 94vh; border-radius: 12px 12px 0 0; }

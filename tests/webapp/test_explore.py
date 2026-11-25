@@ -8,6 +8,7 @@ import ezdxf
 import pytest
 
 import webapp_env as w
+from webapp_env import local_server  # noqa: F401  (the fixture)
 
 SCRIPT = Path(__file__).with_name("explore.js")
 
@@ -41,6 +42,7 @@ def phone(request, local_server):
     return _run(local_server, MODE="phone", DEVICE=request.param)[request.param]
 
 
+
 def test_drawing_and_importing(desktop):
     assert desktop["drawn"]["n"] == 2
     assert desktop["svg"]["n"] == 5                              # (2 drawn + the SVG's rectangle, circle and curve)
@@ -62,7 +64,7 @@ def test_undo_and_redo_walk_back_and_forth(desktop):
 
 
 def test_nesting(desktop):
-    assert "9 part(s) placed" in desktop["nestReport"]
+    assert "8 part(s) placed" in desktop["nestReport"]           # (9 vectors, one of them the open line: not a part)
     assert desktop["nested"]["n"] == 9
 
 

@@ -60,7 +60,7 @@ async function desktop() {
   await page.keyboard.press("F6"); await idle(page); await page.waitForTimeout(500);
   out.sim = await doc(page); step("sim");
   // undo everything back to the drawn rectangle, redo it all
-  const steps = out.toolpaths.undo;
+  const steps = out.toolpaths.undo - 1;                          // (all but the first drawing step: the rectangle stays)
   for (let i = 0; i < steps; i++) await page.keyboard.press("Control+z");
   out.undone = await doc(page);
   for (let i = 0; i < steps; i++) await page.keyboard.press("Control+y");
@@ -97,7 +97,7 @@ async function phone(device) {
   // touch drawing: the Rectangle tool by a tap, a one-finger drag
   const cdp = await ctx.newCDPSession(page);
   const touch = (type, pts) => cdp.send("Input.dispatchTouchEvent", { type, touchPoints: pts.map(([x, y], id) => ({ x, y, id })) });
-  await page.tap("[data-id="draw.rectangle"]");
+  await page.tap('[data-id="draw.rectangle"]');
   const a = await pt(page, 100, 100), b = await pt(page, 300, 250);
   await touch("touchStart", [a]); for (let i = 1; i <= 6; i++) await touch("touchMove", [[a[0] + (b[0] - a[0]) * i / 6, a[1] + (b[1] - a[1]) * i / 6]]); await touch("touchEnd", []);
   await page.waitForTimeout(300);

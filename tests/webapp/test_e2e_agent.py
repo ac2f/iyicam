@@ -12,7 +12,6 @@ import time
 import pytest
 
 import webapp_env as w
-from iyicam.service import ops
 
 SCRIPT = os.path.join(os.path.dirname(__file__), "e2e_agent.js")
 
@@ -83,9 +82,8 @@ def test_open_recalculate_and_save_gcode_through_a_real_agent(stack):
     assert r["recalculated"]["results"] >= 2 and not r["recalculated"]["stale"]
     written = sorted(p.name for p in stack["jobs"].iterdir() if p.suffix not in (".icam",))
     assert len(written) == 1, written
-    ops.ensure_ready()
     project = json.loads((w.FIXTURES / "project.json").read_text())
-    native = ops.op_gcode({"project": project, "post": r["post"], "file_name": "project", "program_number": 1000})
+    native = w.native("gcode", {"project": project, "post": r["post"], "file_name": "project", "program_number": 1000})
     assert [f["name"] for f in native["files"]] == written
     text = (stack["jobs"] / written[0]).read_text()
     assert len(text) > 200 and _mask(text) == _mask(native["files"][0]["text"])
@@ -103,7 +101,6 @@ def test_when_the_agent_is_gone_the_app_says_so_and_still_opens_device_files(sta
     assert r["staleChooser"] <= 1 or re.search(r"no agent|offline|gone|not connected", r.get("staleBrowserText", ""), re.I), r
 
 
-@pytest.mark.xfail(reason="BUG: ui/files.js agent() caches the status for good (nobody calls agent(true)): an open page still offers the workshop PC after the agent left (and does not see one that came later)", strict=True)
 def test_an_open_page_stops_offering_an_agent_that_left(stack):
     r = stack.get("gone")
     if r is None:

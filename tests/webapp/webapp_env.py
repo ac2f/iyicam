@@ -64,3 +64,40 @@ def stop(proc):
             proc.wait(10)
         except subprocess.TimeoutExpired:
             proc.kill()
+
+
+def native(op: str, payload=None):
+    """What the desktop engine's `op_<op>(payload)` gives, from a FRESH process with its own empty IYICAM_HOME.
+
+    (In the pytest process the registries are global and other tests of the suite register posts / tools into them: the
+    comparison with a clean browser engine would depend on which tests ran before in the same worker.)"""
+    import json
+    import tempfile
+    code = ("import json,sys\nfrom iyicam.service import ops\nops.ensure_ready()\np=json.load(sys.stdin)\n"
+            "r=getattr(ops,'op_'+sys.argv[1])(p) if p is not None else getattr(ops,'op_'+sys.argv[1])()\nprint(json.dumps(r))\n")
+    with tempfile.TemporaryDirectory() as home:
+        run = subprocess.run([sys.executable, "-c", code, op], input=json.dumps(payload), env={**os.environ, "IYICAM_HOME": home},
+                             capture_output=True, text=True, timeout=600)
+    if run.returncode:
+        raise RuntimeError(run.stderr[-3000:])
+    return json.loads(run.stdout.splitlines()[-1])
+
+
+# One `iyicam serve --local` per test module (imported by test_ui.py and test_explore.py: a conftest.py here would clash with
+# tests/conftest.py, which the other tests import by the same module name).
+@pytest.fixture(scope="module")
+def local_server(tmp_path_factory):
+    node, nenv = node_env()
+    base = tmp_path_factory.mktemp("ui")
+    share = base / "share"                  # (check_flows.js opens share > jobs > demo.icam)
+    jobs = share / "jobs"
+    jobs.mkdir(parents=True)
+    (jobs / "demo.icam").write_bytes((FIXTURES / "project.json").read_bytes())
+    env = {**os.environ, "IYICAM_HOME": str(base / "home")}
+    port = free_port()
+    proc = iyicam(["serve", "--local", "--root", str(share), "--port", str(port), "--quiet"], env)
+    try:
+        wait_http(f"http://127.0.0.1:{port}/app/config.json", proc)
+        yield node, nenv, f"http://127.0.0.1:{port}/app/", show_key(env), base
+    finally:
+        stop(proc)
