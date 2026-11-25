@@ -15,8 +15,9 @@ BIG = b"\xa6\x9b\xc4\xc0\x7f\x84\x2e\x41"
 
 # -- a compound file ------------------------------------------------------------------------------------------------
 
-def compound_file(streams: dict[str, bytes]) -> bytes:
-    """A compound file of ``{"a/b/c": bytes}`` (every stream in big sectors: the small-stream cutoff is 0)."""
+def compound_file(streams: dict[str, bytes], cutoff: int = 4096) -> bytes:
+    """A compound file of ``{"a/b/c": bytes}``.  ``cutoff`` 0: every stream in big sectors; 4096 (as real files): the streams
+    smaller than it are kept in the mini stream, in sectors of 64 bytes."""
     tree: dict = {}
     for path, data in streams.items():
         node = tree
@@ -45,14 +46,33 @@ def compound_file(streams: dict[str, bytes]) -> bytes:
 
     add("Root Entry", 5)
     build(tree, 0)
-    data_sectors: list[bytes] = []
+    # the small streams in the mini stream (64-byte sectors) and its allocation table
+    mini, minifat = bytearray(), []
     for e in entries:
-        if e[1] == 2:
+        if e[1] == 2 and e[7] and len(e[7]) < cutoff:
             d = e[7]
-            e[5] = len(data_sectors) if d else END
-            e[6] = len(d)
-            for k in range(0, len(d), SECTOR):
-                data_sectors.append(d[k:k + SECTOR].ljust(SECTOR, b"\0"))
+            first = len(minifat)
+            n = math.ceil(len(d) / 64)
+            for k in range(n):
+                minifat.append(first + k + 1 if k < n - 1 else END)
+            mini += d.ljust(n * 64, b"\0")
+            e[5], e[6], e[7] = first, len(d), None   # (written in the mini stream)
+    sectors: list[tuple[str, bytes]] = []        # (what, the bytes of one sector)
+    big: list[tuple[list, bytes]] = [(e, e[7]) for e in entries if e[1] == 2 and e[7]]
+    data_sectors: list[bytes] = []
+    for e, d in big:
+        e[5] = len(data_sectors)
+        e[6] = len(d)
+        for k in range(0, len(d), SECTOR):
+            data_sectors.append(d[k:k + SECTOR].ljust(SECTOR, b"\0"))
+    mini_start = len(data_sectors)
+    for k in range(0, len(mini), SECTOR):
+        data_sectors.append(bytes(mini[k:k + SECTOR]).ljust(SECTOR, b"\0"))
+    minifat_start = len(data_sectors)
+    mf = list(minifat) + [FREE] * (-len(minifat) % 128)
+    for k in range(0, len(mf), 128):
+        data_sectors.append(struct.pack("<128I", *mf[k:k + 128]))
+    n_minifat = len(data_sectors) - minifat_start
     n_dir = math.ceil(len(entries) / 4)
     n_fat = 1
     while n_fat * 128 < n_fat + n_dir + len(data_sectors):
@@ -64,22 +84,30 @@ def compound_file(streams: dict[str, bytes]) -> bytes:
     for k in range(n_dir):
         fat[dir0 + k] = dir0 + k + 1 if k < n_dir - 1 else END
     base = n_fat + n_dir
-    for e in entries:
-        if e[1] == 2 and e[6]:
-            n = math.ceil(e[6] / SECTOR)
-            e[5] += base
-            for k in range(n):
-                fat[e[5] + k] = e[5] + k + 1 if k < n - 1 else END
+
+    def chain(first: int, n: int) -> None:
+        for k in range(n):
+            fat[base + first + k] = base + first + k + 1 if k < n - 1 else END
+
+    for e, d in big:
+        chain(e[5], math.ceil(len(d) / SECTOR))
+        e[5] += base
+    if mini:
+        chain(mini_start, math.ceil(len(mini) / SECTOR))
+        entries[0][5], entries[0][6] = base + mini_start, len(mini)
+    if n_minifat:
+        chain(minifat_start, n_minifat)
     header = bytearray(SECTOR)
     header[0:8] = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
     struct.pack_into("<HHHHH", header, 0x18, 0x3E, 3, 0xFFFE, 9, 6)
-    struct.pack_into("<IIIIIIIII", header, 0x28, 0, n_fat, dir0, 0, 0, END, 0, END, 0)
+    struct.pack_into("<IIIIIIIII", header, 0x28, 0, n_fat, dir0, 0, cutoff,
+                     base + minifat_start if n_minifat else END, n_minifat, END, 0)
     difat = list(range(n_fat)) + [FREE] * (109 - n_fat)
     struct.pack_into("<109I", header, 0x4C, *difat)
     out = bytearray(header)
     out += struct.pack(f"<{len(fat)}I", *fat)
     d = bytearray()
-    for name, kind, left, right, child, start, size, _ in entries:
+    for name, kind, left, right, child, start, size, _ in (e[:8] for e in entries):
         e = bytearray(128)
         n = name.encode("utf-16-le")[:62]
         e[0:len(n)] = n
