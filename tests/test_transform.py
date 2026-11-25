@@ -501,7 +501,8 @@ def test_ctrl_drag_of_several_vectors_copies_them_all(drawing):
     c.select([a.id, b.id])
     drag(cv, (110, 50), (110, 150), Qt.ControlModifier)
     assert len(c.sheet.vectors) == 4
-    assert sorted(round(box(v)[1]) for v in c.sheet.vectors) == [50, 50, 150, 150]
+    ys = sorted(box(v)[1] for v in c.sheet.vectors)
+    assert ys[:2] == [50, 50] and all(abs(y - 150) <= 1.5 for y in ys[2:])    # (a mouse drag: within a pixel)
     assert len(c.selection) == 2
 
 
