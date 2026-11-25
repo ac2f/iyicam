@@ -15,6 +15,8 @@ import { newProjectDialog, materialSetup, sheetDialog, nestingDialog, nestReport
 
 export const registry = new Map();
 const reg = (id, def) => registry.set(id, typeof def === "function" ? { run: def } : def);
+/** for the feature modules (feat_*.js): an item of the menus made to work */
+export const register = reg;
 export const doc = () => app.cur;
 export const status = msg => { app.message = msg; emit("message"); };
 const hasDoc = () => !!app.cur;
@@ -455,6 +457,7 @@ export const canvasApi = {
   finishPolyline: () => finishPolyline(false),
   dblclick() { if (view().draft && view().draft.tool === "polyline") { const d = view().draft; d.pts.pop(); finishPolyline(false); } },
   toolDown(tool, w, e, v) {
+    const x = app.extraTools[tool]; if (x) return x.down && x.down(w, e, v);
     const p = v.snapped(w);
     let dr = v.draft;
     if (tool === "polyline") {
@@ -481,6 +484,7 @@ export const canvasApi = {
     v.drag = { kind: "draw" };
   },
   toolMove(tool, w, e, v) {
+    const x = app.extraTools[tool]; if (x) return x.move && x.move(w, e, v);
     const dr = v.draft;
     if (!dr || dr.mode !== "drag") return;
     const p = v.snapped(w);
@@ -489,6 +493,7 @@ export const canvasApi = {
     v.redraw();
   },
   toolHover(tool, p, e, v) {
+    const x = app.extraTools[tool]; if (x) return x.hover && x.hover(p, e, v);
     const dr = v.draft;
     if (!dr) return;
     if (tool === "polyline" && dr.pts.length) { dr.shape = [G.polyline([...dr.pts, p], false)]; status(`${dr.pts.length} point(s); ${describeShape("line", dr.pts[dr.pts.length - 1], p)}`); }
@@ -499,6 +504,7 @@ export const canvasApi = {
     else if (dr.mode === "wait") { dr.shape = shapeFor(tool, dr.a, p, e); if (dr.shape) status(describeShape(tool, dr.a, p)); }
   },
   toolUp(tool, w, e, v) {
+    const x = app.extraTools[tool]; if (x) return x.up && x.up(w, e, v);
     const dr = v.draft;
     if (!dr || dr.mode !== "drag") return;
     const p = v.snapped(w);

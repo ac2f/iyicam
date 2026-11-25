@@ -126,6 +126,8 @@ export const app = {
   message: "",
   cursor: null,                    // [x, y] on the sheet
   snapMsg: "",
+  overlays: [],                    // fn(ctx, view, "world" | "screen"): what features draw over the drawing
+  extraTools: {},                  // name -> {down, move, hover, up, cursor}: drawing tools that features add (feat_*.js)
 };
 const closedDocs = [];
 

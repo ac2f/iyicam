@@ -201,6 +201,7 @@ export class DrawingView {
     }
     ctx.globalAlpha = 1;
     if (settings.showToolpaths) this._toolpaths(ctx, d, sh, s, dark, layers);
+    for (const f of app.overlays) f(ctx, this, "world");          // (what features draw over the drawing: a backplot, nodes being edited)
     // the selection (moved or transformed while it is dragged)
     ctx.save();
     if (this.drag && this.drag.matrix) ctx.transform(...this.drag.matrix);
@@ -215,6 +216,7 @@ export class DrawingView {
     this._selectionBox(ctx, P, d, selected);
     this._draft(ctx, P, s);
     this._marquee(ctx);
+    for (const f of app.overlays) f(ctx, this, "screen");
     if (this.marker) this._markerDraw(ctx);
     // the origin: red along X, green along Y
     const [ox, oy] = this.w2s(0, 0);

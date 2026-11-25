@@ -9,6 +9,8 @@ import { Docks } from "./docks.js";
 import { buildMenubar } from "./menus.js";
 import { buildToolbars } from "./toolbars.js";
 import * as A from "./actions.js";
+import * as featDraw from "./feat_draw.js";
+import * as featJob from "./feat_job.js";
 import { icon } from "./icons.js";
 import { deepCopy } from "./dom.js";
 
@@ -61,6 +63,7 @@ async function boot() {
   }
   build();
   A.registerAll();
+  for (const f of [featDraw, featJob]) f.install();     // (what the features add: menu items, tools, overlays)
   A.buildShortcuts();
   app.ui.refreshTools();
   try { await A.startDefault(); } catch (e) { report(e, "Start"); }

@@ -1035,3 +1035,8 @@ def op_nest(payload: dict, ctl: JobControl | None = None) -> dict:
             "suggestion": ({"unplaced": len(out.suggestion.unplaced), "plates": out.suggestion.sheets,
                             "lines": squeeze_lines(out.parts, out.suggestion.squeezed)}
                            if out.suggestion is not None else None)}
+
+
+# -- the operations of the features of the web app (each module adds its op_* by name) ------------------------------
+from .ops_draw import *  # noqa: E402,F401,F403
+from .ops_job import *  # noqa: E402,F401,F403
