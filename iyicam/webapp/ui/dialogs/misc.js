@@ -210,8 +210,20 @@ export async function preferencesDialog() {
     P("showDirections", "Show direction arrows", "bool", s.showDirections, { group: "Settings" }),
     P("simResolution", "Simulation resolution (mm, 0 = auto)", "float", s.simResolution, { min: 0, group: "Settings" }),
   ];
+  // the defaults of new toolpaths are the engine's (the user folder: the desktop has the same ones)
+  let mine = null;
+  try { mine = await app.engine.call("tp_defaults", {}); } catch { mine = null; }
+  if (mine) for (const [k, label] of mine.keys) params.push(P(k, label, "length", mine.values[k], { min: 0, max: 100, group: "New toolpaths", help: "For new toolpaths; 0: the cut stops at the bottom of the material" }));
   const v = await formDialog({ title: "Preferences", params, width: 560, ok: "OK" });
   if (!v) return;
+  if (mine) {
+    const keep = {};
+    for (const [k] of mine.keys) { keep[k] = v[k]; delete v[k]; }
+    if (mine.keys.some(([k]) => keep[k] !== mine.values[k])) {
+      await app.engine.call("tp_defaults", { values: keep });
+      app.schema = await app.engine.call("schema", {});        // (the forms of new toolpaths take the new defaults)
+    }
+  }
   for (const [k, val] of Object.entries(v)) if (settings[k] !== val) setSetting(k, val);
 }
 

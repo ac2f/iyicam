@@ -30,6 +30,12 @@ class ComputeCancelled(BaseException):
     own ``except Exception`` (a broken strategy must not crash the program) do not swallow it."""
 
 
+def shown_on(project: Project, tdef: ToolpathDef, sheet: Sheet) -> bool:
+    """Whether a toolpath belongs on this sheet (it is calculated there: ``sheets_for``). A toolpath kept to a group of sheets
+    or to some sheets is listed only on those, so the toolpaths of one group do not crowd the list of another."""
+    return any(s.id == sheet.id for s in sheets_for(project, tdef))
+
+
 def sheets_for(project: Project, tdef: ToolpathDef) -> list[Sheet]:
     """The sheets a toolpath is calculated on: the ones listed, else the sheets of its sheet group, else every sheet.
 

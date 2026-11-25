@@ -14,7 +14,7 @@ A package has
 * whether it makes a **group** of toolpaths, and the name of that group.
 
 Names may have ``{variables}``: those of the package are put in when the toolpaths are made (``{package}``, ``{sheet_number}``,
-``{sheet_name}``, ``{n}``: the next number of the group, ``{group}``), those of a toolpath stay and follow it as in every toolpath
+``{sheet_name}``, ``{sheet_group}``, ``{n}``: the next number of the group, ``{group}``), those of a toolpath stay and follow it as in every toolpath
 name (``{tool_diameter}``, ``{cut_depth}``, ``{allowance}`` ...). A group named ``{package} S{sheet_number}-{n:02}`` is
 ``Contour S3-01`` on sheet 3, then ``Contour S3-02`` the next time.
 
@@ -41,6 +41,7 @@ VARIABLES: list[tuple[str, str, str]] = [
     ("n", "The next number: one more each time the package makes a group of that name", "Sıradaki numara: paket o adla her "
                                                                                        "grup yaptığında bir artar"),
     ("group", "Name of the group the package made", "Paketin yaptığı grubun adı"),
+    ("sheet_group", "Group of the sheet (or empty)", "Tabakanın grubu (ya da boş)"),
 ]
 #: the settings asked by default when a package is put on a drawing (those a toolpath type has)
 DEFAULT_ASK = ("cut_depth", "allowance")
@@ -184,7 +185,7 @@ def sheet_number(project, sheet) -> int:
 
 def variables(pkg: dict, project, sheet, n: int = 1, group: str = "") -> dict:
     return {"package": pkg["name"], "sheet_number": str(sheet_number(project, sheet)), "sheet_name": sheet.name,
-            "n": str(n), "group": group}
+            "n": str(n), "group": group, "sheet_group": getattr(sheet, "group", "") or ""}
 
 
 def group_name(pkg: dict, project, sheet, template: str | None = None) -> tuple[str, int]:
@@ -204,7 +205,9 @@ def group_name(pkg: dict, project, sheet, template: str | None = None) -> tuple[
 def toolpath_name(template: str, pkg: dict, project, sheet, n: int = 1, group: str = "") -> str:
     """The name of a toolpath of the package: its package variables put in (those of the toolpath stay: they follow it)."""
     from ..post.naming import fill
-    return fill(template, variables(pkg, project, sheet, n, group))
+    vals = variables(pkg, project, sheet, n, group)
+    vals.pop("sheet_group")              # (a toolpath variable too: it stays in the name and follows the sheet the toolpath is on)
+    return fill(template, vals)
 
 
 def build(pkg: dict, project, sheet, selection: Selection, registry, *, tool: Tool | None = None,

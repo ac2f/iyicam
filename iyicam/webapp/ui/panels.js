@@ -250,22 +250,44 @@ export function toolpathsPanel() {
           else d.toolpathSelection = [t.id];
           anchor = t.id; update();
         }, ondblclick: () => A.editToolpath(t.id) },
-        h("span", { class: "c1" }, h("input", { type: "checkbox", checked: t.enabled, onclick: e => e.stopPropagation(), onchange: e => A.setToolpathEnabled(t.id, e.target.checked) }), " ", t.name, r && r.error ? " ⚠" : ""),
+        h("span", { class: "c1", title: view && view.names[t.id] !== t.name ? "Name: " + t.name : undefined }, h("input", { type: "checkbox", checked: t.enabled, onclick: e => e.stopPropagation(), onchange: e => A.setToolpathEnabled(t.id, e.target.checked) }), " ", view && view.names[t.id] != null ? view.names[t.id] : t.name, r && r.error ? " ⚠" : ""),
         h("span", { class: "c2" }, t.group || ""), h("span", { class: "c3" }, t.tool ? t.tool.name : ""), h("span", { class: "c4" }, time(t.id)));
     };
+    // the names with their {variables} put in and the toolpaths that belong on this sheet come from the engine
+    // (post/naming.toolpath_name, cam/job.shown_on): asked again when the toolpaths or the sheets change
+    const view = tpView(d);
+    const listed = d.project.toolpaths.filter(t => !settings.toolpathsOfSheetOnly || !view || view.shown.has(t.id));
     const seen = new Set(), out = [];
-    for (const t of d.project.toolpaths) {
+    for (const t of listed) {
       if (!t.group) { out.push(rowOf(t)); continue; }
       if (seen.has(t.group)) continue;
       seen.add(t.group);
-      out.push(h("div", { class: "tgroup" }, h("div", { class: "tg-head" }, h("span", { class: "tri" }, "▾"), h("b", null, t.group)), h("div", { class: "kids" }, d.project.toolpaths.filter(x => x.group === t.group).map(rowOf))));
+      out.push(h("div", { class: "tgroup" }, h("div", { class: "tg-head" }, h("span", { class: "tri" }, "▾"), h("b", null, t.group)), h("div", { class: "kids" }, listed.filter(x => x.group === t.group).map(rowOf))));
     }
+    const hidden = d.project.toolpaths.length - listed.length;
+    if (hidden) out.push(h("div", { class: "fb-empty", title: "View ▸ Toolpaths of This Sheet Only" }, `${hidden} toolpath(s) of other sheets not listed`));
     fill(body, out.length ? out : h("div", { class: "fb-empty" }, "No toolpaths yet — Toolpaths ▸ New Toolpath"));
     const tot = d.results && d.results.totals ? d.results.totals[d.sheetId] : null;
     fill(total, tot != null ? `Sheet total: ${fmtTime(tot)}${d.stale ? "  (out of date: F5)" : ""}` : (d.project.toolpaths.length ? "Not calculated yet (F5)" : ""));
     fill(mat, materialText(d));
   }
   return { el, update };
+}
+
+// the engine's view of the toolpaths on the sheet shown: {names: {id: name}, shown: Set(ids)}; null until it answered
+const tpViews = new WeakMap();
+function tpView(d) {
+  const key = d.sheetId + "|" + JSON.stringify(d.project.toolpaths) + "|" + JSON.stringify(d.project.sheets.map(s => [s.id, s.name, s.group || "", s.vectors.map(v => v.id)]));
+  const v = tpViews.get(d);
+  if (v && v.key === key) return v.done ? v : v.last;
+  const job = { key, done: false, last: v ? (v.done ? v : v.last) : null };
+  tpViews.set(d, job);
+  app.engine.call("toolpath_view", { project: d.project, sheet: d.sheetId }).then(r => {
+    if (tpViews.get(d) !== job) return;
+    Object.assign(job, { done: true, names: r.names, shown: new Set(r.shown) });
+    emit("results");
+  }).catch(() => { if (tpViews.get(d) === job) { Object.assign(job, { done: true, names: {}, shown: new Set(d.project.toolpaths.map(t => t.id)) }); } });
+  return job.last;
 }
 
 export { cutOrderPanel, simulationPanel } from "./panels_job.js";

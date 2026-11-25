@@ -76,7 +76,7 @@ class Param:
 #: settings that most people never change: forms show them behind "More options"
 ADVANCED_GROUPS = {"Ramp & Leads", "Advanced", "Flat areas", "Ramps", "Entry"}
 ADVANCED_NAMES = {
-    "start_depth", "overcut", "stepdown", "direction", "allowance", "sharp_corners", "finish_pass", "start_mode",
+    "start_depth", "stepdown", "direction", "allowance", "sharp_corners", "finish_pass", "start_mode",
     "tab_mode", "tab_3d", "tab_min_length", "tab_spacing", "rest_from", "order", "raster_angle", "profile_pass",
     "finish_wall", "match_tolerance", "tip_compensation", "line_width", "resolution", "smoothing", "retract", "dwell",
     "flat_depth", "glue_gap", "margin", "mirror", "ramp_units", "ramp_start", "ramp_end", "profile", "depth_mode",

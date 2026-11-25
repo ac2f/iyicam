@@ -627,6 +627,7 @@ class MainWindow(QMainWindow):
             self.view_actions[key] = self._act(m, label, lambda v, k=key: self.set_view(k, v), None, True,
                                                getattr(s, key))
         self.sim_action = self._act(m, "Show Si&mulation", self._toggle_sim, None, True, self.canvas.show_sim)
+        self._act(m, "Toolpaths of This Sheet &Only", self._toggle_sheet_only, None, True, s.toolpaths_of_sheet_only)
         m.addSeparator()
         self._act(m, "Clear &Guides", lambda: self.canvas.clear_guides())
         m.addSeparator()
@@ -935,6 +936,12 @@ class MainWindow(QMainWindow):
         """The simulation ends when its panel is closed (not while the window is being taken down)."""
         if not visible and getattr(self.sim_panel, "view", None) is not None:
             self.sim_panel.stop()
+
+    def _toggle_sheet_only(self, value: bool) -> None:
+        """The Toolpaths panel lists the toolpaths of the sheet shown only (or every toolpath of the project)."""
+        self.ctrl.settings.toolpaths_of_sheet_only = bool(value)
+        self.ctrl.settings.save()
+        self.toolpaths_panel.refresh()
 
     def _toggle_sim(self, value: bool) -> None:
         self.canvas.show_sim = value

@@ -29,6 +29,7 @@ class Settings:
     show_cut_order: bool = False      # number the cuts of the toolpaths on the drawing
     show_route: bool = False          # arrows for the rapid moves between the cuts
     show_starts: bool = False         # where every cut starts and closes (and whether that is a good place)
+    toolpaths_of_sheet_only: bool = True   # the Toolpaths panel lists the toolpaths of the sheet shown (one kept to a group of sheets is not listed on the others)
     strategy_directions: dict = field(default_factory=dict)  # cutting direction per cut order strategy
     sequence_defaults: dict = field(default_factory=dict)  # (no longer used: new toolpaths start from the default cut order; kept so older settings files load)
     memory: dict = field(default_factory=dict)  # what every dialog was last set to, by dialog (see remember)

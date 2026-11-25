@@ -23,7 +23,7 @@ from typing import Callable
 
 from .. import __version__
 from ..builtins import ensure_registered, load_user_posts
-from ..cam.job import ComputeCancelled, compute_all, sheet_toolpaths, sheets_for
+from ..cam.job import ComputeCancelled, compute_all, sheet_toolpaths, sheets_for, shown_on
 from ..cam.moves import PathStats
 from ..cam.simulate import auto_resolution, shade, simulate
 from ..core import paths, vectorops
@@ -174,9 +174,12 @@ def op_schema(_payload=None) -> dict:
     from ..core.tooling import TOOL_TYPES
     from ..formats.dxf import DXF_VERSIONS
     from ..post.engine import ORIGINS
+    from ..cam import tp_defaults
+    mine = tp_defaults.load()                 # (the person's defaults of new toolpaths: how far a through cut goes below)
     operations = [{"id": c.id, "label": c.label, "description": c.description,
                    "tool_types": list(c.tool_types) if c.tool_types else None, "needs_closed": c.needs_closed,
-                   "extra_tool_params": list(c.extra_tool_params), "params": [param_to_dict(p) for p in c.params()]}
+                   "extra_tool_params": list(c.extra_tool_params),
+                   "params": [param_to_dict(p) for p in tp_defaults.apply(c.id, c.params(), mine)]}
                   for c in REGISTRY.operations.values()]
     commands = [{"id": c.id, "label": c.label, "menu": c.menu, "min_selection": c.min_selection,
                  "shortcut": c.shortcut, "tooltip": c.tooltip, "source": c.source,
@@ -242,6 +245,36 @@ def op_new_project(payload: dict) -> dict:
         raise ServiceError("template_failed", f"{type(exc).__name__}: {exc}", template=tid) from exc
     p.name = str(payload.get("name") or "") or p.name
     return {"project": p.to_dict()}
+
+
+# -- how the toolpaths are listed on a sheet -------------------------------------------------------------------------
+def op_toolpath_view(payload: dict) -> dict:
+    """The toolpaths as the Toolpaths panel lists them on a sheet: ``names`` (id -> the name with its ``{variables}`` put in,
+    for this sheet) and ``shown`` (the ids of the toolpaths that belong on it: one kept to a group of sheets or to some
+    sheets is not listed on the others, ``cam.job.shown_on``)."""
+    ensure_ready()
+    from ..post.naming import toolpath_name
+    project = load_project(payload.get("project"))
+    sheet = _sheet_of(project, payload.get("sheet"))
+    return {"sheet": sheet.id, "names": {t.id: toolpath_name(project, t, sheet) for t in project.toolpaths},
+            "shown": [t.id for t in project.toolpaths if shown_on(project, t, sheet)]}
+
+
+# -- the person's defaults of new toolpaths --------------------------------------------------------------------------
+def op_tp_defaults(payload: dict) -> dict:
+    """The person's defaults of new toolpaths (``cam.tp_defaults``): ``values`` given are kept first. Answers ``values``
+    and ``keys`` ([key, label, built-in default])."""
+    ensure_ready()
+    from ..cam import tp_defaults
+    vals = payload.get("values")
+    if vals is not None:
+        if not isinstance(vals, dict):
+            raise ServiceError("bad_request", "'values' must be an object", field="values")
+        try:
+            tp_defaults.save(vals)
+        except ValueError as exc:
+            raise ServiceError("bad_request", str(exc), field="values") from exc
+    return {"values": tp_defaults.load(), "keys": [list(k) for k in tp_defaults.KEYS]}
 
 
 # -- the tool database of the user ------------------------------------------------------------------------------------

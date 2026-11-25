@@ -1059,7 +1059,8 @@ class ToolpathDialog(RemembersSize, QDialog):
                 if it.data(Qt.UserRole) == ctrl.layer_id:
                     it.setCheckState(Qt.Checked)
         # -- parameters tab
-        params = self.op.params()
+        from ..cam import tp_defaults
+        params = tp_defaults.apply(self.op.id, self.op.params())     # (the person's own: how far a through cut goes below)
         for p in params:
             if p.name == "cut_depth" and not self.tdef and self.op.id == "profile":
                 p.default = ctrl.project.material.thickness
@@ -3359,6 +3360,10 @@ class PreferencesDialog(QDialog):
             Param("show_directions", "Show direction arrows", "bool", s.show_directions),
             Param("sim_resolution", "Simulation resolution (mm, 0 = auto)", "float", s.sim_resolution, min=0.0),
         ]
+        from ..cam import tp_defaults
+        mine = tp_defaults.load()             # (kept in the user folder: the web app has the same)
+        params += [Param(k, label, "length", mine[k], min=0.0, max=100.0,
+                         help="For new toolpaths; 0: the cut stops at the bottom of the material") for k, label, _ in tp_defaults.KEYS]
         lay = QVBoxLayout(self)
         self.form = ParamForm(params, None, ctrl.units)
         lay.addWidget(self.form)
@@ -3368,6 +3373,8 @@ class PreferencesDialog(QDialog):
         v = self.form.values()
         s = self.ctrl.settings
         window = self.parent()
+        from ..cam import tp_defaults
+        tp_defaults.save({k: v.pop(k) for k, _, _ in tp_defaults.KEYS if k in v})
         for k, val in v.items():
             if k in ("show_directions", "show_cut_order", "show_route", "show_starts") and hasattr(window, "set_view"):
                 window.set_view(k, bool(val))              # (the View menu and the drawing follow)

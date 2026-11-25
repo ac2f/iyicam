@@ -22,8 +22,8 @@ def rwin(tmp_path, monkeypatch):
 def test_what_is_rarely_changed_is_advanced_and_what_is_needed_is_not():
     ensure_registered(REGISTRY)
     ps = {p.name: p for p in REGISTRY.operations["profile"].params()}
-    assert not any(is_advanced(ps[n]) for n in ("through", "side", "tabs", "cut_depth"))
-    assert all(is_advanced(ps[n]) for n in ("overcut", "ramp", "lead", "sharp_corners", "finish_pass"))
+    assert not any(is_advanced(ps[n]) for n in ("through", "overcut", "side", "tabs", "cut_depth"))   # (how far below: beside "through")
+    assert all(is_advanced(ps[n]) for n in ("ramp", "lead", "sharp_corners", "finish_pass"))
     assert is_advanced(Param("x", "X", "bool", False, advanced=True)) and not is_advanced(Param("x", "X", "bool", False))
 
 
@@ -32,9 +32,9 @@ def test_a_collapsed_form_shows_the_basics_and_the_rest_with_the_button(rwin):
     f = ParamForm(REGISTRY.operations["profile"].params(), None, None, None, collapse=True)
     f.show()
     shown = lambda: {n for n, (lay, w) in f._rows.items() if lay.isRowVisible(w)}
-    assert shown() == {"through", "side", "allowance", "tabs"} and "More options" in f.more.text()
+    assert shown() == {"through", "overcut", "side", "allowance", "tabs"} and "More options" in f.more.text()
     f.more.setChecked(True)
-    assert {"overcut", "ramp", "direction"} <= shown() and "Fewer" in f.more.text()
+    assert {"ramp", "direction"} <= shown() and "Fewer" in f.more.text()
     plain = ParamForm(REGISTRY.operations["profile"].params(), None, None, None)       # (a command's form shows all)
     plain.show()
     assert {"overcut", "ramp"} <= {n for n, (lay, w) in plain._rows.items() if lay.isRowVisible(w)}

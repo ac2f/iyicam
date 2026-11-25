@@ -232,7 +232,9 @@ TOOLPATH_VARIABLES: list[dict] = [{"name": n, "text": {"en": en, "tr": tr}} for 
     ("spindle_speed", "Spindle speed (rpm)", "Devir (dev/dk)"), ("stepdown", "Stepdown", "Paso derinliği"),
     ("cut_depth", "Cut depth", "Kesim derinliği"), ("allowance", "Allowance", "Pay"),
     ("material_thickness", "Thickness of the material", "Malzeme kalınlığı"), ("safe_z", "Safe Z", "Güvenli Z"),
-    ("operation", "Kind of toolpath", "Takım yolu türü"), ("group", "Group", "Grup"), ("sheet_group", "Sheet group", "Sac grubu"),
+    ("operation", "Kind of toolpath", "Takım yolu türü"), ("group", "Group", "Grup"),
+    ("sheet_group", "Sheet group (the toolpath's own, else that of the sheet shown)", "Sac grubu (takım yolununki, yoksa gösterilen sacınki)"),
+    ("sheet_name", "Name of the sheet shown", "Gösterilen sacın adı"), ("sheet_number", "Number of the sheet shown (1, 2 ...)", "Gösterilen sacın numarası (1, 2 ...)"),
 ]]
 TOOLPATH_NAMES = {v["name"] for v in TOOLPATH_VARIABLES}
 
@@ -251,7 +253,12 @@ def toolpath_values(project, tdef, sheet=None) -> dict:
             "stepdown": num(t.stepdown), "cut_depth": num(depth) if isinstance(depth, (int, float)) else "",
             "allowance": num(tdef.params.get("allowance")) if isinstance(tdef.params.get("allowance"), (int, float)) else "",
             "material_thickness": num(thick), "safe_z": num(tdef.safe_z if tdef.safe_z is not None else project.material.safe_z),
-            "operation": tdef.op, "group": tdef.group or "", "sheet_group": tdef.sheet_group or ""}
+            "operation": tdef.op, "group": tdef.group or "",
+            # (a toolpath not kept to a group of sheets takes the group of the sheet it is shown on: the same toolpath reads
+            # "Pleksi" on a sheet of that group and nothing on a sheet of none)
+            "sheet_group": tdef.sheet_group or (getattr(sheet, "group", "") if sheet is not None else "") or "",
+            "sheet_name": getattr(sheet, "name", "") if sheet is not None else "",
+            "sheet_number": next((str(i + 1) for i, s in enumerate(project.sheets) if sheet is not None and s.id == sheet.id), "")}
 
 
 def toolpath_name(project, tdef, sheet=None) -> str:

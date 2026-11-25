@@ -625,7 +625,11 @@ class ToolpathsPanel(DocPanel):
         old_ids = set(getattr(self.ctrl, "stale_ids", set())) if self.ctrl.stale else set()
         heads: dict[str, QTreeWidgetItem] = {}
         times: dict[str, float] = {}
+        from ..cam.job import shown_on
+        only_here = getattr(self.ctrl.settings, "toolpaths_of_sheet_only", True) and self.ctrl.sheet is not None
         for t in self.ctrl.project.toolpaths:
+            if only_here and not shown_on(self.ctrl.project, t, self.ctrl.sheet):
+                continue                      # (kept to another group of sheets, or to other sheets: View ▸ Toolpaths of Every Sheet lists it)
             res = [r for r in self.ctrl.results_for(t) if r.toolpaths or r.error or r.warnings]
             here = self.ctrl.results.get((t.id, self.ctrl.sheet_id))
             st = PathStats()

@@ -216,6 +216,11 @@ export const MENUS = [
     "text": "Show Simulation",
     "check": true
    },
+   {
+    "id": "view.toolpaths_of_this_sheet_only",
+    "text": "Toolpaths of This Sheet Only",
+    "check": true
+   },
    "-",
    {
     "id": "view.clear_guides",
