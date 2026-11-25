@@ -10,3 +10,4 @@ dist/
 *.ngc
 !tests/data/**
 .venv-build/
+.coverage*
