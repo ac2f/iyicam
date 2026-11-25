@@ -18,7 +18,7 @@ function itemRow(it, close) {
   const enabled = r ? (!r.enabled || r.enabled()) : it.id === "file.open_recent" ? app.recent.length > 0 : !!it.menu;
   const checked = r && r.checked ? r.checked() : false;
   const row = h("div", { class: "mitem" + (enabled ? "" : " disabled") + (it.menu ? " has-sub" : "") + (checked ? " checked" : ""), title: !r && !it.menu ? A.notYet : "", role: "menuitem" },
-    h("span", { class: "mcheck" }, it.check ? (checked ? "✓" : "") : ""), h("span", { class: "mtext" }, text), it.sc && !it.menu ? h("span", { class: "msc" }, it.sc) : null, it.menu ? h("span", { class: "marrow" }, "▸") : null);
+    h("span", { class: "mcheck" }, it.check ? (checked ? "✓" : "") : ""), h("span", { class: "mtext" }, text), !it.menu && A.shortcutText(it) ? h("span", { class: "msc" }, A.shortcutText(it)) : null, it.menu ? h("span", { class: "marrow" }, "▸") : null);
   void dynamic; void implemented;
   if (it.menu) {
     const sub = h("div", { class: "menu submenu" }, subItems(it).map(x => itemRow(x, close)));
@@ -31,6 +31,7 @@ function itemRow(it, close) {
   return row;
 }
 function subItems(it) {
+  if (app.dynamicMenus && app.dynamicMenus[it.id]) return app.dynamicMenus[it.id]();      // (a submenu a feature fills when it is opened: Use a Package)
   if (it.id === "file.open_recent") {
     if (!app.recent.length) return [{ id: "none", text: "(none)" }];
     return app.recent.map(r => { const id = "recent." + r.path; A.registry.set(id, { run: () => A.openRecent(r) }); return { id, text: r.name }; });
@@ -42,6 +43,7 @@ function topItems(m) {
     return app.docs.map(d => { const id = "window." + d.id; A.registry.set(id, { run: () => setCur(d), checked: () => app.cur === d }); return { id, text: d.name + (d.dirty ? " •" : ""), check: true }; })
       .concat(app.docs.length ? [] : [{ id: "window.none", text: "(no project open)" }]);
   }
+  if (app.dynamicMenus && app.dynamicMenus["top." + m.id]) return [...m.menu, ...app.dynamicMenus["top." + m.id]()];     // (plugins add commands)
   return m.menu;
 }
 function close() { if (drop) { drop.remove(); drop = null; } openTop = null; bar.querySelectorAll(".mtop").forEach(b => b.classList.remove("on")); }

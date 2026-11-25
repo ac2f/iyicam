@@ -579,9 +579,20 @@ export function comboOf(e) {
   parts.push(normKey(k));
   return parts.join("+");
 }
+// what the person changed in Edit ▸ Keyboard Shortcuts: item id -> list of keys ([] for none); only what differs from the program's own
+// keys is kept (in this browser), so a new version can bring new keys without overwriting the person's
+let OVERRIDES = store.get("iyicam.shortcuts", {});
+if (!OVERRIDES || typeof OVERRIDES !== "object") OVERRIDES = {};
+export const shortcutOverrides = () => OVERRIDES;
+export const defaultKeys = it => (it.sc ? it.sc.split(",").map(x => x.trim()).filter(Boolean) : []);
+/** the keys of a menu item now: the person's, else the program's own */
+export const keysOf = it => (Array.isArray(OVERRIDES[it.id]) ? OVERRIDES[it.id] : defaultKeys(it));
+/** what the menu shows beside the item */
+export const shortcutText = it => keysOf(it).join(", ");
+export function setShortcutOverrides(o) { OVERRIDES = o || {}; store.set("iyicam.shortcuts", OVERRIDES); buildShortcuts(); emit("settings"); }
 export function buildShortcuts() {
   SHORT.clear();
-  const walk = items => { for (const it of items) { if (it === "-") continue; if (it.sc) for (const s of it.sc.split(",").map(x => x.trim())) if (!SHORT.has(s)) SHORT.set(s, it.id); if (it.menu) walk(it.menu); } };
+  const walk = items => { for (const it of items) { if (it === "-") continue; if (it.id && !it.menu) for (const s of keysOf(it)) if (!SHORT.has(s)) SHORT.set(s, it.id); if (it.menu) walk(it.menu); } };
   for (const m of MENUS) walk(m.menu);
 }
 export function runItem(id) {
