@@ -241,3 +241,12 @@ def test_dropping_a_sheet_on_a_sheet_makes_a_group(tmp_path, monkeypatch):
         assert b.group == cc.group and b.group.startswith("Group") and not a.group
     finally:
         gen.close()
+
+
+def test_a_group_is_not_renamed_onto_another_group():
+    p, (a, b, c), _t, _v, _cut = project()
+    scope.isolate(p, [b.id])
+    scope.set_group(p, [a.id], "Doors")
+    with pytest.raises(ValueError, match="already"):
+        scope.rename_group(p, "B", "Doors")            # (an isolated group and an ordinary one would be one half and half)
+    assert b.group == "B" and b.isolated and a.group == "Doors" and not a.isolated

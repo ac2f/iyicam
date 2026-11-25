@@ -636,7 +636,10 @@ def op_sheet_scope(payload: dict) -> dict:
             scope.set_group(project, sids, g)
     elif act == "rename":
         group = str(name or "").strip()
-        scope.rename_group(project, str(payload.get("old") or ""), group)
+        try:
+            scope.rename_group(project, str(payload.get("old") or ""), group)
+        except ValueError as exc:
+            raise ServiceError("group_exists", str(exc), group=group) from exc
     elif act == "isolate":
         group = scope.isolate(project, ids)
     elif act == "unisolate":

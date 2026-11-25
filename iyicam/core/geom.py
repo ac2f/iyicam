@@ -668,16 +668,25 @@ class Bezier(Segment):
         return out
 
     def length(self) -> float:
-        # 8 point Gauss-Legendre on the derivative norm, subdivided for accuracy
+        # 8 point Gauss-Legendre on the derivative norm, adaptive: an interval is halved until its halves agree with it
+        # (where the curve turns back on itself the norm has a kink that a fixed split measures short)
         xs = (0.1834346424956498, 0.5255324099163290, 0.7966664774136267, 0.9602898564975363)
         ws = (0.3626837833783620, 0.3137066458778873, 0.2223810344533745, 0.1012285362903763)
-        total = 0.0
-        n = 4
-        for k in range(n):
-            t0, t1 = k / n, (k + 1) / n
+
+        def gauss(t0: float, t1: float) -> float:
             h, m = (t1 - t0) / 2, (t1 + t0) / 2
-            for x, w in zip(xs, ws):
-                total += w * h * (norm(self.derivative(m + h * x)) + norm(self.derivative(m - h * x)))
+            return sum(w * h * (norm(self.derivative(m + h * x)) + norm(self.derivative(m - h * x))) for x, w in zip(xs, ws))
+
+        total = 0.0
+        stack = [(k / 4, (k + 1) / 4, gauss(k / 4, (k + 1) / 4), 0) for k in range(4)]
+        while stack:
+            t0, t1, whole, depth = stack.pop()
+            mid = (t0 + t1) / 2
+            left, right = gauss(t0, mid), gauss(mid, t1)
+            if depth >= 12 or abs(left + right - whole) <= 1e-10 * max(1.0, abs(whole)):
+                total += left + right
+            else:
+                stack += [(t0, mid, left, depth + 1), (mid, t1, right, depth + 1)]
         return total
 
     def t_at_length(self, s: float) -> float:

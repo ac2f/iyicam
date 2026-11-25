@@ -145,6 +145,8 @@ def rename_group(project: Project, old: str, new: str) -> None:
     new = (new or "").strip()
     if not new or new == old:
         return
+    if any(s.group == new for s in project.sheets):       # (two groups are not merged by a new name: one may be isolated)
+        raise ValueError(f"there is a group of sheets named {new} already")
     for s in project.sheets:
         if s.group == old:
             s.group = new

@@ -619,6 +619,9 @@ class Controller(CutControl, QObject):
         new = (new or "").strip()
         if not new or new == old:
             return
+        if any(s.group == new for s in self.project.sheets):
+            self.message.emit(f"There is a group named {new} already: choose another name")
+            return
         with self.edit("Rename group", geometry=False):
             rename_group(self.project, old, new)
         self.toolpaths_changed.emit()
