@@ -115,3 +115,22 @@ def test_a_project_file_of_anything_is_said_to_be_wrong(junk):
         ops.load_project(payload)
     except ServiceError:
         pass
+
+
+@settings(max_examples=200, deadline=None)
+@given(st.dictionaries(st.sampled_from(["a/b", "a/c", "d", "e/f/g"]), st.binary(max_size=9000), min_size=1),
+       st.data())
+def test_a_compound_file_cut_anywhere_reads_or_says_it_is_damaged(streams, data):
+    from artcam_builder import compound_file
+    whole = compound_file(streams)
+    cut = data.draw(st.integers(0, len(whole)))
+    try:
+        cf = CompoundFile(whole[:cut])
+        for p in streams:
+            try:
+                got = cf.read(p)
+            except (CfbError, KeyError):
+                continue
+            assert cut < len(whole) or got == streams[p]
+    except CfbError:
+        pass

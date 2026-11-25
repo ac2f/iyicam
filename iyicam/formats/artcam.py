@@ -29,6 +29,7 @@ from .report import ImportReport
 
 BIG = b"\xa6\x9b\xc4\xc0\x7f\x84\x2e\x41"     # 999999.876: ArtCAM writes it after the stepdown and after the plunge rate
 CSTR = b"\xff\xfe\xff"                         # an MFC unicode string follows
+MAX_MM = 1_000_000.0                           # a point farther than this (1 km) is damage, not a drawing
 
 
 class ArtCamError(ValueError):
@@ -163,12 +164,15 @@ def _contours(d: bytes, i: int) -> tuple[list[ArtContour], int]:
             b = (_d(d, i + 24), _d(d, i + 32))
             if None in a or None in b:
                 raise ValueError(f"a point that is not a number at {i}")
+            if max(abs(a[0]), abs(a[1]), abs(b[0]), abs(b[1])) > MAX_MM:
+                raise ValueError(f"a point {max(abs(a[0]), abs(a[1]), abs(b[0]), abs(b[1])):.3g} mm away at {i}: "
+                                 "the line of the toolpath is damaged")
             i += 40
             if k == 0:
                 segs.append(("line", a, b))
             elif k == 1:
                 bulge = _d(d, i)
-                if bulge is None:
+                if bulge is None or abs(bulge) > 1e4:
                     raise ValueError(f"an arc without its bulge at {i}")
                 segs.append(("arc", a, b, bulge))
                 i += 16
@@ -650,7 +654,12 @@ def fill_project(models: list[ArtModel], project, sheet=None, report: ImportRepo
                     other_layer = project.layer_by_name("ArtCAM") or Layer("ArtCAM", "#d62728")
                     if other_layer not in project.layers:
                         project.layers.append(other_layer)
-                for vids, cs in vectors_of(tp):
+                try:
+                    parts = vectors_of(tp)
+                except ValueError as exc:                # (clip.TooComplex: a line too far out or piled up to offset)
+                    report.error(f"{model.name} / {tp.name}: {exc}")
+                    continue
+                for vids, cs in parts:
                     if vids and all(v in made for v in vids):   # (a vector another toolpath brought already)
                         ids += [i for i in dict.fromkeys(made[v].id for v in vids) if i not in ids]
                         continue

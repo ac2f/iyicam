@@ -74,9 +74,9 @@ class CompoundFile:
     # -- the inside -----------------------------------------------------------------------------------------------
     def _sector(self, n: int) -> bytes:
         off = (n + 1) * self.sector
-        if off + self.sector > len(self.data) + self.sector:      # (the last sector may be cut short)
+        if off >= len(self.data):
             raise CfbError(f"sector {n} is past the end of the file")
-        return self.data[off:off + self.sector]
+        return self.data[off:off + self.sector].ljust(self.sector, b"\0")   # (the last sector may be cut short)
 
     def _chain(self, start: int, size: int | None = None) -> bytes:
         out, s, n = [], start, 0

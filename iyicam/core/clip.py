@@ -91,8 +91,18 @@ class Offsetter(pyclipper.PyclipperOffset):
         return super().Execute(*args, **kwargs) if self._used else []
 
 
+MAX_MM = 1_000_000.0      # a point farther than a kilometre from the origin is a damaged drawing, not a part: Clipper
+                          # would work on it with slow 128-bit numbers (minutes, or forever) and could not be stopped
+
+
 def to_int(pts: Sequence[Pt]) -> list[tuple[int, int]]:
-    return [(round(x * SCALE), round(y * SCALE)) for x, y in pts]
+    out = []
+    for x, y in pts:
+        if not (abs(x) <= MAX_MM and abs(y) <= MAX_MM):          # (also NaN)
+            raise TooComplex(f"a point lies {max(abs(x), abs(y)) / 1e6:.3g} km from the origin "
+                             "(a damaged drawing?): nothing is calculated with it")
+        out.append((round(x * SCALE), round(y * SCALE)))
+    return out
 
 
 def from_int(path: Sequence[Sequence[int]]) -> Poly:
@@ -130,7 +140,7 @@ def contours_to_polys(contours: Iterable[Contour], tol: float = 0.005) -> list[P
 
 
 class TooComplex(ValueError):
-    """Shapes lie on top of each other so much that putting them together would take minutes (or forever:
+    """Shapes lie on top of each other so much, or so far away, that putting them together would take minutes (or forever:
     Clipper cannot be interrupted)."""
 
 

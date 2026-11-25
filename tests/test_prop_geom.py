@@ -43,6 +43,8 @@ def contour(draw, closed=None):
     closed = draw(st.booleans()) if closed is None else closed
     if closed and math.dist(segs[-1].b, segs[0].a) > 1e-2:
         segs.append(Line(segs[-1].b, segs[0].a))
+    elif closed and len(segs) > 1:                       # (a closed contour ends exactly where it starts)
+        segs[-1] = segs[-1].with_ends(segs[-1].a, segs[0].a)
     return Contour(segs, closed and len(segs) > 1)
 
 
