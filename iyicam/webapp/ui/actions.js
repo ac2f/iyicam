@@ -545,7 +545,7 @@ export function registerAll() {
   reg("edit.select.select_all", { run: selectAll, enabled: hasDoc }); reg("edit.select.invert_selection", { run: invertSelection, enabled: hasDoc }); reg("edit.select.select_open_vectors", { run: selectOpen, enabled: hasDoc });
   reg("edit.preferences", preferencesDialog);
   reg("view.zoom_extents", { run: () => view().zoomExtents(), enabled: hasDoc }); reg("view.zoom_selection", { run: () => view().zoomSelection(), enabled: hasDoc });
-  for (const [id, k] of [["view.show_toolpaths", "showToolpaths"], ["view.show_tool_width", "showToolWidth"], ["view.show_directions", "showDirections"], ["view.show_cut_order", "showCutOrder"],
+  for (const [id, k] of [["view.show_toolpaths", "showToolpaths"], ["view.show_tool_width", "showToolWidth"], ["view.draw_toolpaths_solid", "solidToolpaths"], ["view.show_directions", "showDirections"], ["view.show_cut_order", "showCutOrder"],
     ["view.show_route_between_cuts", "showRoute"], ["view.show_start_points", "showStarts"], ["view.show_simulation", "showSim"], ["view.toolpaths_of_this_sheet_only", "toolpathsOfSheetOnly"],
     ["view.snap_to_grid", "snapGrid"], ["view.snap_to_vectors", "snapVectors"], ["view.snap_to_alignments", "snapLevel"], ["view.snap_to_edges", "snapEdges"], ["vectors.edit.resize_handles_mouse", "resizeHandles"],
     ["toolpaths.cut_inner_pieces_g_bek_first", "cutInnerFirst"]]) reg(id, toggleSetting(k));

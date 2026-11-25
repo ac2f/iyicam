@@ -11,6 +11,19 @@ import { app, emit, on, settings, units } from "./state.js";
 
 const R = 22;                                   // the rulers
 const TP_COLORS = ["#e6550d", "#3182bd", "#31a354", "#756bb1", "#de2d26", "#636363", "#fd8d3c", "#6baed6"];
+/** How wide a tool cuts ``depth`` below its tip (a V-bit or an engraving tool: wider the deeper it goes). */
+export function toolWidthAt(t, depth) {
+  const D = t.diameter || 1;
+  if (t.type === "v_bit" || t.type === "engraving") return Math.min(D, (t.tip_diameter || 0) + 2 * Math.max(0, depth) * Math.tan(Math.max(1e-3, Math.min(179.9, t.angle || 90)) * Math.PI / 360));
+  if (t.type === "ball_nose") { const R = D / 2, h = Math.max(0, depth); return h >= R ? D : 2 * Math.sqrt(Math.max(0, R * R - (R - h) ** 2)); }
+  return D;
+}
+/** The colour of a cut ``depth`` deep: the toolpath's colour, light near the surface, full at ``deepest``. */
+export function solidColor(hex, depth, deepest) {
+  const n = parseInt(hex.slice(1), 16), t = deepest > 0 ? Math.max(0, Math.min(1, depth / deepest)) : 0, k = 0.62 * (1 - t);
+  const ch = v => Math.round(v + (255 - v) * k);
+  return `rgb(${ch((n >> 16) & 255)},${ch((n >> 8) & 255)},${ch(n & 255)})`;
+}
 const NICE = [1, 2, 5];
 
 const PALETTE = {
@@ -183,6 +196,7 @@ export class DrawingView {
     ctx.lineJoin = "round"; ctx.lineCap = "round";
     const selected = new Set(d.selection);
     const dragging = this.drag && this.drag.kind === "move" && this.drag.moved;
+    if (settings.showToolpaths && settings.solidToolpaths) this._solid(ctx, d, sh);   // (under the vectors, as in ArtCAM)
     // vectors, a layer's colour each
     const byColor = new Map();
     for (const vec of sh.vectors) {
@@ -259,6 +273,45 @@ export class DrawingView {
     draw(false); draw(true);
   }
 
+  /** The toolpaths drawn solid, as ArtCAM does: every cut as wide as the tool at its depth, the shallow ones first and
+   * light, the deepest last in the full colour of the toolpath: what shows is the shape the tool leaves. */
+  _solid(ctx, d, sh) {
+    const res = d.results;
+    if (!res) return;
+    const tpIndex = new Map(d.project.toolpaths.map((t, i) => [t.id, i]));
+    const thick = sh.thickness || (d.project.material && d.project.material.thickness) || 0;
+    const layers = [];
+    let deepest = thick;
+    for (const r of res.results) {
+      if (r.sheet !== sh.id || r.enabled === false || !r.preview || d.hiddenToolpaths.has(r.toolpath)) continue;
+      const idx = tpIndex.get(r.toolpath);
+      if (idx === undefined) continue;
+      const tp = d.project.toolpaths[idx], color = TP_COLORS[idx % TP_COLORS.length];
+      for (const cut of r.preview.cuts) {
+        if (!(cut.z < 0)) continue;
+        const path = new Path2D();
+        for (let k = 0; k + 1 < cut.p.length; k += 2) (k ? path.lineTo(cut.p[k], cut.p[k + 1]) : path.moveTo(cut.p[k], cut.p[k + 1]));
+        layers.push({ z: cut.z, path, color, tool: tp.tool });
+        deepest = Math.max(deepest, -cut.z);
+      }
+      for (const dr of r.preview.drills || []) {
+        const path = new Path2D(); path.moveTo(dr[0], dr[1]); path.lineTo(dr[0], dr[1]);
+        layers.push({ z: dr[2], path, color, tool: tp.tool });
+      }
+    }
+    if (!layers.length) return;
+    layers.sort((a, b) => b.z - a.z);
+    const full = thick || deepest;
+    ctx.save(); ctx.lineCap = "round"; ctx.lineJoin = "round";
+    for (const l of layers) {
+      const depth = -l.z, t = l.tool || {};
+      ctx.lineWidth = Math.max(1e-3, toolWidthAt(t, depth));
+      ctx.strokeStyle = solidColor(l.color, depth, full);
+      ctx.stroke(l.path);
+    }
+    ctx.restore();
+  }
+
   _toolpaths(ctx, d, sh, s, dark, layers) {
     const res = d.results;
     if (!res) return;
@@ -284,6 +337,12 @@ export class DrawingView {
         const wd = tp.tool.type === "v_bit" || tp.tool.type === "engraving"
           ? Math.max(tp.tool.tip_diameter || 0.2, 2 * Math.tan((tp.tool.angle || 60) * Math.PI / 360) * Math.min(-(r.stats.zmin || 0), 20)) : tp.tool.diameter;
         ctx.strokeStyle = color; ctx.globalAlpha = dim * 0.22; ctx.lineWidth = wd; ctx.stroke(c.feed); ctx.globalAlpha = dim;
+      }
+      if (settings.solidToolpaths) {                            // (the solid shows the cuts: the moves in the air over it)
+        if (settings.showRoute) { ctx.strokeStyle = "rgba(220,30,30,0.55)"; ctx.lineWidth = 0.8 / s; ctx.setLineDash([5 / s, 4 / s]); ctx.stroke(c.rapid); ctx.setLineDash([]); }
+        if (settings.showDirections) this._arrows(ctx, r, s, color);
+        ctx.globalAlpha = 1;
+        continue;
       }
       ctx.strokeStyle = color; ctx.lineWidth = 1 / s; ctx.stroke(c.feed);
       if (settings.showRoute) { ctx.strokeStyle = "rgba(220,30,30,0.55)"; ctx.lineWidth = 0.8 / s; ctx.setLineDash([5 / s, 4 / s]); ctx.stroke(c.rapid); ctx.setLineDash([]); }

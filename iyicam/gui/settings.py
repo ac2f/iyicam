@@ -25,6 +25,7 @@ class Settings:
     nudge_step: float = 1.0           # mm, the step of the arrow keys when nudge_mode is fixed
     show_toolpaths: bool = True
     show_tool_width: bool = False
+    solid_toolpaths: bool = False     # the toolpaths drawn solid: what the tool cuts, shaded by depth (as ArtCAM)
     show_directions: bool = False
     show_cut_order: bool = False      # number the cuts of the toolpaths on the drawing
     show_route: bool = False          # arrows for the rapid moves between the cuts

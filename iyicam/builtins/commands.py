@@ -13,6 +13,7 @@ EDIT = "Vectors/Edit"
 CORNER = "Vectors/Corners"
 XFORM = "Vectors/Transform"
 ARRANGE = "Vectors/Arrange"
+MODEL = "Model"
 SELECT = "Edit/Select"
 
 
@@ -374,6 +375,17 @@ def _slant(ctx, v):
     _apply(ctx, T, v["copy"])
 
 
+def _turn_model(how: str):
+    """A command that turns or mirrors the whole sheet (core.sheetturn)."""
+    def run(ctx, v):
+        from ..core.sheetturn import turn_sheet
+        turn_sheet(ctx.project, ctx.sheet, how)
+        ctx.changed = True
+        s = ctx.sheet
+        ctx.messages.append(f"{s.name}: {s.width:g} × {s.height:g}")
+    return run
+
+
 def _about_centre(make):
     """A command with nothing to ask: ``make(centre of the selection)`` is the transformation."""
     def run(ctx, v):
@@ -681,6 +693,17 @@ def commands() -> list[Command]:
                 min_selection=1, tooltip="Mirror the selection about its own centre line"),
         Command("xform.flip_v", "Flip Top / Bottom", _about_centre(lambda c: Transform.mirror(False, c)), XFORM,
                 min_selection=1, tooltip="Mirror the selection about its own centre line"),
+        # the whole model (sheet): turned or mirrored with everything on it, as ArtCAM's Model > Rotate / Mirror
+        Command("model.rot90l", "Rotate Model 90° Left", _turn_model("left"), MODEL,
+                tooltip="Turn the sheet a quarter turn counter-clockwise with everything on it (width and height swap)"),
+        Command("model.rot90r", "Rotate Model 90° Right", _turn_model("right"), MODEL,
+                tooltip="Turn the sheet a quarter turn clockwise with everything on it (width and height swap)"),
+        Command("model.rot180", "Rotate Model 180°", _turn_model("half"), MODEL,
+                tooltip="Turn the sheet half a turn with everything on it"),
+        Command("model.mirror_lr", "Mirror Model Left / Right", _turn_model("mirror_lr"), MODEL,
+                tooltip="Mirror the sheet with everything on it, left to right (the back side of the plate)"),
+        Command("model.mirror_tb", "Mirror Model Top / Bottom", _turn_model("mirror_tb"), MODEL,
+                tooltip="Mirror the sheet with everything on it, top to bottom (the back side of the plate)"),
         Command("arrange.align", "Align...", _align, ARRANGE, [
             Param("mode", "Align", "choice", "left", choices=[
                 ("left", "Left"), ("hcenter", "Centre horizontally"), ("right", "Right"), ("bottom", "Bottom"),

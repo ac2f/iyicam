@@ -96,6 +96,27 @@ const ok = (name, cond, extra = "") => { results.push(cond); console.log(cond ? 
   ok("only the toolpaths of this sheet are written", /Pocket 1/.test(text) && !/Profile 1|Kesim/.test(text), dl ? dl.suggestedFilename() : "no file");
   await page.keyboard.press("Escape"); await page.waitForTimeout(200);
 
+  // Model ▸ Rotate Model 90° Left: the sheet turns with everything on it
+  const before = await ev(() => { const d = window.__iyicam.app.cur; return { w: d.sheet.width, h: d.sheet.height, id: d.sheet.id }; });
+  await ev(() => window.__iyicam.A.runItem("model.rotate_model_90_left"));
+  await page.waitForFunction(b => { const d = window.__iyicam.app.cur; return d.sheet.id === b.id && d.sheet.width === b.h; }, before, { timeout: 30000 }).catch(() => {});
+  const after = await ev(() => { const d = window.__iyicam.app.cur; return { w: d.sheet.width, h: d.sheet.height }; });
+  ok("Model ▸ Rotate 90° Left turns the sheet (width and height swap)", after.w === before.h && after.h === before.w, JSON.stringify([before, after]));
+  await ev(() => window.__iyicam.A.runItem("model.rotate_model_90_right"));
+  await page.waitForFunction(b => window.__iyicam.app.cur.sheet.width === b.w, before, { timeout: 30000 }).catch(() => {});
+
+  // View ▸ Draw Toolpaths Solid: the cuts drawn as wide as the tool
+  await ev(async () => { const { A } = window.__iyicam; await A.runItem("toolpaths.recalculate_all"); });
+  await page.waitForFunction(() => { const d = window.__iyicam.app.cur; return d.results && !d.stale; }, null, { timeout: 120000 }).catch(() => {});
+  const ink = async () => ev(() => { const c = document.querySelector("canvas"), x = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+    let n = 0; for (let k = 0; k < x.length; k += 4) if (Math.abs(x[k] - x[k + 1]) > 40 || Math.abs(x[k + 1] - x[k + 2]) > 40) n++; return n; });
+  const thin = await ink();
+  await ev(() => window.__iyicam.A.runItem("view.draw_toolpaths_solid"));
+  await page.waitForTimeout(400);
+  const solid = await ink();
+  ok("Draw Toolpaths Solid fills what the tool cuts", solid > thin * 1.5, `${thin} -> ${solid} coloured pixels`);
+  await ev(() => window.__iyicam.A.runItem("view.draw_toolpaths_solid"));
+
   console.log(errors.join("\n") || "no page errors");
   ok("no page errors", errors.length === 0);
   await browser.close();

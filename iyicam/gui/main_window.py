@@ -621,6 +621,10 @@ class MainWindow(QMainWindow):
         m.addSeparator()
         self._act(m, "Show &Toolpaths", lambda v: self._toggle("show_toolpaths", v), None, True, s.show_toolpaths)
         self._act(m, "Show Tool &Width", lambda v: self._toggle("show_tool_width", v), None, True, s.show_tool_width)
+        self.solid_action = self._act(m, "Draw Toolpaths So&lid", lambda v: self._toggle("solid_toolpaths", v), "Ctrl+Shift+L",
+                                      True, s.solid_toolpaths)
+        self.solid_action.setToolTip("Show what the tool cuts, as wide as the tool and shaded by depth (light near the "
+                                     "surface, the full colour at the bottom), as ArtCAM draws a toolpath solid")
         self.view_actions = {}
         for key, label in (("show_directions", "Show &Directions"), ("show_cut_order", "Show Cut &Order"),
                            ("show_route", "Show &Route Between Cuts"), ("show_starts", "Show &Start Points")):

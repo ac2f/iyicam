@@ -108,6 +108,11 @@ with Python plugins.
 **Machining**
 - Material setup: thickness, Z zero top / bottom, XY origin (9 positions), safe Z,
   rapid-down clearance, home position, per-sheet thickness override
+- **Model ▸ Rotate / Mirror** (as in ArtCAM): the whole sheet a quarter or half turn, or mirrored left / right or top /
+  bottom (the back side of a plate), with its vectors, the outline of a leftover and the tabs clicked on it; a quarter
+  turn swaps the width and the height
+- **View ▸ Draw Toolpaths Solid** (Ctrl+Shift+L): what the tool cuts, as wide as the tool at its depth and shaded
+  by depth (light near the surface, the full colour at the bottom), under the vectors, as ArtCAM draws a toolpath solid
 - Tool database: end mills, ball nose, bull nose, V-bits, engraving tools, drills with
   feeds, speeds, stepdown / stepover, tool numbers, coolant; import / export; chip load based
   **feeds & speeds calculator** with material presets; **groups** made, renamed and removed (empty ones kept); tool
@@ -356,6 +361,7 @@ How the program is tested besides the usual unit tests (all in `tests/`):
 | `test_chaos.py` | a long random session (vectors, commands, layers, sheets, toolpaths, nesting, saving) after which undoing everything gives the first project and redoing it the last |
 | `test_thin.py`, `test_geom.py` | the fast centre-line thinning against the plain algorithm, shapes with no area and piles of shapes on one spot (refused with a message, never a hang) |
 | `test_import_fidelity.py` | DXF compared with an independent reading, SVG and HPGL with exactly known shapes |
+| `test_model_turn_solid.py` | Model ▸ Rotate / Mirror on the vectors, a leftover's outline and clicked tabs (every way, back to the start, other sheets left alone, the engine, the web menu), the solid drawing of toolpaths (levels by depth, colours, the desktop's pixels) |
 | `test_artcam.py` | ArtCAM `.art` / `.3dp` of 2008 and 2018 made by `artcam_builder.py` byte for byte: the compound file, every setting of a profile, sheets and shared vectors, iyiCAM's profile on the vectors running on ArtCAM's line, the engine (web) and the desktop; real files when `IYICAM_ARTCAM_SAMPLES` names a folder of them |
 | `test_cdr.py`, `test_cdr_native.py` | CorelDRAW files: recognition (RIFF and ZIP, versions), the built-in reader on files made by `cdr_builder.py` for every version 5 to X8 and object kind, **compared with libcdr's own output** (`cdr2xhtml`, when installed), damaged files, programs of the person's own (errors that say what to do, time limit, Cancel, no process left behind), the service and the command line; a real drawing when `IYICAM_CDR_SAMPLE` names one |
 | `test_nesting_*.py` | an independent check of every layout (overlap, spacing, border, counts) and fuzzing that nesting and re-nesting never adds or loses a vector |

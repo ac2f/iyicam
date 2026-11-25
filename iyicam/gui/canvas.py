@@ -11,7 +11,7 @@ from ..core import clip
 from ..core.document import VectorObject
 from ..core.geom import Arc, BBox, Pt, dist
 from . import cutview, snap as snapping, theme
-from .qtgeom import contours_path, toolpath_paths
+from .qtgeom import contours_path, solid_color, toolpath_paths, toolpath_solid
 
 TP_COLORS = ["#e6550d", "#3182bd", "#31a354", "#756bb1", "#de2d26", "#636363", "#fd8d3c", "#6baed6"]
 
@@ -360,6 +360,9 @@ class Canvas(QWidget):
         else:
             p.drawRect(QRectF(0, 0, sh.width, sh.height))
         self._paint_origin(p, sh)
+        if self.ctrl.settings.solid_toolpaths and self.ctrl.settings.show_toolpaths and (sim is None or self.sim2d.paints_paths()):
+            self._toolpath_cache()
+            self._paint_solid(p)                 # (under the vectors, as in ArtCAM)
         # vectors
         sel = set(self.ctrl.selection)
         proj = self.ctrl.project
@@ -575,6 +578,18 @@ class Canvas(QWidget):
         p.drawPolygon([qm, a1, a2])
 
     def _paint_toolpaths(self, p: QPainter) -> None:
+        self._toolpath_cache()
+        for feed, rapid, drills, color, width, _solid, _tool in self._tp_cache:
+            c = QColor(color)
+            if self.ctrl.settings.solid_toolpaths:      # (the solid shows the cuts: only the moves in the air on it)
+                rp = QPen(QColor(220, 30, 30, 140), 0.8, Qt.DashLine)
+                rp.setCosmetic(True)
+                p.setPen(rp)
+                p.drawPath(rapid)
+                continue
+            self._paint_lines(p, feed, rapid, drills, c, width)
+
+    def _toolpath_cache(self) -> None:
         if self._tp_cache is None:
             self._tp_cache = []
             ctrl = self.ctrl
@@ -584,32 +599,53 @@ class Canvas(QWidget):
                 color = "#8e44ad" if tp.op == "gcode" else TP_COLORS[idx.get(tp.def_id, 0) % len(TP_COLORS)]
                 st = tp.stats(timed=False)
                 width = tp.tool.radius_at_depth(-st.zmin) * 2 if tp.tool.is_tapered else tp.tool.diameter
-                self._tp_cache.append((feed, rapid, drills, color, width))
-        for feed, rapid, drills, color, width in self._tp_cache:
-            c = QColor(color)
-            if self.ctrl.settings.show_tool_width:
-                wc = QColor(c)
-                wc.setAlpha(60)
-                pen = QPen(wc, width)
-                pen.setCapStyle(Qt.RoundCap)
-                pen.setJoinStyle(Qt.RoundJoin)
-                p.setPen(pen)
-                p.drawPath(feed)
-            pen = QPen(c, 1.0)
-            pen.setCosmetic(True)
+                solid = toolpath_solid(tp) if ctrl.settings.solid_toolpaths else []
+                self._tp_cache.append((feed, rapid, drills, color, width, solid, tp.tool))
+
+    def _paint_lines(self, p: QPainter, feed, rapid, drills, c: QColor, width: float) -> None:
+        if self.ctrl.settings.show_tool_width:
+            wc = QColor(c)
+            wc.setAlpha(60)
+            pen = QPen(wc, width)
+            pen.setCapStyle(Qt.RoundCap)
+            pen.setJoinStyle(Qt.RoundJoin)
             p.setPen(pen)
             p.drawPath(feed)
-            rp = QPen(QColor(220, 30, 30, 140), 0.8, Qt.DashLine)
-            rp.setCosmetic(True)
-            p.setPen(rp)
-            p.drawPath(rapid)
-            if drills:
-                p.setPen(pen)
-                r = self.px(5)
-                for x, y in drills:
-                    p.drawEllipse(QPointF(x, y), r, r)
-                    p.drawLine(QPointF(x - r, y), QPointF(x + r, y))
-                    p.drawLine(QPointF(x, y - r), QPointF(x, y + r))
+        pen = QPen(c, 1.0)
+        pen.setCosmetic(True)
+        p.setPen(pen)
+        p.drawPath(feed)
+        rp = QPen(QColor(220, 30, 30, 140), 0.8, Qt.DashLine)
+        rp.setCosmetic(True)
+        p.setPen(rp)
+        p.drawPath(rapid)
+        if drills:
+            p.setPen(pen)
+            r = self.px(5)
+            for x, y in drills:
+                p.drawEllipse(QPointF(x, y), r, r)
+                p.drawLine(QPointF(x - r, y), QPointF(x + r, y))
+                p.drawLine(QPointF(x, y - r), QPointF(x, y + r))
+
+    def _paint_solid(self, p: QPainter) -> None:
+        """The toolpaths drawn solid, as ArtCAM does: every cut as wide as the tool at its depth, shallow cuts first
+        and light, the deepest last and in the full colour of the toolpath (what is seen is the shape the tool leaves)."""
+        sheet = self.ctrl.sheet
+        thick = (sheet.thickness if sheet is not None and sheet.thickness else None) or self.ctrl.project.material.thickness
+        layers = []
+        for _f, _r, _d, color, _w, solid, tool in self._tp_cache:
+            for z, path in solid:
+                layers.append((z, path, color, tool))
+        deepest = max([thick or 0.0] + [-z for z, *_ in layers]) if layers else 0.0
+        through = thick or deepest
+        for z, path, color, tool in sorted(layers, key=lambda l: -l[0]):
+            depth = -z
+            width = tool.radius_at_depth(depth) * 2 if tool.is_tapered else tool.diameter
+            pen = QPen(solid_color(color, depth, through), max(width, 1e-3))
+            pen.setCapStyle(Qt.RoundCap)
+            pen.setJoinStyle(Qt.RoundJoin)
+            p.setPen(pen)
+            p.drawPath(path)
 
     # -- events ----------------------------------------------------------------------------------------
     def resizeEvent(self, ev) -> None:

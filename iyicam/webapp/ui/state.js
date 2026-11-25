@@ -20,7 +20,7 @@ const DEFAULTS = {
   units: "mm", feedUnit: "min", appearance: "system", grid: 10, snapGrid: false, snapVectors: true, snapLevel: true,
   snapEdges: false, snapReach: 10, resizeHandles: true, arrowStep: "auto", arrowStepCustom: 5, autoRecalc: false,
   calcOnOpen: true, askTool: true, showDirections: false, simResolution: 0,
-  showToolpaths: true, showToolWidth: false, showCutOrder: false, showRoute: true, showStarts: false, showSim: true, toolpathsOfSheetOnly: true,
+  showToolpaths: true, showToolWidth: false, solidToolpaths: false, showCutOrder: false, showRoute: true, showStarts: false, showSim: true, toolpathsOfSheetOnly: true,
   cutInnerFirst: true,
 };
 export const settings = { ...DEFAULTS, ...store.get("iyicam.settings", {}) };

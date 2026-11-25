@@ -33,6 +33,57 @@ def contours_path(contours: Iterable[Contour]) -> QPainterPath:
     return p
 
 
+def toolpath_solid(tp: Toolpath) -> list[tuple[float, QPainterPath]]:
+    """What the tool cuts, by depth (as ArtCAM draws a toolpath solid): ``[(z, path of the centre of the tool at that
+    depth)]``, the cutting moves split where the depth changes (a ramp counts at its deepest end).  Drawn with a pen as
+    wide as the tool, shallow first, the drawing shows the shape the tool leaves."""
+    levels: dict[float, QPainterPath] = {}
+    pos = None
+    last_key = None
+    for m in tp.moves:
+        if isinstance(m, DrillCycle):
+            path = levels.setdefault(round(m.z, 3), QPainterPath())
+            path.moveTo(m.x, m.y)
+            path.lineTo(m.x, m.y)
+            pos, last_key = (m.x, m.y, m.r), None
+            continue
+        if not isinstance(m, (Rapid, Feed, ArcMove)):
+            continue
+        if pos is None or isinstance(m, Rapid):
+            pos, last_key = (m.x, m.y, m.z), None
+            continue
+        key = round(min(pos[2], m.z), 3)
+        path = levels.setdefault(key, QPainterPath())
+        if key != last_key or path.elementCount() == 0 or path.currentPosition().x() != pos[0] \
+                or path.currentPosition().y() != pos[1]:
+            path.moveTo(pos[0], pos[1])
+        if isinstance(m, ArcMove):
+            sw = arc_sweep(pos[0], pos[1], m)
+            r = math.hypot(pos[0] - m.cx, pos[1] - m.cy)
+            if r < 1e-9 or abs(sw) < 1e-12:
+                path.lineTo(m.x, m.y)
+            else:
+                a0 = math.atan2(pos[1] - m.cy, pos[0] - m.cx)
+                n = max(1, math.ceil(abs(sw) / (math.pi / 2)))
+                for i in range(n):
+                    for bz in Arc.from_center((m.cx, m.cy), r, a0 + sw * i / n, sw / n).to_beziers():
+                        path.cubicTo(bz.c1[0], bz.c1[1], bz.c2[0], bz.c2[1], bz.b[0], bz.b[1])
+        else:
+            path.lineTo(m.x, m.y)
+        pos, last_key = (m.x, m.y, m.z), key
+    return sorted(((z, p) for z, p in levels.items() if z < 0), key=lambda zp: -zp[0])
+
+
+def solid_color(color: str, depth: float, deepest: float):
+    """The colour of a cut ``depth`` deep: the toolpath's colour, light near the surface, full at ``deepest``."""
+    from PySide6.QtGui import QColor
+    c = QColor(color)
+    t = 0.0 if deepest <= 0 else max(0.0, min(1.0, depth / deepest))
+    k = 0.62 * (1.0 - t)                       # (how much white goes in)
+    return QColor(round(c.red() + (255 - c.red()) * k), round(c.green() + (255 - c.green()) * k),
+                  round(c.blue() + (255 - c.blue()) * k))
+
+
 def toolpath_paths(tp: Toolpath) -> tuple[QPainterPath, QPainterPath, list[tuple[float, float]]]:
     """(cutting moves, rapid moves, drill points) in world coordinates."""
     feed, rapid = QPainterPath(), QPainterPath()

@@ -192,6 +192,12 @@ export const MENUS = [
     "check": true
    },
    {
+    "id": "view.draw_toolpaths_solid",
+    "text": "Draw Toolpaths Solid",
+    "sc": "Ctrl+Shift+L",
+    "check": true
+   },
+   {
     "id": "view.show_directions",
     "text": "Show Directions",
     "check": true
@@ -952,6 +958,38 @@ export const MENUS = [
    {
     "id": "toolpaths.post_processors",
     "text": "Post-processors..."
+   }
+  ]
+ },
+ {
+  "id": "model",
+  "text": "Model",
+  "menu": [
+   {
+    "id": "model.rotate_model_90_left",
+    "text": "Rotate Model 90° Left",
+    "cmd": "model.rot90l"
+   },
+   {
+    "id": "model.rotate_model_90_right",
+    "text": "Rotate Model 90° Right",
+    "cmd": "model.rot90r"
+   },
+   {
+    "id": "model.rotate_model_180",
+    "text": "Rotate Model 180°",
+    "cmd": "model.rot180"
+   },
+   "-",
+   {
+    "id": "model.mirror_model_left_right",
+    "text": "Mirror Model Left / Right",
+    "cmd": "model.mirror_lr"
+   },
+   {
+    "id": "model.mirror_model_top_bottom",
+    "text": "Mirror Model Top / Bottom",
+    "cmd": "model.mirror_tb"
    }
   ]
  },
