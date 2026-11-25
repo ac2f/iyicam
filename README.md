@@ -98,7 +98,10 @@ with Python plugins.
   ellipses, solids, blocks, planes tilted in space, units, gap joining) and export; SVG import
   (transforms, units exact to the micron, Inkscape layers) and export; HPGL (`.plt`) import from
   cutting plotters; **CorelDRAW (`.cdr`, versions 5 to X8, and newer ones up to 2026 tried and said to be
-  unchecked) import with nothing to install** (a port of libcdr's geometry, checked against libcdr itself; [docs/cdr.md](docs/cdr.md)). **An import says
+  unchecked) import with nothing to install** (a port of libcdr's geometry, checked against libcdr itself; [docs/cdr.md](docs/cdr.md)).
+  **ArtCAM models and projects (`.art`, `.3dp`, ArtCAM 2008 to 2018) open as a project**: a sheet of the model's size
+  for each toolpath (for the toolpaths that cut the same vectors), the vectors the toolpaths cut and the 2D profiles
+  with ArtCAM's tool, feeds, heights, depths, allowance, side and direction ([docs/artcam.md](docs/artcam.md)). **An import says
   what it could not bring in** (hatches, text, ...) instead of dropping it silently; the shapes are
   checked against an independent reading of the files
 
@@ -312,7 +315,7 @@ iyicam/
                ordering, job calculation, simulation
   post/        post-processor engine, TOML loader, built-in posts, G-code export
   nesting/     no-fit polygon nesting on plates of any shape, part grouping, stock of leftovers
-  formats/     DXF, SVG, HPGL and CorelDRAW import, DXF and SVG export
+  formats/     DXF, SVG, HPGL, CorelDRAW and ArtCAM import, DXF and SVG export
   plugins/     plugin API and manager
   builtins/    built-in features, registered like a plugin
   gui/         PySide6 user interface (controller, canvas, tools, panels, dialogs)
@@ -353,6 +356,7 @@ How the program is tested besides the usual unit tests (all in `tests/`):
 | `test_chaos.py` | a long random session (vectors, commands, layers, sheets, toolpaths, nesting, saving) after which undoing everything gives the first project and redoing it the last |
 | `test_thin.py`, `test_geom.py` | the fast centre-line thinning against the plain algorithm, shapes with no area and piles of shapes on one spot (refused with a message, never a hang) |
 | `test_import_fidelity.py` | DXF compared with an independent reading, SVG and HPGL with exactly known shapes |
+| `test_artcam.py` | ArtCAM `.art` / `.3dp` of 2008 and 2018 made by `artcam_builder.py` byte for byte: the compound file, every setting of a profile, sheets and shared vectors, iyiCAM's profile on the vectors running on ArtCAM's line, the engine (web) and the desktop; real files when `IYICAM_ARTCAM_SAMPLES` names a folder of them |
 | `test_cdr.py`, `test_cdr_native.py` | CorelDRAW files: recognition (RIFF and ZIP, versions), the built-in reader on files made by `cdr_builder.py` for every version 5 to X8 and object kind, **compared with libcdr's own output** (`cdr2xhtml`, when installed), damaged files, programs of the person's own (errors that say what to do, time limit, Cancel, no process left behind), the service and the command line; a real drawing when `IYICAM_CDR_SAMPLE` names one |
 | `test_nesting_*.py` | an independent check of every layout (overlap, spacing, border, counts) and fuzzing that nesting and re-nesting never adds or loses a vector |
 

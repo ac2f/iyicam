@@ -1250,6 +1250,9 @@ class MainWindow(QMainWindow):
                              "All files (*)")
         if not path:
             return
+        if Path(path).suffix.lower() in (".art", ".3dp"):      # (an ArtCAM model or project: sheets and toolpaths)
+            self.open_artcam(path)
+            return
         if not str(path).lower().endswith(".icam") and self.ctrl.registry.importer_for(Path(path).suffix) is not None:
             self.open_drawing(path)
             return
@@ -1268,6 +1271,35 @@ class MainWindow(QMainWindow):
         if not fresh:
             self._attach(c)
         self._doc_changed(c)
+
+    def open_artcam(self, path: str) -> None:
+        """An ArtCAM model (.art) or project (.3dp) opened as a new project in a new tab (in the open one when that has
+        never been used): its sheets, the vectors its toolpaths cut and the toolpaths (formats.artcam)."""
+        from ..formats.artcam import ArtCamError, read_project
+        report = ImportReport()
+        try:
+            p = run_busy(lambda: read_project(path, report), self, f"Reading {Path(path).name}...")
+        except (ArtCamError, OSError) as exc:
+            QMessageBox.warning(self, "Open", f"{Path(path).name} could not be opened.\n\n{exc}")
+            return
+        fresh = self.ctrl.pristine
+        c = self.ctrl if fresh else Controller(self.ctrl.registry, self.ctrl.settings, self.ctrl.tools)
+        c.busy_parent = self
+        c._replace(p)
+        c.dirty = True                                     # (it is not an iyiCAM project yet: saving asks where)
+        if not fresh:
+            self._attach(c)
+        c.changed.emit()
+        self.canvas.zoom_extents()
+        self._doc_changed(c)
+        self.last_import_report = report
+        n = sum(len(s.vectors) for s in p.sheets)
+        via = f" - {report.via}" if report.via else ""
+        self.statusBar().showMessage(f"Opened {Path(path).name}: {len(p.sheets)} sheet(s), {n} vector(s), "
+                                     f"{len(p.toolpaths)} toolpath(s){via}", 8000)
+        if report.summary():
+            QMessageBox.information(self, "Open", f"{Path(path).name}: {len(p.sheets)} sheet(s), {n} vector(s), "
+                                                  f"{len(p.toolpaths)} toolpath(s).\n\n{report.summary()}")
 
     def open_drawing(self, path: str) -> list[VectorObject]:
         """A drawing (CorelDRAW, DXF, SVG, PLT ...) opened as a new project in a new tab (in the open one when that has
