@@ -108,13 +108,20 @@ const ok = (name, cond, extra = "") => { results.push(cond); console.log(cond ? 
   // View ▸ Draw Toolpaths Solid: the cuts drawn as wide as the tool
   await ev(async () => { const { A } = window.__iyicam; await A.runItem("toolpaths.recalculate_all"); });
   await page.waitForFunction(() => { const d = window.__iyicam.app.cur; return d.results && !d.stale; }, null, { timeout: 120000 }).catch(() => {});
-  const ink = async () => ev(() => { const c = document.querySelector("canvas"), x = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
-    let n = 0; for (let k = 0; k < x.length; k += 4) if (Math.abs(x[k] - x[k + 1]) > 40 || Math.abs(x[k + 1] - x[k + 2]) > 40) n++; return n; });
-  const thin = await ink();
+  const wide = async () => ev(() => {                       // (the widest line drawn, in world units, at the next redraw)
+    const { app } = window.__iyicam, v = app.ui.canvas, ctx = v.canvas.getContext("2d"), orig = ctx.stroke;
+    let most = 0, n = 0, world = 0;
+    ctx.stroke = function (...a) { const s = Math.abs(ctx.getTransform().a) || 1; most = Math.max(most, ctx.lineWidth * s); world = Math.max(world, ctx.lineWidth); n++; return orig.apply(this, a); };
+    try { v.draw(); } finally { ctx.stroke = orig; }
+    const tools = app.cur.project.toolpaths.map(t => t.tool.diameter);
+    return { most, n, world, tools, results: (app.cur.results && app.cur.results.results || []).filter(r => r.sheet === app.cur.sheet.id && r.preview).length };
+  });
+  const thin = await wide();
   await ev(() => window.__iyicam.A.runItem("view.draw_toolpaths_solid"));
-  await page.waitForTimeout(400);
-  const solid = await ink();
-  ok("Draw Toolpaths Solid fills what the tool cuts", solid > thin * 1.5, `${thin} -> ${solid} coloured pixels`);
+  await page.waitForTimeout(300);
+  const solidW = await wide();
+  const solid = solidW.most, thinW = thin;
+  ok("Draw Toolpaths Solid fills what the tool cuts", solidW.results > 0 && solidW.tools.includes(solidW.world) && thinW.world < Math.min(...thinW.tools), JSON.stringify([thinW, solidW]));
   await ev(() => window.__iyicam.A.runItem("view.draw_toolpaths_solid"));
 
   console.log(errors.join("\n") || "no page errors");
