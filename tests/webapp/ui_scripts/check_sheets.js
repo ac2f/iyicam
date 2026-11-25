@@ -80,6 +80,22 @@ const ok = (name, cond, extra = "") => { results.push(cond); console.log(cond ? 
   });
   ok("one G-code file per toolpath", files.length === 2 && new Set(files).size === 2, files.join(", "));
 
+  // Save G-code: "the toolpaths of this sheet" writes those that belong on the sheet shown
+  await ev(() => { const { app, A } = window.__iyicam; app.cur.sheetId = app.cur.project.sheets[0].id; A.setCur(app.cur); });
+  await ev(() => { window.__iyicam.A.runItem("file.save_g_code"); });
+  await page.waitForSelector(".dlg");
+  const opts = await ev(() => [...document.querySelectorAll(".dlg select option")].map(o => o.value));
+  ok("Save G-code offers the toolpaths of this sheet", opts.includes("sheet"), opts.join(","));
+  await page.selectOption(".dlg .row:has-text('Toolpaths') select", "sheet");
+  const dlp = page.waitForEvent("download", { timeout: 120000 }).catch(() => null);
+  await page.click(".dlg .btn.primary");
+  await page.waitForSelector(".dlg .choose", { timeout: 120000 });          // (where to: this device or the agent)
+  await page.click(".dlg button:has-text('Download to this device')");
+  const dl = await dlp;
+  const text = dl ? require("fs").readFileSync(await dl.path(), "utf8") : "";
+  ok("only the toolpaths of this sheet are written", /Pocket 1/.test(text) && !/Profile 1|Kesim/.test(text), dl ? dl.suggestedFilename() : "no file");
+  await page.keyboard.press("Escape"); await page.waitForTimeout(200);
+
   console.log(errors.join("\n") || "no page errors");
   ok("no page errors", errors.length === 0);
   await browser.close();

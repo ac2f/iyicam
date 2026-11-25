@@ -119,9 +119,16 @@ export async function saveGcode() {
   const v = await gcodeDialog(d);
   if (!v) return;
   try {
+    let ids;
+    if (v.which === "selected") ids = d.toolpathSelection.slice();
+    else if (v.which === "sheet") {          // (the toolpaths that belong on this sheet: the engine's cam.job.shown_on)
+      const view = await app.engine.call("toolpath_view", { project: d.project, sheet: d.sheetId });
+      ids = view.shown;
+      if (!ids.length) { alertBox("No toolpath is calculated on this sheet.", "Save G-code"); return; }
+    }
     const r = await run("gcode", { project: d.project, post: v.post, file_name: v.file_name, program_number: v.program_number, recalculate: v.recalculate || d.stale,
-      sheets: v.all_sheets ? undefined : [d.sheetId], per_toolpath: !!v.per_toolpath,
-      toolpaths: v.only_selected ? d.toolpathSelection.slice() : undefined }, { label: "Writing G-code", cancel: true });
+      sheets: v.all_sheets && v.which !== "sheet" ? undefined : [d.sheetId], per_toolpath: !!v.per_toolpath,
+      toolpaths: ids }, { label: "Writing G-code", cancel: true });
     if (r.errors && r.errors.length) await alertBox(r.errors.join("\n"), "Save G-code");
     if (!r.files.length) { status("Nothing was written"); return; }
     if (await deliverFiles(r.files, "Save G-code")) status(`G-code: ${r.files.map(f => f.name).join(", ")}`);

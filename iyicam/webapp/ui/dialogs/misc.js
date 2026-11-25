@@ -276,7 +276,9 @@ export async function gcodeDialog(doc) {
     P("file_name", "File name", "str", doc.name.replace(/\.[^.]+$/, "")),
     P("program_number", "Program number", "int", 1000, { min: 0, max: 999999 }),
     P("all_sheets", "Every sheet (one file each)", "bool", true, { visible: null }),
-    ...(doc.toolpathSelection && doc.toolpathSelection.length ? [P("only_selected", `Only the toolpaths selected (${doc.toolpathSelection.length})`, "bool", true)] : []),
+    P("which", "Toolpaths", "choice", doc.toolpathSelection && doc.toolpathSelection.length ? "selected" : "on", { choices: [
+      ["on", "Every toolpath switched on"], ["sheet", `The toolpaths of this sheet (${doc.sheet ? doc.sheet.name : ""})`],
+      ...(doc.toolpathSelection && doc.toolpathSelection.length ? [["selected", `The toolpaths selected (${doc.toolpathSelection.length})`]] : [])] }),
     P("per_toolpath", "One file per toolpath (all in one folder)", "bool", store.get("iyicam.perToolpath", false), { help: "Every toolpath in a G-code file of its own, named after the toolpath" }),
     P("recalculate", "Calculate the toolpaths again first", "bool", false, { help: "Off: the toolpaths as they were calculated last are written" }),
   ];

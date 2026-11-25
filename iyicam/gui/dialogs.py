@@ -2191,8 +2191,11 @@ class ExportDialog(RemembersSize, QDialog):
         self.list.itemChanged.connect(self.preview)
         self.list.model().rowsMoved.connect(lambda *_: QTimer.singleShot(0, self._order_changed))
         self.list.setMaximumHeight(160)
-        for text, fn in (("All", lambda: self._tick(lambda t: True)), ("None", lambda: self._tick(lambda t: False))):
+        for text, fn, tip in (("All", lambda: self._tick(lambda t: True), "Tick every toolpath"),
+                              ("This sheet", self.tick_sheet, "Tick the toolpaths of the sheet shown (those calculated on it)"),
+                              ("None", lambda: self._tick(lambda t: False), "Tick none")):
             b = QPushButton(text)
+            b.setToolTip(tip)
             b.clicked.connect(fn)
             pick.addWidget(b)
         for text, delta, tip in (("▲", -1, "Cut the selected toolpath earlier"), ("▼", 1, "Cut the selected toolpath later")):
@@ -2552,6 +2555,15 @@ class ExportDialog(RemembersSize, QDialog):
                 stems = [f"{x}_{k + 1}_T{g[0].tool.number}" for k, (x, g) in enumerate(zip(stems, groups))]
             names += [f"{x}.{post.extension}" for x in stems]
         self.name_preview.setText("Files: " + (", ".join(names[:4]) + (" ..." if len(names) > 4 else "") if names else "(none)"))
+
+    def tick_sheet(self) -> None:
+        """Tick the toolpaths that belong on the sheet shown (``cam.job.shown_on``: calculated there), and no others."""
+        from ..cam.job import shown_on
+        sheet = self.ctrl.sheet
+        i = self.sheets.findData("current")              # (this sheet's toolpaths are saved for this sheet)
+        if i >= 0:
+            self.sheets.setCurrentIndex(i)
+        self._tick(lambda t: sheet is not None and shown_on(self.ctrl.project, t, sheet))
 
     def _tick(self, wanted) -> None:
         """Tick the toolpaths that ``wanted(toolpath)`` says yes to, and no others."""
