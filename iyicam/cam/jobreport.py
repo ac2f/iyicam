@@ -26,7 +26,7 @@ def job_report_html(project: Project, results: dict, inch: bool = False) -> str:
            "<style>body{font-family:sans-serif;margin:24px}table{border-collapse:collapse}"
            "td,th{border:1px solid #bbb;padding:4px 8px;text-align:left}th{background:#eee}</style></head><body>",
            f"<h1>{e(project.name)}</h1>",
-           f"<p>Material thickness {fmt(m.thickness)}, Z zero at the {m.z_zero}, XY origin "
+           f"<p>Z zero at the {m.z_zero} (every sheet has its own thickness, below), XY origin "
            f"{m.xy_origin.replace('_', ' ')}, safe Z {fmt(m.safe_z)}.</p>"]
     for s in project.sheets:
         tps = sheet_toolpaths(project, results, s)

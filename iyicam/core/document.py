@@ -111,7 +111,7 @@ class Sheet:
     width: float = 1220.0
     height: float = 2440.0
     vectors: list[VectorObject] = field(default_factory=list)
-    thickness: float | None = None  # overrides the material thickness when set
+    thickness: float | None = None  # the thickness of this sheet (None only before it is first kept: then the material's)
     id: str = field(default_factory=new_id)
     # outlines of the material (outer boundaries and holes) when the plate is not a full rectangle
     # (a leftover); the sheet size is then the bounding box of the outline
@@ -236,11 +236,15 @@ class Project:
         return None
 
     def add_sheet(self, name: str | None = None, width: float | None = None,
-                  height: float | None = None) -> Sheet:
-        ref = self.sheets[-1] if self.sheets else None
+                  height: float | None = None, thickness: float | None = None, like: Sheet | None = None) -> Sheet:
+        """A new sheet with a thickness of its own: the one given, else that of ``like`` (else of the last sheet). Every sheet
+        has its own thickness: there is no thickness of the project that sheets follow."""
+        ref = like or (self.sheets[-1] if self.sheets else None)
         s = Sheet(name or f"Sheet {len(self.sheets) + 1}",
                   width if width is not None else (ref.width if ref else 600.0),
-                  height if height is not None else (ref.height if ref else 400.0))
+                  height if height is not None else (ref.height if ref else 400.0),
+                  thickness=float(thickness) if thickness is not None else
+                  (self.sheet_thickness(ref) if ref is not None else self.material.thickness))
         self.sheets.append(s)
         return s
 
@@ -474,6 +478,9 @@ def project_from_dict(d: dict) -> Project:
                       [[(float(x), float(y)) for x, y in poly] for poly in s["outline"]] if s.get("outline") else None,
                       s["group"].strip() if isinstance(s.get("group"), str) else "")
                 for s in d.get("sheets", [])] if isinstance(d.get("sheets"), list) else p.sheets
+    for s in p.sheets:                     # (a sheet kept without a thickness of its own had the project's: it is its own now)
+        if s.thickness is None:
+            s.thickness = p.material.thickness
     # (a project kept without any sheet, a blank one, opens without any: the sheets are added by the person)
     p.stock = [StockItem.from_dict(x) for x in d.get("stock", [])]
     p.toolpaths = [toolpath_from_dict(t) for t in d.get("toolpaths", [])]

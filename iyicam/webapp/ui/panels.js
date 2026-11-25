@@ -213,8 +213,8 @@ export function transformPanel() {
 
 // ------------------------------------------------------------------------------------------ Toolpaths
 function materialText(d) {
-  const m = d.project.material;
-  return `${units.fmt(m.thickness)} thick · Z zero at the ${m.z_zero === "top" ? "top" : "bottom"} · safe Z ${units.fmt(m.safe_z)} · rapid-down ${units.fmt(m.clearance)}`;
+  const m = d.project.material, sh = d.sheet;
+  return `${units.fmt(sh && sh.thickness != null ? sh.thickness : m.thickness)} thick · Z zero at the ${m.z_zero === "top" ? "top" : "bottom"} · safe Z ${units.fmt(m.safe_z)} · rapid-down ${units.fmt(m.clearance)}`;
 }
 export function toolpathsPanel() {
   const body = h("div", { class: "tree tp" });
@@ -233,7 +233,8 @@ export function toolpathsPanel() {
     h("div", { class: "listbox tall" }, h("div", { class: "tphead" }, h("span", { class: "c1" }, "Toolpath"), h("span", { class: "c2" }, "Group"), h("span", { class: "c3" }, "Tool"), h("span", { class: "c4" }, "Time")), body),
     total, h("div", { class: "matrow" }, mat, h("button", { type: "button", class: "btn", onclick: () => A.runItem("toolpaths.material_setup") }, "Material Setup...")),
     h("div", { class: "btnrow" }, newBtn, tbtn("edit", "Edit toolpath", one(A.editToolpath)), tbtn("copy", "Duplicate", one(A.duplicateToolpath)),
-      tbtn("minus", "Delete", () => A.deleteToolpaths(sel())), tbtn("up", "Move up", one(id => A.moveToolpath(id, -1))), tbtn("down", "Move down", one(id => A.moveToolpath(id, 1))), tbtn("recalc", "Recalculate all (F5)", () => A.recalc())),
+      tbtn("minus", "Delete", () => A.deleteToolpaths(sel())), tbtn("up", "Move up", one(id => A.moveToolpath(id, -1))), tbtn("down", "Move down", one(id => A.moveToolpath(id, 1))), tbtn("recalc", "Recalculate all (F5)", () => A.recalc()),
+      tbtn("select", "Select the toolpaths of this sheet", () => { const d = app.cur; if (!d) return; const v = tpView(d); d.toolpathSelection = d.project.toolpaths.filter(t => !v || v.shown.has(t.id)).map(t => t.id); update(); })),
     h("div", { class: "btnrow two" }, h("button", { type: "button", class: "btn", onclick: () => A.saveGcode() }, "Save G-code..."), h("button", { type: "button", class: "btn", onclick: () => A.simulate() }, "Simulate")));
   function update() {
     const d = app.cur;

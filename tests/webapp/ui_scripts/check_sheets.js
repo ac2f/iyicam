@@ -1,0 +1,89 @@
+/* Toolpaths and sheets on the web: {sheet_group} in names, a toolpath kept to a group listed on its sheets only, the button
+ * that selects the toolpaths of the sheet, every sheet's own thickness (Material Setup, a new profile's depth), the defaults
+ * of new toolpaths (Preferences) and one G-code file per toolpath.
+ *   KEY=... NODE_PATH=$(npm root -g) node check_sheets.js */
+const { open, shot, loadFixture } = require("./lib");
+const results = [];
+const ok = (name, cond, extra = "") => { results.push(cond); console.log(cond ? "ok  " : "FAIL", name, extra); };
+
+(async () => {
+  const { browser, page, errors } = await open({ viewport: { width: 1500, height: 950 } });
+  const ev = (fn, arg) => page.evaluate(fn, arg);
+  const waitIdle = () => page.waitForFunction(() => !window.__iyicam.app.busy, null, { timeout: 120000 });
+  await loadFixture(page);
+  await page.waitForFunction(() => window.__iyicam.app.cur.results, null, { timeout: 120000 });
+  await waitIdle();
+
+  // a second sheet in the group "Pleksi", 6 mm thick; Profile 1 named with variables and kept to the group
+  await ev(() => {
+    const { app } = window.__iyicam, d = app.cur;
+    d.edit("test", p => {
+      const s0 = p.sheets[0];
+      p.sheets.push({ id: "pleksi1", name: "Pleksi 1", width: s0.width, height: s0.height, thickness: 6, vectors: [], outline: null, group: "Pleksi" });
+      const t = p.toolpaths[0]; t.name = "Kesim {sheet_group} S{sheet_number}"; t.sheet_group = "Pleksi";
+    });
+  });
+  await page.waitForTimeout(300);
+  const rows = () => ev(() => [...document.querySelectorAll(".panel.toolpaths .trow .c1")].map(e => e.textContent.trim()));
+  await page.waitForFunction(() => document.querySelector(".panel.toolpaths .fb-empty") && /other sheets/.test(document.querySelector(".panel.toolpaths").textContent), null, { timeout: 30000 });
+  let r = await rows();
+  ok("a toolpath kept to a group is not listed on another sheet", r.length === 1 && /Pocket/.test(r[0]), JSON.stringify(r));
+  await ev(() => { const { app } = window.__iyicam; app.cur.sheetId = "pleksi1"; });
+  await ev(() => window.__iyicam.A.setCur(window.__iyicam.app.cur));
+  await page.waitForFunction(() => [...document.querySelectorAll(".panel.toolpaths .trow .c1")].some(e => /Kesim Pleksi S2/.test(e.textContent)), null, { timeout: 30000 }).catch(() => {});
+  r = await rows();
+  ok("on its sheet it is listed with {sheet_group} and {sheet_number} put in", r.some(x => /Kesim Pleksi S2/.test(x)), JSON.stringify(r));
+  await page.click(".panel.toolpaths button[title='Select the toolpaths of this sheet']");
+  const sel = await ev(() => window.__iyicam.app.cur.toolpathSelection.length);
+  ok("the button selects the toolpaths of this sheet", sel === r.length, `${sel} of ${r.length}`);
+  await ev(() => window.__iyicam.A.runItem("view.toolpaths_of_this_sheet_only"));
+  await page.waitForTimeout(300);
+  ok("View ▸ Toolpaths of This Sheet Only off lists every toolpath", (await rows()).length === 2);
+  await ev(() => window.__iyicam.A.runItem("view.toolpaths_of_this_sheet_only"));
+  await shot(page, "sheets_toolpaths");
+
+  // Material Setup edits this sheet's thickness; a new profile cuts as deep as this sheet
+  await ev(() => { window.__iyicam.A.runItem("toolpaths.material_setup"); });
+  await page.waitForSelector(".dlg");
+  const lab = await page.textContent(".dlg");
+  ok("Material Setup has the thickness of this sheet", /Thickness of this sheet/.test(lab) && !/Material thickness/.test(lab));
+  await page.keyboard.press("Escape"); await page.waitForTimeout(200);
+  await ev(() => { const { app } = window.__iyicam; app.cur.toolpathSelection = []; });
+  await ev(async () => { const st = await import("./ui/state.js"); st.setSetting("askTool", false); });
+  await ev(() => { window.__iyicam.A.runItem("toolpaths.new_toolpath.profile"); });
+  await page.waitForSelector(".dlg");
+  await page.waitForTimeout(300);
+  const depth = await ev(() => { const i = [...document.querySelectorAll(".dlg .row")].find(r => /^Cut depth/.test(r.textContent.trim())); return i ? i.querySelector("input").value : null; });
+  ok("a new profile on a 6 mm sheet is 6 mm deep", depth && Math.abs(parseFloat(depth) - 6) < 1e-6, String(depth));
+  const overcutShown = await ev(() => [...document.querySelectorAll(".dlg .row")].some(r => /Cut below bottom/.test(r.textContent) && !r.hidden));
+  ok("'Cut below bottom' is beside 'Cut through' (not behind More options)", overcutShown);
+  await page.keyboard.press("Escape"); await page.waitForTimeout(200);
+
+  // Preferences: the defaults of new toolpaths (0: stop at the bottom)
+  await ev(() => { window.__iyicam.A.runItem("edit.preferences"); });
+  await page.waitForSelector(".dlg");
+  await page.waitForTimeout(300);
+  const inp = page.locator(".dlg .row:has-text('Through cuts go below the bottom by') input");
+  await inp.fill("0"); await inp.press("Tab");
+  await page.click(".dlg button:has-text('OK')");
+  await page.waitForFunction(() => { const o = window.__iyicam.app.schema.operations.find(x => x.id === "profile"); return o.params.find(p => p.name === "overcut").default === 0; }, null, { timeout: 30000 }).catch(() => {});
+  const def = await ev(() => window.__iyicam.app.schema.operations.find(x => x.id === "profile").params.find(p => p.name === "overcut").default);
+  ok("Preferences set a through cut to stop at the bottom for new toolpaths", def === 0, String(def));
+
+  // one G-code file per toolpath
+  const files = await ev(async () => {
+    const { app } = window.__iyicam, d = app.cur;
+    const proj = JSON.parse(JSON.stringify(d.project));
+    proj.toolpaths[0].sheet_group = "";                        // (both on the first sheet, where the vectors are)
+    const r = await app.engine.call("gcode", { project: proj, post: app.schema.posts[0].id, file_name: "is", per_toolpath: true, sheets: [proj.sheets[0].id] });
+    return r.files.map(f => f.name);
+  });
+  ok("one G-code file per toolpath", files.length === 2 && new Set(files).size === 2, files.join(", "));
+
+  console.log(errors.join("\n") || "no page errors");
+  ok("no page errors", errors.length === 0);
+  await browser.close();
+  const bad = results.filter(x => !x).length;
+  console.log(bad ? `${bad} failed` : `all ok (${results.length} checks)`);
+  process.exit(bad ? 1 : 0);
+})().catch(e => { console.error(e); process.exit(2); });

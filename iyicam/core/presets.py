@@ -57,7 +57,8 @@ def create(width: float = 600.0, height: float = 400.0, thickness: float = 18.0,
     the project is not made half)."""
     p = Project()
     p.sheets[0].width, p.sheets[0].height = width, height
-    p.material.thickness = thickness
+    p.material.thickness = thickness              # (what a sheet the template adds without a thickness of its own is)
+    p.sheets[0].thickness = thickness              # (every sheet has its own thickness)
     if template == BLANK:
         p.sheets = []
         return p

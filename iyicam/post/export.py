@@ -80,3 +80,26 @@ def write_named(folder: str | Path, project: Project, sheet: Sheet, toolpaths: l
             fh.write(text)
         written.append(out)
     return written
+
+
+def by_toolpath(toolpaths: list[Toolpath]) -> list[list[Toolpath]]:
+    """The toolpaths of one file each: one list per toolpath of the project (``def_id``), in the order they are cut (a toolpath
+    that makes several paths, a profile of several passes, stays in one file)."""
+    out: list[list[Toolpath]] = []
+    for tp in toolpaths:
+        key = getattr(tp, "def_id", None) or id(tp)
+        if out and (getattr(out[-1][0], "def_id", None) or id(out[-1][0])) == key:
+            out[-1].append(tp)
+        else:
+            out.append([tp])
+    return out
+
+
+def per_toolpath_stem(stem: str, tps: list[Toolpath], parts=None, sep: str = "_") -> str:
+    """The name of the file of one toolpath: ``stem`` with the toolpath's name after it, unless the name of the file is
+    already made of the toolpaths (``{toolpath_name}``, ``{segments}``) and so differs from file to file."""
+    from .naming import clean, uses
+    if parts is not None and uses(parts, "toolpath_name", "segments"):
+        return stem
+    name = clean(tps[0].name if tps else "") or "toolpath"
+    return f"{stem}{sep}{name}"[:150]

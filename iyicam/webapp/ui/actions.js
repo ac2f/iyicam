@@ -120,7 +120,8 @@ export async function saveGcode() {
   if (!v) return;
   try {
     const r = await run("gcode", { project: d.project, post: v.post, file_name: v.file_name, program_number: v.program_number, recalculate: v.recalculate || d.stale,
-      sheets: v.all_sheets ? undefined : [d.sheetId] }, { label: "Writing G-code", cancel: true });
+      sheets: v.all_sheets ? undefined : [d.sheetId], per_toolpath: !!v.per_toolpath,
+      toolpaths: v.only_selected ? d.toolpathSelection.slice() : undefined }, { label: "Writing G-code", cancel: true });
     if (r.errors && r.errors.length) await alertBox(r.errors.join("\n"), "Save G-code");
     if (!r.files.length) { status("Nothing was written"); return; }
     if (await deliverFiles(r.files, "Save G-code")) status(`G-code: ${r.files.map(f => f.name).join(", ")}`);
@@ -396,7 +397,7 @@ export const layerOps = {
   selectLayer(id) { const d = doc(); select(d.sheet.vectors.filter(v => v.layer === id).map(v => v.id)); },
 };
 export const sheetOps = {
-  add() { const d = doc(); const cur = d.sheet; d.edit("Add sheet", p => { const s = { id: uid(), name: `Sheet ${p.sheets.length + 1}`, width: cur.width, height: cur.height, thickness: cur.thickness, vectors: [], outline: null, group: cur.group || "" }; p.sheets.push(s); d.sheetId = s.id; d.selection = []; }); },
+  add() { const d = doc(); const cur = d.sheet; d.edit("Add sheet", p => { const s = { id: uid(), name: `Sheet ${p.sheets.length + 1}`, width: cur.width, height: cur.height, thickness: cur.thickness != null ? cur.thickness : p.material.thickness, vectors: [], outline: null, group: cur.group || "" }; p.sheets.push(s); d.sheetId = s.id; d.selection = []; }); },
   duplicate() { const d = doc(); const cur = d.sheet; d.edit("Duplicate sheet", p => { const s = { ...deepCopy(cur), id: uid(), name: cur.name + " copy" }; s.vectors = s.vectors.map(v => ({ ...v, id: uid() })); p.sheets.splice(p.sheets.findIndex(x => x.id === cur.id) + 1, 0, s); d.sheetId = s.id; d.selection = []; }); },
   async remove() {
     const d = doc();

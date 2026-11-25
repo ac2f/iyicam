@@ -419,6 +419,7 @@ def op_import(payload: dict) -> dict:
         project = Project(Path(name).stem)
         project.material.thickness = _num(payload, "thickness", 18.0, 0.01, 1000.0)
         sheet = project.sheets[0]
+        sheet.thickness = project.material.thickness
     try:
         accepted = set(inspect.signature(imp.func).parameters)
     except (TypeError, ValueError):
@@ -720,6 +721,9 @@ def op_gcode(payload: dict, ctl: JobControl | None = None) -> dict:
             raise ServiceError("bad_request", str(exc), field="name_parts") from exc
     files, warnings = [], []
     many = len(project.sheets) > 1
+    # ``per_toolpath``: every toolpath in a file of its own, all in one folder (named after the toolpath)
+    per = payload.get("per_toolpath") is True
+    from ..post.export import by_toolpath, per_toolpath_stem
     groups = {t.group for t in project.toolpaths if t.enabled and t.group}
     for i, sheet in enumerate(project.sheets, 1):
         tps = sheet_toolpaths(project, res, sheet)
@@ -746,13 +750,18 @@ def op_gcode(payload: dict, ctl: JobControl | None = None) -> dict:
                 name = naming.render(parts, vals, sep)
                 # (a job with several sheets needs a number in the name or the files would overwrite each other)
                 return f"{name}_{i}" if many and not naming.uses(parts, "sheet_number", "sheet_name") else name
-            for fstem, text in named_files(project, sheet, tps, post, stem_of, program):
-                files.append({"name": f"{fstem}.{post.extension}", "mime": "text/plain", "text": text, "sheet": sheet.id})
+            for chunk in (by_toolpath(tps) if per else [tps]):
+                of = (lambda g, f=stem_of: per_toolpath_stem(f(g), g, parts, sep)) if per else stem_of
+                for fstem, text in named_files(project, sheet, chunk, post, of, program):
+                    files.append({"name": f"{fstem}.{post.extension}", "mime": "text/plain", "text": text, "sheet": sheet.id})
             continue
-        base = f"{stem}_{i}" if many else stem
-        for suffix, text in post_toolpaths(project, sheet, tps, post, base, program):
-            files.append({"name": f"{base}{suffix}.{post.extension}", "mime": "text/plain", "text": text,
-                          "sheet": sheet.id})
+        for chunk in (by_toolpath(tps) if per else [tps]):
+            base = f"{stem}_{i}" if many else stem
+            if per:
+                base = per_toolpath_stem(base, chunk)
+            for suffix, text in post_toolpaths(project, sheet, chunk, post, base, program):
+                files.append({"name": f"{base}{suffix}.{post.extension}", "mime": "text/plain", "text": text,
+                              "sheet": sheet.id})
     seen: dict[str, int] = {}                             # (two files with one name would overwrite each other when saved)
     for f in files:
         key = f["name"].lower()

@@ -2008,7 +2008,7 @@ def job_report_html(ctrl) -> str:
            "<style>body{font-family:sans-serif;margin:24px}table{border-collapse:collapse}"
            "td,th{border:1px solid #bbb;padding:4px 8px;text-align:left}th{background:#eee}</style></head><body>",
            f"<h1>{e(p.name)}</h1>",
-           f"<p>Material thickness {u.fmt(m.thickness)}, Z zero at the {m.z_zero}, XY origin "
+           f"<p>Z zero at the {m.z_zero} (every sheet has its own thickness, below), XY origin "
            f"{m.xy_origin.replace('_', ' ')}, safe Z {u.fmt(m.safe_z)}.</p>"]
     for s in p.sheets:
         tps = ctrl.sheet_toolpaths(s)

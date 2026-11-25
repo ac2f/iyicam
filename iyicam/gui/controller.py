@@ -312,12 +312,7 @@ class Controller(CutControl, QObject):
     def add_first_sheet(self, width: float, height: float, thickness: float | None = None, name: str = "") -> Sheet:
         """A sheet of this size (and its own thickness) added and opened."""
         with self.edit("Add sheet", geometry=False):
-            s = self.project.add_sheet(name or None, width, height)
-            if thickness is not None and abs(thickness - self.project.material.thickness) > 1e-9:
-                if not any(x is not s for x in self.project.sheets):
-                    self.project.material.thickness = thickness      # (the first sheet: the project's thickness)
-                else:
-                    s.thickness = thickness
+            s = self.project.add_sheet(name or None, width, height, thickness)   # (its own thickness: given, else the last sheet's)
         self.sheet_id = None
         self.set_sheet(s.id)
         return s

@@ -6,6 +6,8 @@ JSON (no NaN, no objects), and it must never raise for a request that is wrong.
 """
 import base64
 import json
+
+from iyicam.core.document import project_from_dict
 import struct
 import time
 import zlib
@@ -86,7 +88,8 @@ def test_garbage_never_raises(host):
 
 
 def test_validate_round_trips(host, job_project):
-    d = job_project.to_dict()
+    from iyicam.core.document import project_from_dict
+    d = project_from_dict(job_project.to_dict()).to_dict()       # (kept once: every sheet has its own thickness then)
     out = host.handle("validate", {"project": d})
     assert out["ok"] and out["project"] == d and out["counts"]["vectors"] == 3
     bad = host.handle("validate", {"project": {**d, "format": "other"}})
@@ -118,7 +121,7 @@ def test_svg_export_and_import(host, job_project):
 def test_icam_import_is_validated(host, job_project):
     text = json.dumps(job_project.to_dict()).encode()
     imp = host.handle("import", {"name": "job.icam", "data_b64": b64(text)})
-    assert imp["project"] == job_project.to_dict()
+    assert imp["project"] == project_from_dict(job_project.to_dict()).to_dict()      # (every sheet with its own thickness)
     assert host.handle("import", {"name": "job.icam", "data_b64": b64(b"{not json")})["error"] == "invalid_project"
     assert host.handle("import", {"name": "job.icam", "data_b64": b64(b'{"format": "nope"}')})["error"] == "invalid_project"
 
@@ -149,7 +152,7 @@ def test_export_selection_and_errors(host, job_project):
     old = host.handle("export", {"project": d, "format": "dxf", "options": {"version": "R2000"}})
     assert "error" not in old
     icam = host.handle("export", {"project": d, "format": "icam"})["files"][0]
-    assert json.loads(base64.b64decode(icam["data_b64"])) == d
+    assert json.loads(base64.b64decode(icam["data_b64"])) == project_from_dict(d).to_dict()
 
 
 def test_export_all_sheets_gives_a_file_each(host, job_project):

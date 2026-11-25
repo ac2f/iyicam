@@ -542,7 +542,8 @@ class ToolpathsPanel(DocPanel):
         for text, tip, slot in (("✎", "Edit toolpath", self.edit), ("⧉", "Duplicate", self.duplicate),
                                 ("−", "Delete", self.delete), ("▲", "Move up", lambda: self.move(-1)),
                                 ("▼", "Move down", lambda: self.move(1)),
-                                ("⟳", "Recalculate all", self.recalculate)):
+                                ("⟳", "Recalculate all", self.recalculate),
+                                ("▣", "Select the toolpaths of this sheet", self.select_sheet_toolpaths)):
             row.addWidget(small_button(text, tip, slot))
         row.addStretch(1)
         lay.addLayout(row)
@@ -573,6 +574,20 @@ class ToolpathsPanel(DocPanel):
 
     def _update_material(self) -> None:
         self.material.setText(material_summary(self.ctrl))
+
+    def select_sheet_toolpaths(self) -> list[str]:
+        """Select every toolpath that belongs on the sheet shown (calculated there: ``cam.job.shown_on``); the selection is
+        then saved, deleted, switched on or off ... together. Returns their ids."""
+        from ..cam.job import shown_on
+        sheet = self.ctrl.sheet
+        ids = {t.id for t in self.ctrl.project.toolpaths if sheet is not None and shown_on(self.ctrl.project, t, sheet)}
+        self.tree.clearSelection()
+        for i in range(self.tree.topLevelItemCount()):
+            top = self.tree.topLevelItem(i)
+            for it in [top] + [top.child(k) for k in range(top.childCount())]:
+                if it.data(0, Qt.UserRole) in ids:
+                    it.setSelected(True)
+        return [t.id for t in self.ctrl.project.toolpaths if t.id in ids]
 
     GROUP_ROLE = Qt.UserRole + 1
 

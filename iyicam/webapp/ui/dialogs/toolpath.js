@@ -45,7 +45,11 @@ export async function toolpathDialog(doc, opId, existing, opts = {}) {
   };
   ownBox.addEventListener("change", syncHeights);
   // -- settings
-  const params = op.params.map(p => (p.name === "cut_depth" && !existing && opId === "profile" ? { ...p, default: mat.thickness } : p));
+  // a new profile cuts as deep as the sheet it is made for is thick (a sheet of its group, else the one open): every sheet has its own
+  const forGroup = existing ? existing.sheet_group || "" : "";
+  const target = (forGroup && doc.project.sheets.find(x => x.group === forGroup)) || doc.sheet;
+  const thick = target && target.thickness != null ? target.thickness : mat.thickness;
+  const params = op.params.map(p => (p.name === "cut_depth" && !existing && opId === "profile" ? { ...p, default: thick } : p));
   const form = new ParamForm(params, existing ? existing.params : {}, { collapse: true, tools: app.tools });
   const heightsBox = h("fieldset", { class: "group" }, h("legend", null, "Heights above the material surface"),
     h("div", { class: "fields" },

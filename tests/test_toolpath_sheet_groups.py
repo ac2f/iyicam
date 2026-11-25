@@ -71,3 +71,40 @@ def test_the_desktop_lists_the_toolpaths_of_the_sheet_shown():
     c.dirty = False
     w.close()
     QApplication.processEvents()
+
+
+def test_a_button_selects_the_toolpaths_of_the_sheet_shown():
+    pytest.importorskip("PySide6.QtWidgets")
+    from PySide6.QtWidgets import QApplication
+    from iyicam.gui.app import create_window
+    app, w = create_window(["test"], load_plugins=False)
+    c = w.ctrl
+    c.settings.auto_recalculate = False
+    c.settings.toolpaths_of_sheet_only = False             # (every toolpath listed: the button picks this sheet's)
+    s2 = c.project.add_sheet("Pleksi 1", 600, 400)
+    s2.group = "Pleksi"
+    a = add_tp(c.project, "profile", end_mill(6), {"through": True}, [])
+    b = add_tp(c.project, "profile", end_mill(6), {"through": True}, [])
+    b.sheet_group = "Pleksi"
+    c.set_sheet(c.project.sheets[0].id)
+    w.toolpaths_panel.refresh()
+    assert w.toolpaths_panel.select_sheet_toolpaths() == [a.id] and w.toolpaths_panel.selected_ids() == [a.id]
+    c.set_sheet(s2.id)
+    w.toolpaths_panel.refresh()
+    assert set(w.toolpaths_panel.select_sheet_toolpaths()) == {a.id, b.id}
+    c.dirty = False
+    w.close()
+    QApplication.processEvents()
+
+
+def test_every_sheet_has_its_own_thickness():
+    from iyicam.core.document import Project, project_from_dict
+    p = Project()
+    p.material.thickness = 12.0
+    p.sheets[0].thickness = None                            # (a file kept before: the sheet followed the project)
+    q = project_from_dict(p.to_dict())
+    assert q.sheets[0].thickness == 12.0
+    q.sheets[0].thickness = 6.0
+    s = q.add_sheet()
+    assert s.thickness == 6.0                               # (a new sheet: as thick as the last one, not as the project began)
+    assert q.add_sheet(thickness=4.0).thickness == 4.0

@@ -38,7 +38,7 @@ export async function materialSetup(doc) {
   const params = [
     P("width", "Sheet width (X)", "length", s.width, { min: 1, group: "Sheet" }),
     P("height", "Sheet height (Y)", "length", s.height, { min: 1, group: "Sheet", visible: { rotary: false } }),
-    P("thickness", "Material thickness", "length", m.thickness, { min: 0.01, group: "Material", visible: { rotary: false } }),
+    P("thickness", "Thickness of this sheet", "length", s.thickness != null ? s.thickness : m.thickness, { min: 0.01, group: "Sheet", visible: { rotary: false }, help: "Every sheet has its own thickness (Sheets panel: Properties for the others)" }),
     P("z_zero", "Z zero", "choice", m.z_zero, { choices: [["top", "Top of the material"], ["bottom", "Bottom (machine bed / rotary axis)"]], group: "Material" }),
     P("xy_origin", "XY origin", "choice", m.xy_origin, { choices: origins, group: "Material" }),
     P("safe_z", "Safe Z (above surface)", "length", m.safe_z, { min: 0.1, group: "Heights", help: "The height above the material surface the tool retracts to and travels at between cuts. A toolpath can have a safe Z of its own (on its Settings tab)." }),
@@ -76,12 +76,12 @@ export async function materialSetup(doc) {
   if (!v) return false;
   doc.edit("Material setup", p => {
     const mm = p.material;
-    Object.assign(mm, { thickness: v.thickness, z_zero: v.z_zero, xy_origin: v.xy_origin, safe_z: v.safe_z, clearance: v.clearance, rapid_rate: v.rapid_rate, z_rapid_rate: v.z_rapid_rate,
+    Object.assign(mm, { z_zero: v.z_zero, xy_origin: v.xy_origin, safe_z: v.safe_z, clearance: v.clearance, rapid_rate: v.rapid_rate, z_rapid_rate: v.z_rapid_rate,
       accel: v.accel, corner_dev: v.corner_dev, time_scale: v.time_scale, home: [v.home_x, v.home_y, v.home_z], rotary: v.rotary, rotary_diameter: v.rotary_diameter });
     if (v.corner_mode || "corner_mode" in mm) mm.corner_mode = v.corner_mode;
     const sh = p.sheets.find(x => x.id === doc.sheetId);
-    sh.width = v.width; sh.height = v.height;
-    if (v.rotary) { mm.thickness = v.rotary_diameter / 2; for (const x of p.sheets) { x.height = Math.PI * v.rotary_diameter; x.thickness = null; } }
+    sh.width = v.width; sh.height = v.height; sh.thickness = v.thickness;          // (this sheet's: the others keep theirs)
+    if (v.rotary) { mm.thickness = v.rotary_diameter / 2; for (const x of p.sheets) { x.height = Math.PI * v.rotary_diameter; x.thickness = mm.thickness; } }
   });
   return true;
 }
@@ -92,7 +92,7 @@ export async function materialSetupWithCalibrate(doc) { return materialSetup(doc
 export async function sheetDialog(doc, sheet) {
   const params = [P("name", "Name", "str", sheet.name), P("group", "Group", "str", sheet.group || "", { help: "Sheets of one group are nested onto together and can have toolpaths of their own" }),
     P("width", "Width (X)", "length", sheet.width, { min: 1 }), P("height", "Height (Y)", "length", sheet.height, { min: 1 }),
-    P("own_thickness", "Own thickness", "bool", sheet.thickness != null), P("thickness", "Thickness", "length", sheet.thickness ?? doc.project.material.thickness, { min: 0.01, visible: { own_thickness: true } })];
+    P("thickness", "Thickness", "length", sheet.thickness ?? doc.project.material.thickness, { min: 0.01, help: "Every sheet has its own thickness: its toolpaths cut through this" })];
   let form;
   const picker = presetPicker((w, hh) => form.set({ width: w, height: hh }));
   const v = await formDialog({ title: "Sheet", params, width: 400, extra: picker, afterBuild: f => { form = f; } });
@@ -100,7 +100,7 @@ export async function sheetDialog(doc, sheet) {
   doc.edit("Sheet properties", p => {
     const s = p.sheets.find(x => x.id === sheet.id);
     s.name = v.name; s.width = v.width; s.height = v.height; s.group = (v.group || "").trim();
-    s.thickness = v.own_thickness ? v.thickness : null;
+    s.thickness = v.thickness;
   });
   return true;
 }
@@ -276,6 +276,8 @@ export async function gcodeDialog(doc) {
     P("file_name", "File name", "str", doc.name.replace(/\.[^.]+$/, "")),
     P("program_number", "Program number", "int", 1000, { min: 0, max: 999999 }),
     P("all_sheets", "Every sheet (one file each)", "bool", true, { visible: null }),
+    ...(doc.toolpathSelection && doc.toolpathSelection.length ? [P("only_selected", `Only the toolpaths selected (${doc.toolpathSelection.length})`, "bool", true)] : []),
+    P("per_toolpath", "One file per toolpath (all in one folder)", "bool", store.get("iyicam.perToolpath", false), { help: "Every toolpath in a G-code file of its own, named after the toolpath" }),
     P("recalculate", "Calculate the toolpaths again first", "bool", false, { help: "Off: the toolpaths as they were calculated last are written" }),
   ];
   const info = h("p", { class: "muted post-desc" });
@@ -283,6 +285,7 @@ export async function gcodeDialog(doc) {
   const show = () => { const p = posts.find(x => x.id === form.values().post); fill(info, p ? p.description : ""); };
   const v = await formDialog({ title: "Save G-code", params, width: 440, ok: "Save", extra: info, afterBuild: f => { form = f; f.opts.onChange = show; setTimeout(show, 0); } });
   if (!v) return null;
+  store.set("iyicam.perToolpath", !!v.per_toolpath);
   store.set("iyicam.post", v.post);
   return v;
 }

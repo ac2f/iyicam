@@ -337,7 +337,7 @@ class SheetDialog(QDialog):
             params = [Param("name", "Name", "str", sheet.name),
                       Param("width", "Width (X)", "length", sheet.width, min=1.0),
                       Param("height", "Height (Y)", "length", sheet.height, min=1.0),
-                      Param("thickness", "Thickness", "length", m.thickness, min=0.01),
+                      Param("thickness", "Thickness", "length", ctrl.project.sheet_thickness(sheet), min=0.01),
                       Param("z_zero", "Z zero", "choice", m.z_zero,
                             choices=[("top", "Top of the material"), ("bottom", "The table (the board under the material)")],
                             help="The table: Z of the G-code is the height over the board the material lies on; the thickness "
@@ -360,9 +360,8 @@ class SheetDialog(QDialog):
                                                                     "have toolpaths of their own"),
                   Param("width", "Width (X)", "length", sheet.width, min=1.0),
                   Param("height", "Height (Y)", "length", sheet.height, min=1.0),
-                  Param("own_thickness", "Own thickness", "bool", sheet.thickness is not None),
-                  Param("thickness", "Thickness", "length", sheet.thickness or ctrl.project.material.thickness,
-                        min=0.01, visible={"own_thickness": True})]
+                  Param("thickness", "Thickness", "length", ctrl.project.sheet_thickness(sheet), min=0.01,
+                        help="Every sheet has its own thickness: its toolpaths cut through this")]
         lay = QVBoxLayout(self)
         presets = QComboBox()
         presets.addItem("Preset sizes...")
@@ -390,7 +389,8 @@ class SheetDialog(QDialog):
             with self.ctrl.edit("Sheet properties"):
                 s = self.sheet
                 s.name, s.width, s.height = v["name"], v["width"], v["height"]
-                self.ctrl.project.material.thickness = v["thickness"]
+                s.thickness = v["thickness"]
+                self.ctrl.project.material.thickness = v["thickness"]    # (what a sheet of a project kept without one is)
                 self.ctrl.project.material.z_zero = v["z_zero"]
             self.ctrl.sheet_changed.emit()
             super().accept()
@@ -401,7 +401,7 @@ class SheetDialog(QDialog):
             if (v["group"] or "").strip() != s.group:
                 s.group = (v["group"] or "").strip()
                 self.ctrl.stale = bool(self.ctrl.project.toolpaths)
-            s.thickness = v["thickness"] if v["own_thickness"] else None
+            s.thickness = v["thickness"]
             if self.plain.isChecked():
                 s.outline = None
         if self.ctrl.project.toolpaths:
@@ -422,8 +422,8 @@ class MaterialDialog(RemembersSize, QDialog):
             Param("width", "Sheet width (X)", "length", s.width, min=1.0, group="Sheet"),
             Param("height", "Sheet height (Y)", "length", s.height, min=1.0, group="Sheet",
                   visible={"rotary": False}),
-            Param("thickness", "Material thickness", "length", m.thickness, min=0.01, group="Material",
-                  visible={"rotary": False}),
+            Param("thickness", "Thickness of this sheet", "length", ctrl.project.sheet_thickness(s), min=0.01, group="Sheet",
+                  visible={"rotary": False}, help="Every sheet has its own thickness (Sheets panel: Properties for the others)"),
             Param("z_zero", "Z zero", "choice", m.z_zero,
                   choices=[("top", "Top of the material"), ("bottom", "Bottom (machine bed / rotary axis)")],
                   group="Material"),
@@ -502,7 +502,8 @@ class MaterialDialog(RemembersSize, QDialog):
             return
         with self.ctrl.edit("Material setup"):
             m = self.ctrl.project.material
-            m.thickness, m.z_zero, m.xy_origin = v["thickness"], v["z_zero"], v["xy_origin"]
+            m.z_zero, m.xy_origin = v["z_zero"], v["xy_origin"]
+            self.ctrl.sheet.thickness = v["thickness"]          # (this sheet's: the others keep theirs)
             m.safe_z, m.clearance, m.rapid_rate = v["safe_z"], v["clearance"], v["rapid_rate"]
             m.z_rapid_rate, m.accel, m.corner_dev, m.time_scale = v["z_rapid_rate"], v["accel"], v["corner_dev"], v["time_scale"]
             m.corner_mode = v["corner_mode"] or ""
@@ -512,7 +513,7 @@ class MaterialDialog(RemembersSize, QDialog):
             if m.rotary:  # depths are measured from the surface, the axis is one radius below
                 m.thickness = m.rotary_diameter / 2
                 for s in self.ctrl.project.sheets:
-                    s.height, s.thickness = math.pi * m.rotary_diameter, None
+                    s.height, s.thickness = math.pi * m.rotary_diameter, m.thickness
         self.ctrl.settings.remember("material", {k: v[k] for k in self.ctrl.MATERIAL_MEMORY})  # for new projects
         self.ctrl.sheet_changed.emit()
         super().accept()
@@ -1061,9 +1062,11 @@ class ToolpathDialog(RemembersSize, QDialog):
         # -- parameters tab
         from ..cam import tp_defaults
         params = tp_defaults.apply(self.op.id, self.op.params())     # (the person's own: how far a through cut goes below)
+        grp = sheet_group or (self.tdef.sheet_group if self.tdef else "")
+        target = next((x for x in ctrl.project.sheets if grp and x.group == grp), None) or ctrl.sheet
         for p in params:
-            if p.name == "cut_depth" and not self.tdef and self.op.id == "profile":
-                p.default = ctrl.project.material.thickness
+            if p.name == "cut_depth" and not self.tdef and self.op.id == "profile" and target is not None:
+                p.default = ctrl.project.sheet_thickness(target)     # (the sheet it is made for: of its group, else the one open)
         # a new toolpath starts from the default settings every time (allowance, depths, passes ...: nothing is carried
         # over from the last one, which could cut a part too big or too small unnoticed); the tool chosen last is kept
         self.params = [p for p in params if not (p.name == "cut_depth" and self.op.id == "profile")]
@@ -2116,6 +2119,10 @@ class ExportDialog(RemembersSize, QDialog):
         self.sheets.addItem("All sheets (one file per sheet)", "all")
         self.sheets.currentIndexChanged.connect(lambda *_: self._name_changed())
         form.addRow("Sheets", self.sheets)
+        self.per_toolpath = QCheckBox("One file per toolpath (all in the folder)")
+        self.per_toolpath.setToolTip("Every ticked toolpath in a G-code file of its own, named after the toolpath (unless the "
+                                     "name already has {toolpath_name} or {segments})")
+        form.addRow("", self.per_toolpath)
         tiling = QHBoxLayout()
         self.tile = QCheckBox("Tile the job")
         self.tile.setToolTip("Machine a sheet longer than the machine in bands, one file per band")
@@ -2156,6 +2163,8 @@ class ExportDialog(RemembersSize, QDialog):
                 combo.setCurrentIndex(i)
         if isinstance(mem.get("tile"), bool):
             self.tile.setChecked(mem["tile"])
+        if isinstance(mem.get("per_toolpath"), bool):
+            self.per_toolpath.setChecked(mem["per_toolpath"])
         if isinstance(mem.get("tile_len"), (int, float)) and not isinstance(mem.get("tile_len"), bool) \
                 and mem["tile_len"] >= 1.0:
             self.tile_len.setValue(ctrl.units.to_display(float(mem["tile_len"])))
@@ -2678,7 +2687,9 @@ class ExportDialog(RemembersSize, QDialog):
             QMessageBox.information(self, "Save G-code", "Choose the folder first (Folder...), then press Save.")
             return
         base = Path(folder)
-        from ..post.export import named_files
+        from ..post.export import by_toolpath, named_files, per_toolpath_stem
+        per = self.per_toolpath.isChecked()
+        parts, sep = naming.check(self.name_parts(), self.name_sep.text() or naming.DEFAULT_SEP)
         written = []
         plan = []                       # (sheet number, sheet, [(path, text)]): every file made before anything is written
         try:
@@ -2691,9 +2702,18 @@ class ExportDialog(RemembersSize, QDialog):
                 folder_here = base / sub if sub else base
                 out = []
                 for tile, sheet, tps in self.jobs(s):
-                    for stem, text in named_files(ctrl.project, sheet, tps, post,
-                                                  lambda g, i=i, s=s, tile=tile: self.file_stem(i, s, g) + tile):
-                        out.append((folder_here / f"{stem}.{post.extension}", text))
+                    for chunk in (by_toolpath(tps) if per else [tps]):      # (one file per toolpath, when asked)
+                        def stem_of(g, i=i, s=s, tile=tile):
+                            st = self.file_stem(i, s, g) + tile
+                            return per_toolpath_stem(st, g, parts, sep) if per else st
+                        for stem, text in named_files(ctrl.project, sheet, chunk, post, stem_of):
+                            out.append((folder_here / f"{stem}.{post.extension}", text))
+                seen: dict[str, int] = {}               # (two toolpaths of one name: the second file gets _2)
+                for k, (path, text) in enumerate(out):
+                    key = str(path).lower()
+                    seen[key] = seen.get(key, 0) + 1
+                    if seen[key] > 1:
+                        out[k] = (path.with_name(f"{path.stem}_{seen[key]}{path.suffix}"), text)
                 plan.append((i, s, out))
         except Exception as exc:
             QMessageBox.warning(self, "Save G-code", f"{type(exc).__name__}: {exc}")
@@ -2742,6 +2762,7 @@ class ExportDialog(RemembersSize, QDialog):
         s, u = self.ctrl.settings, self.ctrl.units
         prev = s.recall("export_gcode").get("last") if last is None else last
         s.remember("export_gcode", {"sheets": self.sheets.currentData(), "tile": self.tile.isChecked(),
+                                    "per_toolpath": self.per_toolpath.isChecked(),
                                     "name_parts": self.name_parts(), "name_sep": self.name_sep.text(),
                                     "segment": self.segment.text(), "segment_sep": self.segment_sep.text(),
                                     "together": self.together.isChecked(), "stack": self.stack.isChecked(),

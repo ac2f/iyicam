@@ -253,13 +253,16 @@ def apply_nesting(job: NestJob, res: NestResult, choose: Callable[[NestResult, N
         res, suggestion = suggestion, None  # the layout with parts squeezed in
     # the sheet of every plate that was used
     spare = list(job.target_sheets)
+    # (a sheet the nesting adds is of the material of the sheets it nests onto: their thickness, not another sheet's)
+    roots = {p.root.id for p in parts}
+    like = job.target_sheets[0] if job.target_sheets else next((s for s in project.sheets if any(v.id in roots for v in s.vectors)), None)
     sheets: list[Sheet] = []
     for k in range(res.sheets):
         c = settings.containers[res.stock[k]] if use_plates else None
         if c is not None and isinstance(c.payload, Sheet):
             sheets.append(c.payload)  # an existing sheet keeps its size and what is on it
             continue
-        s = spare.pop(0) if spare else project.add_sheet(None, settings.sheet_width, settings.sheet_height)
+        s = spare.pop(0) if spare else project.add_sheet(None, settings.sheet_width, settings.sheet_height, like=like)
         item = c.payload if c is not None else None
         if isinstance(item, StockItem):
             s.width, s.height = item.width, item.height

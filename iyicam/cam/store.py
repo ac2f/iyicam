@@ -20,6 +20,8 @@ def signature(project: Project) -> str:
     d = project.to_dict()
     d.pop("name", None)
     d.pop("metadata", None)
+    for sd, sh in zip(d.get("sheets", []), project.sheets):
+        sd["thickness"] = project.sheet_thickness(sh)       # (the thickness it is cut at: a file kept before every sheet had its own matches)
     for t in d.get("toolpaths", []):
         for k in ("name", "enabled", "group"):
             t.pop(k, None)
