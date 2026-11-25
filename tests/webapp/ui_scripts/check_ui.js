@@ -77,8 +77,13 @@ const ok = (name, cond, extra = "") => { results.push([cond ? "ok  " : "FAIL", n
   const undoText = await page.locator(".dropdown .mitem").first().innerText();
   ok("Edit menu says what Undo undoes", /Undo Draw rectangle/.test(undoText), undoText.trim());
   await page.keyboard.press("Escape");
-  const grey = await page.evaluate(async () => { document.querySelector(".mtop[data-id=plugins]").click(); return [...document.querySelectorAll(".dropdown .mitem.disabled")].map(e => e.title).join("|"); });
-  ok("an item not done is greyed with the tooltip", /Not on the web yet/.test(grey), grey);
+  // every item of the menus works on the web: none is greyed as "Not on the web yet"
+  const nyi = await page.evaluate(async () => {
+    const { MENUS } = await import("./ui/menudef.js"); const { A } = window.__iyicam; const out = [];
+    const walk = items => { for (const it of items) { if (it === "-") continue; if (it.menu) walk(it.menu); else if (!A.registry.has(it.id)) out.push(it.id); } };
+    walk(MENUS); return out;
+  });
+  ok("every menu item works on the web", nyi.length === 0, nyi.join(", "));
   await page.keyboard.press("Escape");
   console.log(errors.join("\n") || "no page errors");
   ok("no page errors", errors.length === 0);

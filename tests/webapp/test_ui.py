@@ -10,7 +10,7 @@ import pytest
 import webapp_env as w
 from webapp_env import local_server  # noqa: F401  (the fixture)
 
-SCRIPT_NAMES = ["check_ui", "check_panels", "check_export", "check_flows", "check_touch"]
+SCRIPT_NAMES = ["check_ui", "check_panels", "check_export", "check_flows", "check_touch", "check_draw", "check_job"]
 
 
 @pytest.mark.parametrize("script", SCRIPT_NAMES)

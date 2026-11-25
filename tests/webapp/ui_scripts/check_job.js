@@ -227,6 +227,8 @@ const PLUGIN = 'PLUGIN = {"name": "Hello", "version": "1.0", "description": "Add
   await shot(page, "job_sim_playing");
   await page.click(".simulation .btn:has-text('⏭')"); await page.waitForTimeout(500);
   const total = await ev(() => window.__iyicam.app.cur.sim2d.tl.total);
+  const calcTotal = await ev(async () => { const { app } = window.__iyicam, d = app.cur; const c = await app.engine.call("compute", { project: d.project }); return c.totals[d.sheetId]; });
+  ok("the simulation takes as long as the toolpaths say", Math.abs(total - calcTotal) < 1, `simulation ${total.toFixed(1)} s, toolpaths ${calcTotal.toFixed(1)} s`);
   ok("the end shows everything cut", Math.abs((await ev(() => window.__iyicam.app.cur.sim2d.t)) - total) < 1e-6 && /\d+:\d\d \/ \d+:\d\d/.test(await page.textContent(".siminfo")));
   const painted = await ev(() => { const v = window.__iyicam.app.cur.sim2d, d = v.ctx.getImageData(0, 0, v.canvas.width, v.canvas.height).data; let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i] > 0) n++; return n; });
   ok("something is painted", painted > 1000, String(painted));
