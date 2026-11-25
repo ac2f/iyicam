@@ -7,35 +7,93 @@ import { app, settings, setSetting, units, emit } from "./state.js";
 import { icon } from "./icons.js";
 import { calc } from "./forms.js";
 import * as A from "./actions.js";
+import { promptBox } from "./dialog.js";
+import { layersFor, isIsolated, toolpathOnSide } from "./scope.js";
 
 const tbtn = (ic, title, fn, o = {}) => h("button", { type: "button", class: "tb", title, disabled: o.disabled, onclick: fn }, icon(ic, 16));
 const fmtNum = (v, d = 3) => String(+Number(v).toFixed(d));
+
+// ------------------------------------------------------------------------------------------ drag and drop of rows
+/** rows that are dragged onto each other: `drop(kind, id, onto)`, `onto` = {kind: "row"|"group"|"end", id} */
+function dragRows(row, kind, id, drop) {
+  row.draggable = true;
+  row.addEventListener("dragstart", e => { e.dataTransfer.setData("text/plain", JSON.stringify({ kind, id })); e.dataTransfer.effectAllowed = "move"; e.stopPropagation(); });
+}
+function dropOn(el, onto, drop) {
+  el.addEventListener("dragover", e => { e.preventDefault(); e.stopPropagation(); el.classList.add("drop"); });
+  el.addEventListener("dragleave", () => el.classList.remove("drop"));
+  el.addEventListener("drop", e => {
+    e.preventDefault(); e.stopPropagation(); el.classList.remove("drop");
+    let what = null;
+    try { what = JSON.parse(e.dataTransfer.getData("text/plain")); } catch { return; }
+    if (what && what.id !== onto.id) drop(what, onto);
+  });
+}
+/** a new place in a list with groups: `items` [{id, group}], the item `id` dropped `onto` (a row: before it and in its group,
+ * or a new group with it when it is in none; a group: at its end; the end: out of any group, last).  Returns {order, groups}. */
+export function dropPlan(items, id, onto, newName) {
+  const list = items.filter(x => x.id !== id), me = items.find(x => x.id === id);
+  if (!me) return null;
+  let group = "", at = list.length;
+  if (onto.kind === "group") {
+    group = onto.id;
+    const last = list.map(x => x.group).lastIndexOf(onto.id);
+    at = last >= 0 ? last + 1 : list.length;
+  } else if (onto.kind === "row") {
+    const k = list.findIndex(x => x.id === onto.id);
+    if (k < 0) return null;
+    const target = list[k];
+    group = target.group || newName();
+    if (!target.group) target.group = group;           // (dropped on a row of no group: a new group of the two)
+    at = k + 1;
+  }
+  list.splice(at, 0, { ...me, group });
+  return { order: list.map(x => x.id), groups: Object.fromEntries(list.map(x => [x.id, x.group || ""])) };
+}
+const nextName = (taken, base = "Group") => { let n = 1; while (taken.has(`${base} ${n}`)) n++; return `${base} ${n}`; };
 
 // ------------------------------------------------------------------------------------------ Layers
 export function layersPanel() {
   const body = h("tbody"), colorInput = h("input", { type: "color", class: "hidden-color" });
   let colorFor = null;
+  const folded = new Set();
   colorInput.addEventListener("input", () => { if (colorFor) A.layerOps.set(colorFor, { color: colorInput.value }, "Layer colour"); });
   const table = h("table", { class: "grid" }, h("thead", null, h("tr", null, h("th", null, "Layer"), h("th", { class: "c" }, "Show"), h("th", { class: "c" }, "Lock"))), body);
   const cur = () => app.cur && app.cur.layerId;
-  const el = h("div", { class: "panel layers" }, h("div", { class: "listbox" }, table), colorInput,
+  const box = h("div", { class: "listbox" }, table);
+  const el = h("div", { class: "panel layers" }, box, colorInput,
     h("div", { class: "btnrow" },
       tbtn("plus", "Add layer", () => A.layerOps.add()), tbtn("minus", "Delete the layer", () => A.layerOps.remove(cur())),
       tbtn("up", "Move the layer up", () => A.layerOps.move(cur(), -1)), tbtn("down", "Move the layer down", () => A.layerOps.move(cur(), 1)),
       tbtn("stop", "Colour of the layer", () => { const d = app.cur; if (!d) return; colorFor = d.layerId; colorInput.value = d.layer.color; colorInput.click(); }),
       tbtn("indent", "Move the selected vectors to this layer", () => A.layerOps.moveSelection(cur())),
-      tbtn("dashed", "Select the vectors of this layer", () => A.layerOps.selectLayer(cur()))));
+      tbtn("dashed", "Select the vectors of this layer", () => A.layerOps.selectLayer(cur())),
+      tbtn("copy", "Put the layer in a group (drag a layer onto another to make a group, onto a group to put it in)", async () => {
+        const d = app.cur, l = d && d.layer; if (!l) return;
+        const n = await promptBox("Group of the layer (empty: none)", l.group || ""); if (n === null) return;
+        A.layerOps.set(l.id, { group: n.trim() }, "Group layers");
+      })));
+  const shownItems = d => layersFor(d.project, d.sheet).map(l => ({ id: l.id, group: l.group || "" }));
+  const dropLayer = (what, onto) => {
+    const d = app.cur;
+    if (!d || what.kind !== "layer") return;
+    const plan = dropPlan(shownItems(d), what.id, onto, () => nextName(new Set(d.project.layers.map(l => l.group).filter(Boolean))));
+    if (plan) A.layerOps.arrange(plan.order, plan.groups);
+  };
+  dropOn(box, { kind: "end", id: "" }, dropLayer);
   function update() {
     const d = app.cur;
     if (!d) { fill(body); return; }
     const counts = new Map();
     for (const v of d.sheet.vectors) counts.set(v.layer, (counts.get(v.layer) || 0) + 1);
-    fill(body, d.project.layers.map(l => {
+    const shown = layersFor(d.project, d.sheet);           // (a layer of another isolated group or sheet is not there)
+    const rowOf = (l, inGroup) => {
       const name = h("span", { class: "lname" }, `${l.name} (${counts.get(l.id) || 0})`);
-      const tr = h("tr", { class: l.id === d.layerId ? "on" : "", onclick: () => { if (d.layerId !== l.id) { d.layerId = l.id; emit("project", d); } } },
-        h("td", { class: "namecell" }, h("span", { class: "sw", style: { background: l.color } }), name),
+      const tr = h("tr", { class: (l.id === d.layerId ? "on" : "") + (inGroup ? " kid" : ""), dataset: { id: l.id }, onclick: () => { if (d.layerId !== l.id) { d.layerId = l.id; emit("project", d); } } },
+        h("td", { class: "namecell", style: inGroup ? { paddingLeft: "18px" } : null }, h("span", { class: "sw", style: { background: l.color } }), name),
         h("td", { class: "c" }, h("input", { type: "checkbox", checked: l.visible, onclick: e => e.stopPropagation(), onchange: e => A.layerOps.set(l.id, { visible: e.target.checked }, "Show / hide layer") })),
         h("td", { class: "c" }, h("input", { type: "checkbox", checked: l.locked, onclick: e => e.stopPropagation(), onchange: e => A.layerOps.set(l.id, { locked: e.target.checked }, "Lock / unlock layer") })));
+      dragRows(tr, "layer", l.id); dropOn(tr, { kind: "row", id: l.id }, dropLayer);
       name.addEventListener("dblclick", () => {
         const inp = h("input", { type: "text", value: l.name, class: "inline" });
         fill(name, inp); inp.focus(); inp.select();
@@ -45,7 +103,25 @@ export function layersPanel() {
         inp.addEventListener("keydown", e => { if (e.key === "Enter") done(true); else if (e.key === "Escape") { done(false); } e.stopPropagation(); });
       });
       return tr;
-    }));
+    };
+    const rows = [], seen = new Set();
+    for (const l of shown) {
+      if (!l.group) { rows.push(rowOf(l, false)); continue; }
+      if (seen.has(l.group)) continue;
+      seen.add(l.group);
+      const g = l.group, mine = shown.filter(x => x.group === g), open = !folded.has(g);
+      const all = k => mine.every(x => x[k]), some = k => mine.some(x => x[k]);
+      const chk = k => { const c = h("input", { type: "checkbox", checked: all(k), onclick: e => e.stopPropagation(), onchange: e => A.layerOps.setGroupState(g, { [k]: e.target.checked }) }); c.indeterminate = !all(k) && some(k); return c; };
+      const label = h("b", null, `▣ ${g} (${mine.length})`);
+      const head = h("tr", { class: "lgroup", dataset: { group: g } },
+        h("td", { class: "namecell", onclick: () => { open ? folded.add(g) : folded.delete(g); update(); } }, h("span", { class: "tri" }, open ? "▾ " : "▸ "), label),
+        h("td", { class: "c" }, chk("visible")), h("td", { class: "c" }, chk("locked")));
+      label.addEventListener("dblclick", async e => { e.stopPropagation(); const n = await promptBox("Name of the group of layers (empty: ungroup)", g); if (n === null) return; if (!n.trim()) A.layerOps.arrange(shown.map(x => x.id), Object.fromEntries(mine.map(x => [x.id, ""]))); else A.layerOps.renameGroup(g, n.trim()); });
+      dropOn(head, { kind: "group", id: g }, dropLayer);
+      rows.push(head);
+      if (open) for (const x of mine) rows.push(rowOf(x, true));
+    }
+    fill(body, rows);
   }
   return { el, update };
 }
@@ -54,27 +130,43 @@ export function layersPanel() {
 export function sheetsPanel() {
   const list = h("div", { class: "tree" });
   const folded = new Set();
-  const el = h("div", { class: "panel sheets" }, h("div", { class: "listbox" }, list),
+  const box = h("div", { class: "listbox" }, list);
+  const el = h("div", { class: "panel sheets" }, box,
     h("div", { class: "btnrow" },
       tbtn("plus", "Add sheet", () => A.sheetOps.add()), tbtn("copy", "Duplicate sheet", () => A.sheetOps.duplicate()), tbtn("minus", "Delete sheet", () => A.sheetOps.remove()),
       tbtn("up", "Move the sheet up", () => A.sheetOps.move(-1)), tbtn("down", "Move the sheet down", () => A.sheetOps.move(1)),
-      tbtn("gear", "Sheet properties", () => A.sheetOps.props()), tbtn("stop", "Group of the sheet (they are stacked under it)", () => A.sheetOps.group())));
+      tbtn("gear", "Sheet properties", () => A.sheetOps.props()), tbtn("stop", "Group of the sheet (or drag a sheet onto another to make a group, onto a group to put it in)", () => A.sheetOps.group()),
+      h("button", { type: "button", class: "tb iso", title: "Isolate the group of this sheet (a sheet of no group: a group of its own), or end its isolation. An isolated group has its own layers, toolpaths, nesting and G-code, and nothing of the rest is on it", onclick: () => A.sheetOps.isolate() }, "🔒")));
+  const dropSheet = (what, onto) => {
+    const d = app.cur;
+    if (!d || what.kind !== "sheet") return;
+    const plan = dropPlan(d.project.sheets.map(s => ({ id: s.id, group: s.group || "" })), what.id, onto, () => nextName(new Set(d.project.sheets.map(s => s.group).filter(Boolean))));
+    if (plan) A.sheetOps.arrange(plan.order, plan.groups);
+  };
+  dropOn(box, { kind: "end", id: "" }, dropSheet);
   function update() {
     const d = app.cur;
     if (!d) { fill(list); return; }
     const th = s => (s.thickness != null ? s.thickness : d.project.material.thickness);
-    const rowOf = s => h("div", { class: "trow" + (s.id === d.sheetId ? " on" : ""), onclick: () => A.sheetOps.open(s.id), ondblclick: () => A.sheetOps.props() },
-      `${s.name}  —  ${units.fmt(s.width)} x ${units.fmt(s.height)} x ${units.fmt(th(s))}${s.outline ? "  (shape)" : ""}  [${s.vectors.length}]`);
+    const rowOf = s => {
+      const r = h("div", { class: "trow" + (s.id === d.sheetId ? " on" : ""), dataset: { id: s.id }, onclick: () => A.sheetOps.open(s.id), ondblclick: () => A.sheetOps.props() },
+        `${s.name}  —  ${units.fmt(s.width)} x ${units.fmt(s.height)} x ${units.fmt(th(s))}${s.outline ? "  (shape)" : ""}  [${s.vectors.length}]`);
+      dragRows(r, "sheet", s.id); dropOn(r, { kind: "row", id: s.id }, dropSheet);
+      return r;
+    };
     const seen = new Set(), out = [];
     for (const s of d.project.sheets) {
       if (!s.group) { out.push(rowOf(s)); continue; }
       if (seen.has(s.group)) continue;
       seen.add(s.group);
-      const mine = d.project.sheets.filter(x => x.group === s.group), open = !folded.has(s.group) || mine.some(x => x.id === d.sheetId);
-      out.push(h("div", { class: "tgroup" },
-        h("div", { class: "tg-head", onclick: () => { open ? folded.add(s.group) : folded.delete(s.group); update(); } }, h("span", { class: "tri" }, open ? "▾" : "▸"),
-          h("b", null, `${s.group}  (${mine.length} sheet${mine.length === 1 ? "" : "s"}, ${mine.reduce((a, x) => a + x.vectors.length, 0)} vectors)`)),
-        open ? h("div", { class: "kids" }, mine.map(rowOf)) : null));
+      const g = s.group, mine = d.project.sheets.filter(x => x.group === g), open = !folded.has(g) || mine.some(x => x.id === d.sheetId);
+      const iso = isIsolated(d.project, g);
+      const title = h("b", null, `${iso ? "🔒" : "▣"} ${g}  (${mine.length} sheet${mine.length === 1 ? "" : "s"}, ${mine.reduce((a, x) => a + x.vectors.length, 0)} vectors)${iso ? "  — isolated" : ""}`);
+      title.addEventListener("dblclick", async e => { e.stopPropagation(); const n = await promptBox("Name of the group", g); if (n && n.trim()) A.sheetOps.renameGroup(g, n.trim()); });
+      const head = h("div", { class: "tg-head" + (iso ? " isolated" : ""), dataset: { group: g }, title: iso ? "Isolated: its layers, toolpaths, nesting and G-code are its own, and nothing of the rest of the project is on it" : "Drag a sheet onto it to put it in; double-click to rename",
+        onclick: () => { open ? folded.add(g) : folded.delete(g); update(); } }, h("span", { class: "tri" }, open ? "▾" : "▸"), title);
+      dropOn(head, { kind: "group", id: g }, dropSheet);
+      out.push(h("div", { class: "tgroup" }, head, open ? h("div", { class: "kids" }, mine.map(rowOf)) : null));
     }
     fill(list, out);
   }
@@ -257,7 +349,8 @@ export function toolpathsPanel() {
     // the names with their {variables} put in and the toolpaths that belong on this sheet come from the engine
     // (post/naming.toolpath_name, cam/job.shown_on): asked again when the toolpaths or the sheets change
     const view = tpView(d);
-    const listed = d.project.toolpaths.filter(t => !settings.toolpathsOfSheetOnly || !view || view.shown.has(t.id));
+    const listed = d.project.toolpaths.filter(t => toolpathOnSide(d.project, t, d.sheet)        // (another isolated group's, or the rest's: not here)
+      && (!settings.toolpathsOfSheetOnly || !view || view.shown.has(t.id)));
     const seen = new Set(), out = [];
     for (const t of listed) {
       if (!t.group) { out.push(rowOf(t)); continue; }

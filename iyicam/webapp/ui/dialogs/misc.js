@@ -8,6 +8,7 @@ import { run, report } from "../engine.js";
 import { formDialog } from "./common.js";
 import { download, fromB64, saveWhere, writeAgent, saveOnDevice, textBytes, joinPath } from "../files.js";
 import { MENUS } from "../menudef.js";
+import { scopeOf, openGroups } from "../scope.js";
 
 const P = (name, label, kind, def, o = {}) => ({ name, label, kind, default: def, min: null, max: null, step: null, choices: null, group: "", help: "", visible: null, decimals: 3, advanced: false, ...o });
 
@@ -112,7 +113,7 @@ const DIRECTIONS = { along_x: ["bottom", true], along_y: ["left", true], auto: [
 export async function nestingDialog(doc) {
   const sheet = doc.sheet, saved = (doc.project.metadata && doc.project.metadata.nesting) || {};
   const toolD = Math.max(6, ...doc.project.toolpaths.filter(t => t.op === "profile").map(t => t.tool.diameter));
-  const groups = [...new Set(doc.project.sheets.map(s => s.group).filter(Boolean))];
+  const groups = scopeOf(doc.sheet) ? [scopeOf(doc.sheet)] : openGroups(doc.project);   // (an isolated group nests on its own)
   const params = [
     P("width", "Reserve / new sheet width", "length", sheet.width, { min: 1, group: "Sheets", help: "The size of the sheets started when the plates of the Plates tab are full (or when there are none)" }),
     P("height", "Reserve / new sheet height", "length", sheet.height, { min: 1, group: "Sheets" }),
@@ -275,7 +276,7 @@ export async function gcodeDialog(doc) {
     P("post", "Post-processor", "choice", posts.some(p => p.id === last) ? last : posts[0].id, { choices: posts.map(p => [p.id, `${p.name} (.${p.extension})`]), help: "" }),
     P("file_name", "File name", "str", doc.name.replace(/\.[^.]+$/, "")),
     P("program_number", "Program number", "int", 1000, { min: 0, max: 999999 }),
-    P("all_sheets", "Every sheet (one file each)", "bool", true, { visible: null }),
+    P("all_sheets", scopeOf(doc.sheet) ? `Every sheet of the isolated group ${scopeOf(doc.sheet)} (one file each)` : "Every sheet (one file each; isolated groups are saved from their own sheets)", "bool", true, { visible: null }),
     P("which", "Toolpaths", "choice", doc.toolpathSelection && doc.toolpathSelection.length ? "selected" : "on", { choices: [
       ["on", "Every toolpath switched on"], ["sheet", `The toolpaths of this sheet (${doc.sheet ? doc.sheet.name : ""})`],
       ...(doc.toolpathSelection && doc.toolpathSelection.length ? [["selected", `The toolpaths selected (${doc.toolpathSelection.length})`]] : [])] }),

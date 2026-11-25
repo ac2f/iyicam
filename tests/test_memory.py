@@ -207,7 +207,7 @@ def test_toolpath_tool_is_remembered_per_kind_but_settings_start_from_the_defaul
     v = made["values"]
     # the tool chosen last is chosen again, as it is in the tool database: the feed rate changed for the first toolpath stays its own
     assert made["tool"].diameter == 8.0 and made["tool"].id == lib8.id and made["tool"].feed_rate == lib8.feed_rate != 4321
-    assert made["all_sheets"] is False
+    assert made["all_sheets"] is True       # (no longer remembered: a toolpath is on its side of the project, core.scope)
     # every value of a new toolpath is the default again (an allowance left from the last one cut parts wrong)
     from iyicam.core.registry import REGISTRY
     defaults = {p.name: p.default for p in REGISTRY.operations["profile"].params()}

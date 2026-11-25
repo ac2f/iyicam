@@ -978,7 +978,10 @@ def op_nest(payload: dict, ctl: JobControl | None = None) -> dict:
     if not isinstance(s, dict):
         raise ServiceError("bad_request", "'settings' must be an object")
     ids = payload.get("objects")
-    objs = [v for sh in p.sheets for v in sh.vectors if not ids or v.id in set(map(str, ids))]
+    from ..core.scope import scope_of, sheets_with
+    here = next((x for x in p.sheets if x.id == str(payload.get("sheet") or "")), None)
+    side = sheets_with(p, here) if here is not None else list(p.sheets)      # (an isolated group nests on its own)
+    objs = [v for sh in side for v in sh.vectors if not ids or v.id in set(map(str, ids))]
     if not objs:
         raise ServiceError("nothing_to_nest", "there are no vectors to nest")
     step = _num(s, "rotation", 90.0, 0.0, 360.0)
@@ -1047,10 +1050,10 @@ def op_nest(payload: dict, ctl: JobControl | None = None) -> dict:
         raise ServiceError("bad_request", "'place_on' must be one of: new, current, all, group", field="place_on")
     sheet_id = str(payload.get("sheet") or "")
     group = str(s.get("group") or payload.get("group") or "")
-    if place_on == "group" and not any(x.group == group for x in p.sheets):
+    if place_on == "group" and not any(x.group == group for x in side):
         raise ServiceError("unknown_group", "there is no such group of sheets", group=group)
-    on_sheets = ([next((x for x in p.sheets if x.id == sheet_id), p.sheets[0])] if place_on == "current"
-                 else list(p.sheets) if place_on == "all" else [x for x in p.sheets if x.group == group]
+    on_sheets = ([next((x for x in p.sheets if x.id == sheet_id), side[0])] if place_on == "current"
+                 else list(side) if place_on == "all" else [x for x in side if x.group == group]
                  if place_on == "group" else [])
     plates = bool(stock) or no_new or bool(on_sheets)
     qty = int(_num(s, "quantity", 1, 1, 10000))
@@ -1059,7 +1062,8 @@ def op_nest(payload: dict, ctl: JobControl | None = None) -> dict:
     cancel = ctl.cancelled if ctl else None
     progress = (lambda k, n: ctl.progress(k, n, "Nesting")) if ctl else None
     try:
-        out = nest_objects(p, objs, st, quantities, [] if on_sheets else [p.sheets[0]], progress=progress, cancel=cancel,
+        before = {x.id for x in p.sheets}
+        out = nest_objects(p, objs, st, quantities, [] if on_sheets else [here or side[0]], progress=progress, cancel=cancel,
                            stock=stock if plates else None, use_sheets=on_sheets if plates else None,
                            new_sheets=not no_new, layer_rules=rules, tilt_step=_num(s, "tilt_step", 5.0, 0.1),
                            choose=(lambda strict, better: True) if s.get("apply_squeeze") else None,
@@ -1068,7 +1072,10 @@ def op_nest(payload: dict, ctl: JobControl | None = None) -> dict:
         raise JobCancelled() from exc
     if plates and not s.get("keep_stock"):
         p.stock = use_up(p.stock, out.plates)
-    return {"project": p.to_dict(), "placed": out.placed, "unplaced": out.unplaced, "plates": out.result.sheets,
+    from ..core.scope import group_new_sheets
+    made = [x for x in out.sheets if x.id not in before]
+    joined = group_new_sheets(p, made, s.get("new_sheets_group"), here)
+    return {"project": p.to_dict(), "placed": out.placed, "new_sheets": [x.id for x in made], "new_sheets_group": joined, "unplaced": out.unplaced, "plates": out.result.sheets,
             "sheets": [{"id": sh.id, "name": sh.name, "width": sh.width, "height": sh.height,
                         "shape": bool(sh.outline), "utilization": round(u, 4),
                         "reserve": made is None}                     # (a sheet of the reserve size: the plates were full)

@@ -46,8 +46,8 @@ def sheets_for(project: Project, tdef: ToolpathDef) -> list[Sheet]:
     without a word."""
     if tdef.sheet_ids is None and tdef.sheet_group:
         base = [s for s in project.sheets if s.group == tdef.sheet_group]
-    elif tdef.sheet_ids is None:
-        base = list(project.sheets)
+    elif tdef.sheet_ids is None:                   # (the project's: on every sheet that is not isolated)
+        base = [s for s in project.sheets if not (s.isolated and s.group)]
     else:
         wanted = set(tdef.sheet_ids)
         base = [s for s in project.sheets if s.id in wanted]

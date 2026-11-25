@@ -28,7 +28,7 @@ from .console import Console
 from .cutorder_panel import CutOrderPanel, sequenced_toolpaths
 from .controller import Controller
 from .dialogs import (CommandDialog, CommandReportDialog, ExportDialog, ExportOptionsDialog, ImportDialog, LeftoverDialog,
-                      MaterialDialog, NestingDialog, PluginsDialog, PostEditorDialog, PreferencesDialog, StockDialog,
+                      MaterialDialog, NestingDialog, NewSheetsGroupDialog, PluginsDialog, PostEditorDialog, PreferencesDialog, StockDialog,
                       ToolDatabaseDialog, ToolpathDialog, buttons)
 from ..nesting.parts import find_duplicates, squeeze_lines
 from .files import open_file, save_file
@@ -1927,9 +1927,13 @@ class MainWindow(QMainWindow):
             if w is not None and w.findData(f"group:{group}") >= 0:
                 w.setCurrentIndex(w.findData(f"group:{group}"))
         if dlg.exec():
+            before = {s.id for s in c.project.sheets}
+            start = c.sheet
             out = dlg.run()
             if out is None:  # cancelled: nothing changed
                 return
+            made = [s for s in out.sheets if s.id not in before]
+            joined = self._group_new_sheets(made, start)
             r = out.result
             lines = [f"Placed {out.placed} part(s) on {r.sheets} plate(s):"]
             for sh, u in zip(out.sheets, r.utilization):
@@ -1938,8 +1942,33 @@ class MainWindow(QMainWindow):
                 lines += ["", "Squeezed in:"] + squeeze_lines(out.parts, out.squeezed)
             if out.unplaced:
                 lines.append(f"\n{out.unplaced} part(s) did not fit.")
+            if made:
+                lines.append(f"\n{len(made)} new sheet(s)" + (f" in the group {joined}." if joined else ", in no group."))
             QMessageBox.information(self, "Nesting", "\n".join(lines))
             self.canvas.zoom_extents()
+
+    def _group_new_sheets(self, made: list, start) -> str:
+        """After a nesting that made new sheets: which group they go into (asked; the group of the sheet the nesting started
+        on is offered first).  On an isolated group they are the group's, nothing is asked."""
+        from ..core.scope import group_new_sheets, groups_of_scope, scope_of
+        c = self.ctrl
+        if not made:
+            return ""
+        if scope_of(start):
+            with c.edit("Group the new sheets", geometry=False):
+                return group_new_sheets(c.project, made, None, start)
+        dlg = NewSheetsGroupDialog(len(made), start.group if start is not None else "",
+                                   groups_of_scope(c.project, ""), self)
+        if not dlg.exec():
+            choice = None if start is not None and start.group else ""
+        else:
+            choice = dlg.choice()
+        with c.edit("Group the new sheets", geometry=False):
+            name = group_new_sheets(c.project, made, choice, start)
+        c.refresh_stale()
+        c.toolpaths_changed.emit()
+        c.sheet_changed.emit()
+        return name
 
     def stock_from_selection(self) -> None:
         items = self.ctrl.stock_from_selection()

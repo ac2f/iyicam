@@ -24,7 +24,7 @@ from .errors import ServiceError
 from .wire import b64d
 
 __all__: list[str] = ["op_vector_edit", "op_start_points", "op_start_probe", "op_trim", "op_text", "op_fonts",
-                      "op_text_on_curve", "op_trace_bitmap", "op_veclib", "op_sheet_outline"]
+                      "op_text_on_curve", "op_trace_bitmap", "op_veclib", "op_sheet_outline", "op_sheet_scope"]
 
 
 # ---------------------------------------------------------------------------------------------
@@ -600,3 +600,53 @@ def op_sheet_outline(payload: dict) -> dict:
         v.transform(T)
     sheet.width, sheet.height, sheet.outline = w, h, norm
     return {"ok": True, "project": project.to_dict(), "changed": True, "message": f"The sheet is now {w:.1f} x {h:.1f} mm, shaped by {len(objs)} vector(s)"}
+
+
+# ---------------------------------------------------------------------------------------------
+def op_sheet_scope(payload: dict) -> dict:
+    """Groups of sheets and their isolation (core.scope), the same as the desktop's Sheets panel.
+
+    ``action``: ``group`` (``sheets`` into the group ``name``; "" takes them out), ``arrange`` (``order``: every sheet id in
+    the new order, ``groups``: id -> group, as a drag left them), ``rename`` (the group ``old`` to ``name``), ``isolate``
+    (``sheets``: their group, or a new group of them), ``unisolate`` (the group ``name``), ``new_sheets`` (the sheets
+    ``sheets`` a nesting made into the group ``name``, ``null``: the group of the sheet ``sheet``).  Answers ``{project,
+    group}``: the project as it is after, and the group it is about."""
+    from ..core import scope
+    from ..core.document import project_from_dict
+    d = payload.get("project")
+    if not isinstance(d, dict):
+        raise ServiceError("bad_request", "the project must be given as an object (the .icam JSON)")
+    project = project_from_dict(d)
+    act = str(payload.get("action") or "")
+    ids = [str(x) for x in payload.get("sheets") or []]
+    name = payload.get("name")
+    group = ""
+    if act == "group":
+        group = str(name or "").strip()
+        scope.set_group(project, ids, group)
+    elif act == "arrange":
+        by = {s.id: s for s in project.sheets}
+        order = [str(x) for x in payload.get("order") or []]
+        project.sheets = [by[i] for i in order if i in by] + [s for s in project.sheets if s.id not in set(order)]
+        per: dict[str, list[str]] = {}
+        for sid, g in (payload.get("groups") or {}).items():
+            if str(sid) in by:
+                per.setdefault(str(g or "").strip(), []).append(str(sid))
+        for g, sids in per.items():
+            scope.set_group(project, sids, g)
+    elif act == "rename":
+        group = str(name or "").strip()
+        scope.rename_group(project, str(payload.get("old") or ""), group)
+    elif act == "isolate":
+        group = scope.isolate(project, ids)
+    elif act == "unisolate":
+        group = str(name or "")
+        scope.unisolate(project, group)
+    elif act == "new_sheets":
+        here = project.sheet(str(payload.get("sheet") or ""))
+        made = [s for s in project.sheets if s.id in set(ids)]
+        group = scope.group_new_sheets(project, made, name, here)
+    else:
+        raise ServiceError("bad_request", "'action' must be one of: group, arrange, rename, isolate, unisolate, new_sheets",
+                           field="action")
+    return {"ok": True, "project": project.to_dict(), "group": group}

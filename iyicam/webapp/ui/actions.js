@@ -5,13 +5,14 @@ import { h, uid, deepCopy, toast, store } from "./dom.js";
 import { app, Doc, addDoc, closeDoc, reopenClosed, setCur, settings, setSetting, emit, rememberRecent, units } from "./state.js";
 import { run, report, files as filesApi, cancelled } from "./engine.js";
 import { MENUS } from "./menudef.js";
-import { askBox, confirmBox, alertBox, promptBox } from "./dialog.js";
+import { askBox, confirmBox, alertBox, promptBox, dialog } from "./dialog.js";
 import { openFile, saveWhere, writeAgent, saveOnDevice, textBytes, fromB64, toB64 } from "./files.js";
 import { commandForm } from "./dialogs/command.js";
 import { reportDialog } from "./dialogs/common.js";
 import { toolpathDialog } from "./dialogs/toolpath.js";
 import { toolDatabase } from "./dialogs/tools.js";
 import { newProjectDialog, materialSetup, sheetDialog, nestingDialog, nestReport, preferencesDialog, exportVectors, gcodeDialog, deliverFiles, shortcutsDialog, aboutDialog } from "./dialogs/misc.js";
+import { scopeOf, layerApplies, layersFor, sheetsWith, openGroups } from "./scope.js";
 
 export const registry = new Map();
 const reg = (id, def) => registry.set(id, typeof def === "function" ? { run: def } : def);
@@ -127,7 +128,7 @@ export async function saveGcode() {
       if (!ids.length) { alertBox("No toolpath is calculated on this sheet.", "Save G-code"); return; }
     }
     const r = await run("gcode", { project: d.project, post: v.post, file_name: v.file_name, program_number: v.program_number, recalculate: v.recalculate || d.stale,
-      sheets: v.all_sheets && v.which !== "sheet" ? undefined : [d.sheetId], per_toolpath: !!v.per_toolpath,
+      sheets: v.all_sheets && v.which !== "sheet" ? sheetsWith(d.project, d.sheet).map(s => s.id) : [d.sheetId], per_toolpath: !!v.per_toolpath,
       toolpaths: ids }, { label: "Writing G-code", cancel: true });
     if (r.errors && r.errors.length) await alertBox(r.errors.join("\n"), "Save G-code");
     if (!r.files.length) { status("Nothing was written"); return; }
@@ -379,8 +380,13 @@ export async function nest() {
   const o = await nestingDialog(d);
   if (!o) return;
   try {
+    const start = d.sheet;
     const r = await run("nest", { project: d.project, settings: o.settings, objects: o.objects, sheet: d.sheetId }, { label: "Nesting", cancel: true });
     d.replace("Nest parts", r.project, []);
+    if (r.new_sheets && r.new_sheets.length && !scopeOf(start)) {     // (an isolated group keeps its new sheets: nothing to ask)
+      const choice = await newSheetsGroup(r.new_sheets.length, start.group || "", d.project);
+      if (choice !== null && choice !== (r.new_sheets_group || "")) await sheetScope("Group the new sheets", { action: "new_sheets", sheets: r.new_sheets, sheet: start.id, name: choice });
+    }
     app.ui.canvas.zoomExtents();
     status(`${r.placed} part(s) placed` + (r.unplaced ? `, ${r.unplaced} did not fit` : ""));
     await nestReport(r);
@@ -388,9 +394,42 @@ export async function nest() {
   } catch (e) { report(e, "Nesting"); }
 }
 
+/** after a nesting that made new sheets: the group they go into (the group of the sheet it started on first), a new group,
+ * or none; null: as they are (the engine put them in the group of that sheet) */
+async function newSheetsGroup(n, current, project) {
+  const sel = h("select", null,
+    current ? h("option", { value: "g:" + current }, `The group of this sheet: ${current}`) : null,
+    openGroups(project).filter(g => g !== current).map(g => h("option", { value: "g:" + g }, `The group ${g}`)),
+    h("option", { value: "new" }, "A new group..."), h("option", { value: "none" }, "No group"));
+  const name = h("input", { type: "text", placeholder: "Name of the new group", disabled: true });
+  sel.addEventListener("change", () => { name.disabled = sel.value !== "new"; if (!name.disabled) name.focus(); });
+  const r = await dialog({ title: "New sheets", width: 420, body: h("div", { class: "fields" },
+    h("p", { class: "dlg-text" }, `The nesting made ${n} new sheet${n === 1 ? "" : "s"}. Put ${n === 1 ? "it" : "them"} in a group?`),
+    h("label", { class: "row" }, h("span", { class: "lab" }, "Group"), sel), h("label", { class: "row" }, h("span", { class: "lab" }, "New group"), name)),
+    buttons: [{ label: "Cancel", value: undefined }, { label: "OK", primary: true, value: "ok" }] }).done;
+  if (r !== "ok") return null;
+  if (sel.value === "none") return "";
+  if (sel.value === "new") return name.value.trim() || "Nested";
+  return sel.value.slice(2);
+}
+
 // ------------------------------------------------------------------------------------------ layers and sheets
 export const layerOps = {
-  add() { const d = doc(); d.edit("Add layer", p => { const used = p.layers.length; const l = { id: uid(), name: `Layer ${used + 1}`, color: app.schema.layer_colors[used % app.schema.layer_colors.length], visible: true, locked: false }; p.layers.push(l); d.layerId = l.id; }); },
+  add() { const d = doc(); d.edit("Add layer", p => { const used = p.layers.length, side = scopeOf(d.sheet); const l = { id: uid(), name: `Layer ${used + 1}`, color: app.schema.layer_colors[used % app.schema.layer_colors.length], visible: true, locked: false, ...(side ? { sheet_group: side } : {}) }; p.layers.push(l); d.layerId = l.id; }); },
+  /** the layers in a new order and groups (a drag in the Layers panel): `order` the ids shown, `groups` id -> group */
+  arrange(order, groups) {
+    const d = doc();
+    d.edit("Arrange layers", p => {
+      const by = new Map(p.layers.map(l => [l.id, l])), want = order.filter(i => by.has(i)), set = new Set(want);
+      const slots = p.layers.map((l, k) => (set.has(l.id) ? k : -1)).filter(k => k >= 0);
+      const out = p.layers.slice();
+      slots.forEach((k, n) => { out[k] = by.get(want[n]); });
+      p.layers = out;
+      for (const [id, g] of Object.entries(groups)) { const l = by.get(id); if (l) { if (g) l.group = g; else delete l.group; } }
+    });
+  },
+  renameGroup(old, name) { const d = doc(); if (!name || name === old) return; d.edit("Rename group of layers", p => { for (const l of p.layers) if (l.group === old) l.group = name; }); },
+  setGroupState(g, patch) { const d = doc(); d.edit("Layer state", p => { for (const l of p.layers) if (l.group === g && layerApplies(l, sheetOf(p, d))) Object.assign(l, patch); }); },
   async remove(id) {
     const d = doc();
     if (d.project.layers.length < 2) { status("A project keeps at least one layer"); return; }
@@ -403,8 +442,26 @@ export const layerOps = {
   moveSelection(id) { const d = doc(); const sel = new Set(d.selection); if (!sel.size) return; d.edit("Move to layer", p => { const sh = sheetOf(p, d); sh.vectors = sh.vectors.map(v => (sel.has(v.id) ? { ...v, layer: id } : v)); }); },
   selectLayer(id) { const d = doc(); select(d.sheet.vectors.filter(v => v.layer === id).map(v => v.id)); },
 };
+/** a change of groups or isolation made by the engine (core/scope.py: the layers and toolpaths go along), one undo step */
+async function sheetScope(label, payload) {
+  const d = doc();
+  if (!d) return null;
+  try {
+    const r = await run("sheet_scope", { project: d.project, ...payload }, { label });
+    d.replace(label, r.project);
+    layerOfSide(d);
+    return r;
+  } catch (e) { report(e, label); return null; }
+}
+/** the current layer is one that is there on the sheet open (an isolated group has layers of its own) */
+export function layerOfSide(d) {
+  const l = d.project.layers.find(x => x.id === d.layerId), sh = d.sheet;
+  if (!sh || (l && layerApplies(l, sh))) return;
+  const here = layersFor(d.project, sh), same = l && here.find(x => x.name === l.name);
+  if (same || here.length) d.layerId = (same || here[0]).id;
+}
 export const sheetOps = {
-  add() { const d = doc(); const cur = d.sheet; d.edit("Add sheet", p => { const s = { id: uid(), name: `Sheet ${p.sheets.length + 1}`, width: cur.width, height: cur.height, thickness: cur.thickness != null ? cur.thickness : p.material.thickness, vectors: [], outline: null, group: cur.group || "" }; p.sheets.push(s); d.sheetId = s.id; d.selection = []; }); },
+  add() { const d = doc(); const cur = d.sheet; d.edit("Add sheet", p => { const s = { id: uid(), name: `Sheet ${p.sheets.length + 1}`, width: cur.width, height: cur.height, thickness: cur.thickness != null ? cur.thickness : p.material.thickness, vectors: [], outline: null, group: cur.group || "", ...(cur.isolated && cur.group ? { isolated: true } : {}) }; p.sheets.push(s); d.sheetId = s.id; d.selection = []; }); },
   duplicate() { const d = doc(); const cur = d.sheet; d.edit("Duplicate sheet", p => { const s = { ...deepCopy(cur), id: uid(), name: cur.name + " copy" }; s.vectors = s.vectors.map(v => ({ ...v, id: uid() })); p.sheets.splice(p.sheets.findIndex(x => x.id === cur.id) + 1, 0, s); d.sheetId = s.id; d.selection = []; }); },
   async remove() {
     const d = doc();
@@ -413,8 +470,17 @@ export const sheetOps = {
     d.edit("Delete sheet", p => { p.sheets = p.sheets.filter(s => s.id !== d.sheetId); d.sheetId = p.sheets[0].id; d.selection = []; });
   },
   move(dir) { const d = doc(); d.edit("Move sheet", p => { const i = p.sheets.findIndex(s => s.id === d.sheetId), j = i + dir; if (i < 0 || j < 0 || j >= p.sheets.length) return; const [s] = p.sheets.splice(i, 1); p.sheets.splice(j, 0, s); }); },
-  async group() { const d = doc(); const n = await promptBox("Name of the group of sheets (empty: none)", d.sheet.group || ""); if (n === null) return; d.edit("Sheet group", p => { sheetOf(p, d).group = n.trim(); }); },
-  open(id) { const d = doc(); if (d.sheetId === id) return; d.sheetId = id; d.selection = []; d.changed(); view().zoomExtents(); },
+  async group() { const d = doc(); const n = await promptBox("Name of the group of sheets (empty: none)", d.sheet.group || ""); if (n === null) return; await sheetScope("Sheet group", { action: "group", sheets: [d.sheetId], name: n.trim() }); },
+  /** a drag in the Sheets panel: the sheets in a new order and groups (into an isolated group: isolated with it) */
+  arrange(order, groups) { return sheetScope("Arrange sheets", { action: "arrange", order, groups }); },
+  renameGroup(old, name) { if (!name || name === old) return; return sheetScope("Rename group", { action: "rename", old, name }); },
+  /** isolate the group of the sheet open (a sheet of no group: a group of its own), or end its isolation */
+  async isolate() {
+    const d = doc(), side = scopeOf(d.sheet);
+    const r = side ? await sheetScope("End isolation", { action: "unisolate", name: side }) : await sheetScope("Isolate", { action: "isolate", sheets: [d.sheetId] });
+    if (r) toast(side ? `${side} is part of the project again` : `${r.group} is isolated: its layers, toolpaths, nesting and G-code are its own`);
+  },
+  open(id) { const d = doc(); if (d.sheetId === id) return; d.sheetId = id; d.selection = []; layerOfSide(d); d.changed(); view().zoomExtents(); },
   props() { const d = doc(); return sheetDialog(d, d.sheet); },
 };
 

@@ -58,9 +58,9 @@ class LayersPanel(DocPanel):
         self.ctrl = ctrl
         lay = QVBoxLayout(self)
         lay.setContentsMargins(2, 2, 2, 2)
-        self.tree = QTreeWidget()
+        self.tree = LayerTree(self)
         self.tree.setHeaderLabels(["Layer", "Show", "Lock"])
-        self.tree.setRootIsDecorated(False)
+        self.tree.setRootIsDecorated(True)
         self.tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
         self.tree.header().setSectionResizeMode(1, QHeaderView.ResizeToContents)
         self.tree.header().setSectionResizeMode(2, QHeaderView.ResizeToContents)
@@ -81,6 +81,9 @@ class LayersPanel(DocPanel):
         lay.addLayout(row)
         self._updating = False
         self._changing = False
+        self._folded: set[str] = set()
+        self.tree.itemExpanded.connect(lambda it: self._folded.discard(it.data(0, self.GROUP_ROLE)))
+        self.tree.itemCollapsed.connect(lambda it: self._folded.add(it.data(0, self.GROUP_ROLE)))
         self._connect(ctrl)
         self.refresh()
 
@@ -93,27 +96,68 @@ class LayersPanel(DocPanel):
         counts: dict[str, int] = {}
         for v in self.ctrl.sheet.vectors:
             counts[v.layer_id] = counts.get(v.layer_id, 0) + 1
-        for l in self.ctrl.project.layers_for(self.ctrl.sheet):          # (a layer of another sheet or group is not shown)
-            it = QTreeWidgetItem([f"{l.name} ({counts.get(l.id, 0)})" + (" ▣" if l.sheet_ids is not None or l.sheet_group else ""), "", ""])
+        heads: dict[str, QTreeWidgetItem] = {}
+        shown = self.ctrl.project.layers_for(self.ctrl.sheet) if self.ctrl.sheet is not None else []
+        for l in shown:                                    # (a layer of another sheet or isolated group is not shown)
+            it = QTreeWidgetItem([f"{l.name} ({counts.get(l.id, 0)})" + (" ▣" if l.sheet_ids is not None else ""), "", ""])
             it.setData(0, Qt.UserRole, l.id)
             it.setIcon(0, swatch(l.color))
             it.setCheckState(1, Qt.Checked if l.visible else Qt.Unchecked)
             it.setCheckState(2, Qt.Checked if l.locked else Qt.Unchecked)
+            it.setFlags(it.flags() | Qt.ItemIsDragEnabled | Qt.ItemIsDropEnabled)   # (a layer dropped on a layer: a group)
             if l.id == self.ctrl.layer_id:
                 f = QFont()
                 f.setBold(True)
                 it.setFont(0, f)
-            self.tree.addTopLevelItem(it)
+            if l.group:
+                head = heads.get(l.group)
+                if head is None:
+                    head = QTreeWidgetItem([f"▣ {l.group}", "", ""])
+                    head.setData(0, self.GROUP_ROLE, l.group)
+                    head.setFlags(head.flags() | Qt.ItemIsDropEnabled | Qt.ItemIsDragEnabled | Qt.ItemIsUserCheckable)
+                    f = QFont(head.font(0))
+                    f.setBold(True)
+                    head.setFont(0, f)
+                    head.setToolTip(0, f"Group of layers {l.group}: drag a layer onto it to put it in, out to the top to "
+                                       "take it out; Show and Lock here are for all of its layers")
+                    self.tree.addTopLevelItem(head)
+                    heads[l.group] = head
+                head.addChild(it)
+            else:
+                self.tree.addTopLevelItem(it)
             if l.id == self.ctrl.layer_id:
                 self.tree.setCurrentItem(it)
+        for g, head in heads.items():
+            mine = [l for l in shown if l.group == g]
+            for col, attr in ((1, "visible"), (2, "locked")):
+                on = [getattr(l, attr) for l in mine]
+                head.setCheckState(col, Qt.Checked if all(on) else Qt.Unchecked if not any(on) else Qt.PartiallyChecked)
+            head.setExpanded(g not in self._folded)
         self._updating = False
+
+    GROUP_ROLE = Qt.UserRole + 1
 
     def _lid(self, it=None) -> str | None:
         it = it or self.tree.currentItem()
         return it.data(0, Qt.UserRole) if it else None
 
+    def _group_of(self, name: str) -> list:
+        return [l for l in self.ctrl.project.layers_for(self.ctrl.sheet) if l.group == name]
+
     def _item_changed(self, it, col) -> None:
         if self._updating:
+            return
+        g = it.data(0, self.GROUP_ROLE)
+        if g and col in (1, 2):                            # (Show / Lock of a group: all of its layers)
+            on = it.checkState(col) != Qt.Unchecked
+            self._changing = True
+            try:
+                with self.ctrl.edit("Layer state", geometry=False):
+                    for l in self._group_of(g):
+                        setattr(l, "visible" if col == 1 else "locked", on)
+            finally:
+                self._changing = False
+            QTimer.singleShot(0, self.refresh)
             return
         layer = self.ctrl.project.layer(self._lid(it))
         if layer is None:
@@ -130,30 +174,115 @@ class LayersPanel(DocPanel):
         QTimer.singleShot(0, self.refresh)
 
     def _current_changed(self, cur, prev) -> None:
-        if not self._updating and cur is not None:
+        if not self._updating and cur is not None and self._lid(cur):
             self.ctrl.layer_id = self._lid(cur)
             self.refresh()
 
     def _double_clicked(self, it, col) -> None:
         if col == 0:
-            self.rename()
+            g = it.data(0, self.GROUP_ROLE)
+            self.rename_group(g) if g else self.rename()
+
+    def _dropped(self) -> None:
+        """A drag moved layers: the project takes the order and the groups of the tree (a layer dropped onto a layer makes
+        a new group of the two)."""
+        order, groups, made = [], {}, []
+
+        def under(item, g):
+            lid = item.data(0, Qt.UserRole)
+            if lid:
+                order.append(lid)
+                groups[lid] = g
+            for k in range(item.childCount()):
+                under(item.child(k), g)
+
+        taken = {l.group for l in self.ctrl.project.layers if l.group}
+        for i in range(self.tree.topLevelItemCount()):
+            top = self.tree.topLevelItem(i)
+            g = top.data(0, self.GROUP_ROLE)
+            if g:
+                for k in range(top.childCount()):
+                    under(top.child(k), g)
+            elif top.childCount():
+                n = 1
+                while f"Group {n}" in taken or f"Group {n}" in made:
+                    n += 1
+                made.append(f"Group {n}")
+                under(top, f"Group {n}")
+            else:
+                under(top, "")
+        p = self.ctrl.project
+        by_id = {l.id: l for l in p.layers}
+        shown = [by_id[i] for i in order if i in by_id]
+        slots = [k for k, l in enumerate(p.layers) if l.id in set(order)]   # (the places of the layers shown, in turn)
+        new = list(p.layers)
+        for k, l in zip(slots, shown):
+            new[k] = l
+        if [l.id for l in new] == [l.id for l in p.layers] and all(by_id[i].group == g for i, g in groups.items()):
+            self.refresh()
+            return
+        with self.ctrl.edit("Arrange layers", geometry=False):
+            p.layers = new
+            for i, g in groups.items():
+                by_id[i].group = g
+        QTimer.singleShot(0, self.refresh)
+
+    def rename_group(self, old: str) -> None:
+        name, ok = QInputDialog.getText(self, "Group of layers", "New name:", text=old)
+        if ok and name.strip() and name.strip() != old:
+            with self.ctrl.edit("Rename group of layers", geometry=False):
+                for l in self.ctrl.project.layers:
+                    if l.group == old:
+                        l.group = name.strip()
+
+    def ungroup(self, name: str) -> None:
+        with self.ctrl.edit("Ungroup layers", geometry=False):
+            for l in self.ctrl.project.layers:
+                if l.group == name:
+                    l.group = ""
+
+    def group_selected(self) -> None:
+        lid = self._lid()
+        if not lid:
+            return
+        name, ok = QInputDialog.getText(self, "Group of layers", "Name of the group:")
+        if ok and name.strip():
+            with self.ctrl.edit("Group layers", geometry=False):
+                self.ctrl.project.layer(lid).group = name.strip()
 
     def _menu(self, pos) -> None:
         m = QMenu(self)
+        it = self.tree.itemAt(pos)
+        g = it.data(0, self.GROUP_ROLE) if it is not None else None
+        if g:
+            m.addAction(f"Rename the group {g}...", lambda n=g: self.rename_group(n))
+            m.addAction("Ungroup (the layers stay)", lambda n=g: self.ungroup(n))
+            menus.show_menu(m, self.tree.viewport().mapToGlobal(pos))
+            return
         m.addAction("Rename...", self.rename)
         m.addAction("Colour...", self.color)
-        m.addAction("Appears on...", self.scope)
+        m.addAction("Put in a new group...", self.group_selected)
+        if self.ctrl.project.layer(self._lid() or "") is not None and self.ctrl.project.layer(self._lid()).group:
+            m.addAction("Take out of its group", lambda: self._set_group(""))
         m.addAction("Select vectors", self.select_layer)
         m.addAction("Move selection here", self.move_selection)
         m.addSeparator()
         m.addAction("Delete", self.delete)
         menus.show_menu(m, self.tree.mapToGlobal(pos))
 
+    def _set_group(self, name: str) -> None:
+        layer = self.ctrl.project.layer(self._lid() or "")
+        if layer is not None:
+            with self.ctrl.edit("Group layers", geometry=False):
+                layer.group = name
+
     def add(self) -> None:
         name, ok = QInputDialog.getText(self, "New layer", "Name:", text=f"Layer {len(self.ctrl.project.layers) + 1}")
         if ok and name:
+            from ..core.scope import new_item_scope
             with self.ctrl.edit("Add layer", geometry=False):
                 l = self.ctrl.project.add_layer(name)
+                l.sheet_group = new_item_scope(self.ctrl.sheet)     # (on an isolated group: the group's layer)
             self.ctrl.set_layer(l.id)
 
     def scope(self) -> None:
@@ -230,6 +359,20 @@ class LayersPanel(DocPanel):
         self.ctrl.select([o.id for o in self.ctrl.sheet.vectors if o.layer_id == lid])
 
 
+class LayerTree(QTreeWidget):
+    """The layers, those of a group under it; dragging a layer onto a group puts it in, onto a layer makes a group."""
+
+    def __init__(self, panel):
+        super().__init__()
+        self.panel = panel
+        self.setDragDropMode(QAbstractItemView.InternalMove)
+        self.setDefaultDropAction(Qt.MoveAction)
+
+    def dropEvent(self, ev) -> None:
+        super().dropEvent(ev)
+        QTimer.singleShot(0, self.panel._dropped)
+
+
 class SheetTree(QTreeWidget):
     """The sheets, those of a group stacked under it; dragging a sheet onto a group puts it in, out to the top takes it out."""
 
@@ -270,8 +413,11 @@ class SheetsPanel(DocPanel):
         for text, tip, slot in (("+", "Add sheet", self.add), ("⧉", "Duplicate sheet", self.duplicate),
                                 ("−", "Delete sheet", self.delete), ("▲", "Move the sheet up", lambda: self.move(-1)),
                                 ("▼", "Move the sheet down", lambda: self.move(1)), ("⚙", "Sheet properties", self.properties),
-                                ("▣", "New group of the selected sheets (they are stacked under it; drag sheets in and out)",
-                                 self.new_group)):
+                                ("▣", "New group of the selected sheets (they are stacked under it; drag sheets in and out, "
+                                      "or drop a sheet on another)", self.new_group),
+                                ("🔒", "Isolate the selected sheets / their group, or end the isolation: an isolated group has "
+                                      "its own layers, toolpaths, nesting and G-code, and nothing of the rest is on it",
+                                 self.toggle_isolation)):
             row.addWidget(small_button(text, tip, slot))
         row.addStretch(1)
         lay.addLayout(row)
@@ -292,7 +438,7 @@ class SheetsPanel(DocPanel):
             shape = "  (shape)" if s.outline else ""
             it = QTreeWidgetItem([f"{s.name}  —  {u.fmt(s.width)} x {u.fmt(s.height)} x {u.fmt(t)}{shape}  [{len(s.vectors)}]"])
             it.setData(0, self.ID_ROLE, s.id)
-            it.setFlags((it.flags() | Qt.ItemIsDragEnabled) & ~Qt.ItemIsDropEnabled)
+            it.setFlags(it.flags() | Qt.ItemIsDragEnabled | Qt.ItemIsDropEnabled)   # (a sheet dropped on a sheet: a group of them)
             if s.group:
                 head = heads.get(s.group)
                 if head is None:                         # (the group stands where its first sheet comes)
@@ -309,12 +455,17 @@ class SheetsPanel(DocPanel):
                 self.tree.addTopLevelItem(it)
             if s.id == self.ctrl.sheet_id:
                 current = it
+        from ..core.scope import is_isolated
         for g, head in heads.items():
             sheets = self.ctrl.sheets_in(g)
             n = sum(len(s.vectors) for s in sheets)
-            head.setText(0, f"▣ {g}  ({len(sheets)} sheet{'s' if len(sheets) != 1 else ''}, {n} vectors)")
+            iso = is_isolated(self.ctrl.project, g)
+            head.setText(0, f"{'🔒' if iso else '▣'} {g}  ({len(sheets)} sheet{'s' if len(sheets) != 1 else ''}, {n} vectors)"
+                         + ("  — isolated" if iso else ""))
             head.setToolTip(0, f"Group {g}: its sheets are stacked under it. Drag a sheet onto it to put it in, out to the "
-                               "top to take it out; right click for the group.")
+                               "top to take it out; right click for the group."
+                            + (" It is isolated: its layers, toolpaths, nesting and G-code are its own, and nothing of the "
+                               "rest of the project is on it." if iso else ""))
             head.setExpanded(g not in self._folded or (current is not None and current.parent() is head))
         if current is not None:
             self.tree.setCurrentItem(current)
@@ -344,24 +495,33 @@ class SheetsPanel(DocPanel):
 
     def _dropped(self) -> None:
         """A drag moved sheets: the project takes the order and the groups of the tree."""
+        from ..core.scope import unique_group_name
         order, groups = [], {}
+
+        def under(item, g):                              # (a sheet and what was dropped on it, in the group g)
+            sid = item.data(0, self.ID_ROLE)
+            if sid:
+                order.append(sid)
+                groups[sid] = g
+            for k in range(item.childCount()):
+                under(item.child(k), g)
+
+        made = []
         for i in range(self.tree.topLevelItemCount()):
             top = self.tree.topLevelItem(i)
             g = top.data(0, self.GROUP_ROLE)
             if g:
                 for k in range(top.childCount()):
-                    sid = top.child(k).data(0, self.ID_ROLE)
-                    if sid:
-                        order.append(sid)
-                        groups[sid] = g
+                    under(top.child(k), g)
             elif top.data(0, self.ID_ROLE):
-                order.append(top.data(0, self.ID_ROLE))
-                groups[top.data(0, self.ID_ROLE)] = ""
-                for k in range(top.childCount()):        # (a sheet dropped onto a sheet: beside it)
-                    sid = top.child(k).data(0, self.ID_ROLE)
-                    if sid:
-                        order.append(sid)
-                        groups[sid] = ""
+                if top.childCount():                     # (a sheet dropped onto a sheet: a new group of the two)
+                    g = unique_group_name(self.ctrl.project, "Group")
+                    while g in made:
+                        g = f"{g}+"
+                    made.append(g)
+                    under(top, g)
+                else:
+                    under(top, "")
         if not self.ctrl.arrange_sheets(order, groups):
             self.refresh()
 
@@ -383,13 +543,25 @@ class SheetsPanel(DocPanel):
         m = QMenu(self)
         it = self.tree.itemAt(pos)
         head = it.data(0, self.GROUP_ROLE) if it is not None else None
+        from ..core.scope import is_isolated
         if head:
             m.addAction(f"Rename the group {head}...", lambda n=head: self.rename_group(n))
             m.addAction("Select its sheets", lambda n=head: self._select_group(n))
             m.addAction("Nest onto this group...", lambda n=head: self.nest_on(n))
-            m.addAction("New toolpath for this group", lambda n=head: self.toolpath_for(n))
+            if is_isolated(self.ctrl.project, head):
+                m.addAction("End the isolation", lambda n=head: self.ctrl.unisolate(n))
+            else:
+                m.addAction("Isolate the group", lambda n=head: self.isolate([s.id for s in self.ctrl.sheets_in(n)]))
             m.addAction("Ungroup (the sheets stay)", lambda n=head: self.ctrl.set_sheet_group(
                 [s.id for s in self.ctrl.sheets_in(n)], ""))
+            m.addSeparator()
+        else:
+            cur = self.ctrl.project.sheet(self.selected_ids()[0]) if self.selected_ids() else None
+            if cur is not None and cur.isolated and cur.group:
+                m.addAction(f"End the isolation of {cur.group}", lambda n=cur.group: self.ctrl.unisolate(n))
+            else:
+                m.addAction("Isolate" + (" the selected sheets" if len(self.selected_ids()) > 1 else " this sheet"),
+                            lambda: self.isolate(self.selected_ids()))
             m.addSeparator()
         g = m.addMenu("Group")
         g.addAction("New group from the selected...", self.new_group)
@@ -399,11 +571,24 @@ class SheetsPanel(DocPanel):
             sub.addAction("Select its sheets", lambda n=name: self._select_group(n))
             sub.addAction("Rename...", lambda n=name: self.rename_group(n))
             sub.addAction("Nest onto this group...", lambda n=name: self.nest_on(n))
-            sub.addAction("New toolpath for this group", lambda n=name: self.toolpath_for(n))
         g.addSeparator()
         g.addAction("Take the selected out of their group", lambda: self.ctrl.set_sheet_group(self.selected_ids(), ""))
         m.addAction("Properties...", self.properties)
         menus.show_menu(m, self.tree.viewport().mapToGlobal(pos))
+
+    def toggle_isolation(self) -> None:
+        cur = self.ctrl.sheet
+        if cur is not None and cur.isolated and cur.group:
+            self.ctrl.unisolate(cur.group)
+            self.ctrl.message.emit(f"{cur.group} is part of the project again")
+        else:
+            self.isolate(self.selected_ids())
+
+    def isolate(self, ids) -> None:
+        """Isolate the sheets (their group, or a new group of them): a part of the project of its own (core.scope)."""
+        name = self.ctrl.isolate(ids)
+        if name:
+            self.ctrl.message.emit(f"{name} is isolated: its layers, toolpaths, nesting and G-code are its own")
 
     def new_group(self) -> None:
         name, ok = QInputDialog.getText(self, "Group of sheets", "Name of the group:")
@@ -413,15 +598,10 @@ class SheetsPanel(DocPanel):
     def rename_group(self, old: str) -> None:
         name, ok = QInputDialog.getText(self, "Group of sheets", "New name:", text=old)
         if ok and name.strip():
-            ids = [s.id for s in self.ctrl.sheets_in(old)]
-            self.ctrl.set_sheet_group(ids, name)
-            for t in self.ctrl.project.toolpaths:          # (the toolpaths of the group follow its name)
-                if t.sheet_group == old:
-                    t.sheet_group = name.strip()
+            self.ctrl.rename_sheet_group(old, name)        # (its layers and toolpaths follow its name)
             if old in self._folded:
                 self._folded.discard(old)
                 self._folded.add(name.strip())
-            self.ctrl.toolpaths_changed.emit()
 
     def _select_group(self, name: str) -> None:
         ids = {s.id for s in self.ctrl.sheets_in(name)}
@@ -444,8 +624,9 @@ class SheetsPanel(DocPanel):
         """A new sheet. The first one of a blank project: its size and thickness are asked for (cancelled: no sheet)."""
         if not self.ctrl.has_sheet:
             return self.add_first()
-        with self.ctrl.edit("Add sheet", geometry=False):
-            s = self.ctrl.project.add_sheet()
+        cur = self.ctrl.sheet
+        with self.ctrl.edit("Add sheet", geometry=False):         # (on an isolated group: a sheet of the group)
+            s = self.ctrl.project.add_sheet(like=cur if cur is not None and cur.isolated and cur.group else None)
         self.ctrl.set_sheet(s.id)
         return True
 
@@ -641,8 +822,12 @@ class ToolpathsPanel(DocPanel):
         heads: dict[str, QTreeWidgetItem] = {}
         times: dict[str, float] = {}
         from ..cam.job import shown_on
+        from ..core.scope import scope_of, toolpath_in_scope
         only_here = getattr(self.ctrl.settings, "toolpaths_of_sheet_only", True) and self.ctrl.sheet is not None
+        side = scope_of(self.ctrl.sheet)
         for t in self.ctrl.project.toolpaths:
+            if not toolpath_in_scope(self.ctrl.project, t, side):
+                continue                      # (another side of the project: an isolated group, or the rest of it)
             if only_here and not shown_on(self.ctrl.project, t, self.ctrl.sheet):
                 continue                      # (kept to another group of sheets, or to other sheets: View ▸ Toolpaths of Every Sheet lists it)
             res = [r for r in self.ctrl.results_for(t) if r.toolpaths or r.error or r.warnings]

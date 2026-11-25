@@ -84,7 +84,7 @@ def test_the_controller_groups_sheets_and_the_dialogs_offer_them(tmp_path, monke
         assert c.set_sheet_group([c.project.sheets[0].id, c.project.sheets[1].id], "Doors") == 2
         assert c.sheet_groups() == ["Doors"] and len(c.sheets_in("Doors")) == 2
         dlg = ToolpathDialog(c, "profile", None, win, sheet_group="Doors")
-        assert dlg.group_box.currentData() == "Doors" and not dlg.all_sheets.isEnabled()
+        assert dlg.group_box.currentData() == "Doors"
         made = dlg.toolpath()
         assert made.sheet_group == "Doors" and made.sheet_ids is None
         nd = NestingDialog(c, win)

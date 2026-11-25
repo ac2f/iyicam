@@ -321,11 +321,24 @@ class Controller(CutControl, QObject):
         if sid != self.sheet_id and self.project.sheet(sid) is not None:
             self.sheet_id = sid
             self.selection = []
+            self._layer_of_side()
             self.clear_cut_preview()                    # (a preview is of the sheet it was made for)
             self.set_focus_cut(None)
             self.sheet_changed.emit()
             self.selection_changed.emit()
             self.changed.emit()
+
+    def _layer_of_side(self) -> None:
+        """The current layer is one that is there on the sheet open (another side of the project has layers of its own:
+        core.scope): the layer of the same name there, else its first one."""
+        sh = self.sheet
+        l = self.project.layer(self.layer_id) if self.layer_id else None
+        if sh is None or (l is not None and l.applies(sh)):
+            return
+        here = self.project.layers_for(sh)
+        same = next((x for x in here if l is not None and x.name == l.name), None)
+        if same or here:
+            self.layer_id = (same or here[0]).id
 
     def set_layer(self, lid: str) -> None:
         self.layer_id = lid
@@ -591,14 +604,52 @@ class Controller(CutControl, QObject):
         todo = [s for s in self.project.sheets if s.id in ids and s.group != name]
         if not todo:
             return 0
+        from ..core.scope import set_group
         with self.edit("Group sheets" if name else "Ungroup sheets", geometry=False):
-            for s in todo:
-                s.group = name
+            set_group(self.project, [s.id for s in todo], name)
         self.refresh_stale()
         self.toolpaths_changed.emit()
         self.sheet_changed.emit()
         self.calc_if_auto()
         return len(todo)
+
+    def rename_sheet_group(self, old: str, new: str) -> None:
+        """A group's new name, on its sheets and on the layers and toolpaths that are its."""
+        from ..core.scope import rename_group
+        new = (new or "").strip()
+        if not new or new == old:
+            return
+        with self.edit("Rename group", geometry=False):
+            rename_group(self.project, old, new)
+        self.toolpaths_changed.emit()
+        self.sheet_changed.emit()
+
+    def isolate(self, ids) -> str:
+        """Isolate the sheets (their group, or a new group of them): see core.scope.  The name of the group."""
+        from ..core.scope import isolate
+        with self.edit("Isolate", geometry=False):
+            name = isolate(self.project, ids)
+        self._after_isolation()
+        return name
+
+    def unisolate(self, group: str) -> None:
+        from ..core.scope import unisolate
+        with self.edit("End isolation", geometry=False):
+            unisolate(self.project, group)
+        self._after_isolation()
+
+    def _after_isolation(self) -> None:
+        self.dirty = True
+        if self.layer_id is not None and self.sheet is not None:
+            l = self.project.layer(self.layer_id)
+            if l is None or not l.applies(self.sheet):       # (the current layer is one of the sheet's side)
+                here = self.project.layers_for(self.sheet)
+                self.layer_id = here[0].id if here else self.layer_id
+        self.refresh_stale()
+        self.toolpaths_changed.emit()
+        self.sheet_changed.emit()
+        self.changed.emit()
+        self.calc_if_auto()
 
     def arrange_sheets(self, order: list[str], groups: dict[str, str]) -> bool:
         """The sheets in a new order (``order``: their ids) and their groups (``groups``: id -> group, "" for none), as the
@@ -609,11 +660,15 @@ class Controller(CutControl, QObject):
             all(sh[i].group == (groups.get(i, sh[i].group) or "") for i in sh)
         if same:
             return False
+        from ..core.scope import set_group
         with self.edit("Arrange sheets", geometry=False):
             self.project.sheets = new
+            by_group: dict[str, list[str]] = {}
             for i, g in groups.items():
                 if i in sh:
-                    sh[i].group = (g or "").strip()
+                    by_group.setdefault((g or "").strip(), []).append(i)
+            for g, ids in by_group.items():                  # (into an isolated group: isolated with it; out: not)
+                set_group(self.project, ids, g)
         self.refresh_stale()
         self.toolpaths_changed.emit()
         self.sheet_changed.emit()

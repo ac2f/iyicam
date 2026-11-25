@@ -377,3 +377,10 @@ table.kv td, table.kv th { padding: 3px 8px; text-align: left; border-bottom: 1p
 .cutorder .cutbar { border-color: #d6338a; }
 .siminfo { min-height: 36px; font-variant-numeric: tabular-nums; }
 .simulation input[type="range"] { width: 100%; padding: 0; }
+/* groups of sheets and layers: dragged onto each other; an isolated group is marked */
+.panel.sheets .trow.drop, .panel.sheets .tg-head.drop, .panel.layers tr.drop, .panel .listbox.drop { outline: 2px dashed var(--accent); outline-offset: -2px; }
+.panel.sheets .tg-head.isolated b { color: var(--accent); }
+.panel.layers tr.lgroup td { font-weight: 600; cursor: pointer; }
+.panel.layers tr.lgroup .tri { display: inline-block; width: 1em; }
+.tb.iso { font-size: 14px; line-height: 1; }
+.vectab .row.note.scope { color: var(--muted, #666); font-size: 12px; }

@@ -1004,7 +1004,7 @@ class ToolpathDialog(RemembersSize, QDialog):
         vec_tab = QWidget()
         vl = QVBoxLayout(vec_tab)
         self.rb_sel = QRadioButton()
-        self.rb_layers = QRadioButton("Vectors on these layers (on every sheet):")
+        self.rb_layers = QRadioButton("Vectors on these layers (on every sheet it is calculated on):")
         grp = QButtonGroup(self)
         grp.addButton(self.rb_sel)
         grp.addButton(self.rb_layers)
@@ -1012,7 +1012,13 @@ class ToolpathDialog(RemembersSize, QDialog):
         vl.addWidget(self.rb_layers)
         self.layer_list = QListWidget()
         sel = self.tdef.selection if self.tdef else None
+        from ..core.scope import layer_in_scope, new_item_scope as _scope
+        side = self.tdef.sheet_group if self.tdef is not None else (sheet_group or _scope(ctrl.sheet))
+        if side and not any(x.group == side and x.isolated for x in ctrl.project.sheets):
+            side = ""                                      # (a group that is not isolated: the layers of the rest)
         for l in ctrl.project.layers:
+            if not layer_in_scope(ctrl.project, l, side) and not (sel is not None and l.id in sel.layer_ids):
+                continue                                   # (the layers of another isolated group are not offered)
             it = QListWidgetItem(l.name)
             it.setData(Qt.UserRole, l.id)
             it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
@@ -1020,23 +1026,32 @@ class ToolpathDialog(RemembersSize, QDialog):
             it.setCheckState(Qt.Checked if checked else Qt.Unchecked)
             self.layer_list.addItem(it)
         vl.addWidget(self.layer_list)
+        # where it is calculated: on the side of the project it is made on (core.scope): the sheets of the isolated group
+        # open, else every sheet that is not isolated; a toolpath kept to some sheets (made before) stays on them
+        from ..core.scope import new_item_scope
         self.all_sheets = QCheckBox("Calculate on every sheet")
-        self.all_sheets.setChecked(self.tdef is None and mem.get("all_sheets", True) is not False
-                                   or self.tdef is not None and self.tdef.sheet_ids is None)
-        vl.addWidget(self.all_sheets)
+        self.all_sheets.setChecked(self.tdef is None or self.tdef.sheet_ids is None)
+        self.all_sheets.hide()
+        scope = self.tdef.sheet_group if self.tdef is not None else (sheet_group or new_item_scope(ctrl.sheet))
         self.group_box = QComboBox()
         self.group_box.addItem("(not by group)", "")
-        for g in ctrl.sheet_groups():
-            self.group_box.addItem(f"Only on the sheets of the group: {g}", g)
-        want = sheet_group or (self.tdef.sheet_group if self.tdef else "")
-        if want and self.group_box.findData(want) < 0:
-            self.group_box.addItem(f"Only on the sheets of the group: {want}", want)
-        self.group_box.setCurrentIndex(max(0, self.group_box.findData(want)))
-        self.group_box.setToolTip("The toolpath is calculated on the sheets of one group of sheets only (and on those that are "
-                                  "put in the group later)")
-        self.group_box.currentIndexChanged.connect(lambda *_: self.all_sheets.setEnabled(not self.group_box.currentData()))
-        self.all_sheets.setEnabled(not self.group_box.currentData())
-        vl.addWidget(self.group_box)
+        if scope:
+            self.group_box.addItem(f"The isolated group: {scope}", scope)
+        self.group_box.setCurrentIndex(max(0, self.group_box.findData(scope)))
+        self.group_box.hide()
+        if scope:
+            where = (f"▣ Isolated group <b>{scope}</b>: this toolpath is the group's, calculated on its sheets only"
+                     if self.tdef is None or ctrl.project.sheets and any(x.group == scope and x.isolated for x in ctrl.project.sheets)
+                     else f"Calculated on the sheets of the group <b>{scope}</b>")
+        elif self.tdef is not None and self.tdef.sheet_ids is not None:
+            n = len(self.tdef.sheet_ids)
+            where = f"Calculated on {n} sheet{'s' if n != 1 else ''} it was kept to"
+        else:
+            where = "Calculated on every sheet that is not isolated (isolate a sheet or a group in the Sheets panel to " \
+                    "give it toolpaths of its own)"
+        self.scope_label = QLabel(where)
+        self.scope_label.setWordWrap(True)
+        vl.addWidget(self.scope_label)
         cur_ids = [o.id for o in ctrl.selected_objects()]
         if self.tdef and self.tdef.selection.mode == "vectors" and not cur_ids:
             cur_ids = list(self.tdef.selection.vector_ids)
@@ -1270,12 +1285,7 @@ class ToolpathDialog(RemembersSize, QDialog):
                 self.safe_z.setValue(u.to_display(t.safe_z))
             if t.clearance is not None:
                 self.clearance.setValue(u.to_display(t.clearance))
-        if "sheet_group" in flds:
-            i = self.group_box.findData(t.sheet_group)
-            if i < 0 and t.sheet_group:
-                self.group_box.addItem(f"Only on the sheets of the group: {t.sheet_group}", t.sheet_group)
-                i = self.group_box.count() - 1
-            self.group_box.setCurrentIndex(max(0, i))
+        # (the group of sheets of a preset is not taken: a toolpath stays on the side of the project it is made on)
         self._sequence_extra = {k[9:]: v["value"] for k, v in flds.items() if k.startswith("sequence.") and "value" in v}
         self._sequence_extra.update({k: v for k, v in t.sequence.items() if f"sequence.{k}" in flds})
         if "group" in flds:
@@ -1656,9 +1666,44 @@ class RotationRuleEdit(QWidget):
         return {"mode": self.mode.currentData(), "value": self.value.value()}
 
 
+class NewSheetsGroupDialog(QDialog):
+    """After a nesting: the group the new sheets go into (the group of the sheet it started on first), a new group, or none."""
+
+    def __init__(self, n: int, current: str, groups: list[str], parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("New sheets")
+        form = QFormLayout(self)
+        form.addRow(QLabel(f"The nesting made {n} new sheet{'s' if n != 1 else ''}. Put {'them' if n != 1 else 'it'} in a group?"))
+        self.box = QComboBox()
+        if current:
+            self.box.addItem(f"The group of this sheet: {current}", ("group", current))
+        for g in groups:
+            if g != current:
+                self.box.addItem(f"The group {g}", ("group", g))
+        self.box.addItem("A new group...", ("new", ""))
+        self.box.addItem("No group", ("none", ""))
+        self.name = QLineEdit()
+        self.name.setPlaceholderText("Name of the new group")
+        self.box.currentIndexChanged.connect(lambda *_: self.name.setEnabled(self.box.currentData()[0] == "new"))
+        self.name.setEnabled(self.box.currentData()[0] == "new")
+        form.addRow("Group", self.box)
+        form.addRow("New group", self.name)
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        form.addRow(bb)
+
+    def choice(self) -> str:
+        kind, name = self.box.currentData()
+        if kind == "new":
+            return self.name.text().strip() or "Nested"
+        return name if kind == "group" else ""
+
+
 class NestingDialog(RemembersSize, QDialog):
     def __init__(self, ctrl, parent=None):
         super().__init__(parent)
+        from ..core.scope import groups_of_scope, scope_of
         from ..nesting.parts import group_parts
         self.ctrl = ctrl
         self.setWindowTitle("Nesting")
@@ -1691,7 +1736,7 @@ class NestingDialog(RemembersSize, QDialog):
                   choices=[("current", "Current sheet first (around what stays on it), then the stock"),
                            ("all", "All sheets first (around what stays on them), then the stock")]
                   + [(f"group:{g}", f"The sheets of the group '{g}' first (around what stays on them), then the stock")
-                     for g in ctrl.sheet_groups()] + [("new", "The stock and new sheets only")],
+                     for g in groups_of_scope(ctrl.project, scope_of(ctrl.sheet))] + [("new", "The stock and new sheets only")],
                   group="Sheets"),
             Param("new_sheets", "Use reserve (new) sheets when the plates are full", "bool", True, group="Sheets"),
             Param("use_up", "Take the plates used out of the stock", "bool", True, group="Sheets",
@@ -2002,6 +2047,7 @@ class NestingDialog(RemembersSize, QDialog):
 
     def run(self):
         """Nest; the outcome, or ``None`` when cancelled (nothing is changed then)."""
+        from ..core.scope import sheets_with
         v = self.form.values()
         squeezing = v["squeeze"] != "off"
         gravity, only = DIRECTIONS.get(v["direction"], DIRECTIONS[DEFAULT_DIRECTION])
@@ -2034,7 +2080,7 @@ class NestingDialog(RemembersSize, QDialog):
         table = self.stock_table
         stock = [table.item(r) for r in range(len(table.items)) if table.used(r)]
         target = v["target"]
-        use_sheets = ([ctrl.sheet] if target == "current" else list(ctrl.project.sheets) if target == "all"
+        use_sheets = ([ctrl.sheet] if target == "current" else sheets_with(ctrl.project, ctrl.sheet) if target == "all"
                       else ctrl.sheets_in(target[6:]) if target.startswith("group:") else [])
         # the rules are kept with the project, and stay when the nesting is undone
         ctrl.project.metadata["nesting"] = {"part_rules": part_rules, "layer_rules": layer_rules,
@@ -2114,9 +2160,12 @@ class ExportDialog(RemembersSize, QDialog):
         edit_post.clicked.connect(self._edit_post)
         post_row.addWidget(edit_post)
         form.addRow("Post-processor", post_row)
+        from ..core.scope import scope_of
+        side = scope_of(ctrl.sheet)
         self.sheets = QComboBox()
         self.sheets.addItem("Current sheet", "current")
-        self.sheets.addItem("All sheets (one file per sheet)", "all")
+        self.sheets.addItem(f"All sheets of the isolated group {side} (one file per sheet)" if side else
+                            "All sheets (one file per sheet; isolated groups are saved from their own sheets)", "all")
         self.sheets.currentIndexChanged.connect(lambda *_: self._name_changed())
         form.addRow("Sheets", self.sheets)
         self.per_toolpath = QCheckBox("One file per toolpath (all in the folder)")
@@ -2181,7 +2230,10 @@ class ExportDialog(RemembersSize, QDialog):
         self.list = QListWidget()
         self.list.setDragDropMode(QListWidget.InternalMove)          # (drag a toolpath to where it is to be cut)
         self.list.setDefaultDropAction(Qt.MoveAction)
+        from ..core.scope import toolpath_in_scope
         for t in ctrl.project.toolpaths:
+            if not toolpath_in_scope(ctrl.project, t, side):
+                continue                                     # (another side of the project: not saved from here)
             it = QListWidgetItem(f"{t.name}  —  T{t.tool.number} {t.tool.label}" + (f"   [{t.group}]" if t.group else ""))
             it.setData(Qt.UserRole, t.id)
             it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
@@ -2514,12 +2566,17 @@ class ExportDialog(RemembersSize, QDialog):
             return int(r["groups"].get(sheet.group, r.get("project", 1)))
         return self.revision.value()
 
+    def side_sheets(self) -> list:
+        """"All sheets": those of the side of the project the open sheet is on (core.scope)."""
+        from ..core.scope import sheets_with
+        return sheets_with(self.ctrl.project, self.ctrl.sheet)
+
     def name_values(self, index: int, sheet, tps) -> dict:
         """The value of every variable of the file name (and of the folder inside) for a file holding ``tps`` (every one of
         them counts: names, tools and depths joined with +)."""
         from ..post import naming
         project = self.ctrl.project
-        sheets = project.sheets if self.sheets.currentData() != "current" else [sheet]
+        sheets = self.side_sheets() if self.sheets.currentData() != "current" else [sheet]
         group = self.group or next(iter({t.group for t in project.toolpaths if t.id in self.chosen() and t.group}), "")
         return naming.values_for(project, sheet, index, len(sheets), self.current_post().name, group, tps,
                                  revision=self._revision_for(sheet), segment=self.segment.text() or naming.DEFAULT_SEGMENT,
@@ -2528,7 +2585,7 @@ class ExportDialog(RemembersSize, QDialog):
     def file_stem(self, index: int, sheet, tps) -> str | None:
         """The name of a file of one sheet holding ``tps`` by the prefixes."""
         from ..post import naming
-        sheets = self.ctrl.project.sheets if self.sheets.currentData() != "current" else [sheet]
+        sheets = self.side_sheets() if self.sheets.currentData() != "current" else [sheet]
         parts, sep = naming.check(self.name_parts(), self.name_sep.text() or naming.DEFAULT_SEP)
         name = naming.render(parts, self.name_values(index, sheet, tps), sep)
         many = len(sheets) > 1
@@ -2545,7 +2602,7 @@ class ExportDialog(RemembersSize, QDialog):
             return
         post = self.current_post()
         names = []
-        sheets = [self.ctrl.sheet] if self.sheets.currentData() == "current" else self.ctrl.project.sheets
+        sheets = [self.ctrl.sheet] if self.sheets.currentData() == "current" else self.side_sheets()
         from ..post.export import tool_groups
         for i, sh in enumerate(sheets, 1):
             tps = self.toolpaths(sh)
@@ -2688,7 +2745,7 @@ class ExportDialog(RemembersSize, QDialog):
         from ..post import naming
         post = self.current_post()
         ctrl = self.ctrl
-        sheets = [ctrl.sheet] if self.sheets.currentData() == "current" else ctrl.project.sheets
+        sheets = [ctrl.sheet] if self.sheets.currentData() == "current" else self.side_sheets()
         try:
             naming.check(self.name_parts(), self.name_sep.text() or naming.DEFAULT_SEP)
         except naming.NamingError as exc:

@@ -9,6 +9,7 @@ import { run, report } from "../engine.js";
 import { ToolEditor, toolDatabase, describeTool } from "./tools.js";
 import { materialSetup } from "./misc.js";
 import { icon } from "../icons.js";
+import { scopeOf, isIsolated } from "../scope.js";
 
 const VARIABLES = [["tool_name", "Name of the tool"], ["tool_number", "Number of the tool"], ["tool_diameter", "Diameter of the tool"], ["feed_rate", "Feed rate (mm/min)"],
   ["plunge_rate", "Plunge rate (mm/min)"], ["spindle_speed", "Spindle speed (rpm)"], ["stepdown", "Stepdown"], ["cut_depth", "Cut depth"], ["allowance", "Allowance"],
@@ -75,15 +76,17 @@ export async function toolpathDialog(doc, opId, existing, opts = {}) {
   let vectorIds = doc.selection.length ? doc.selection.slice() : (existing && sel && sel.mode === "vectors" ? sel.vectors.slice() : []);
   const rbSel = h("input", { type: "radio", name: "vsel" }), rbLayers = h("input", { type: "radio", name: "vsel" });
   const selText = h("span");
-  const layerChecks = proj.layers.map(l => ({ l, el: h("input", { type: "checkbox", checked: !!(sel && sel.layers && sel.layers.includes(l.id)) }) }));
-  const allSheets = h("input", { type: "checkbox", checked: existing ? existing.sheets == null : mem.all_sheets !== false });
-  const groups = [...new Set(proj.sheets.map(s => s.group).filter(Boolean))];
-  const want = existing ? existing.sheet_group || "" : "";
-  if (want && !groups.includes(want)) groups.push(want);
-  const groupSel = h("select", null, h("option", { value: "" }, "(not by group)"), groups.map(g => h("option", { value: g }, `Only on the sheets of the group: ${g}`)));
-  groupSel.value = want;
-  groupSel.addEventListener("change", () => { allSheets.disabled = !!groupSel.value; });
-  allSheets.disabled = !!groupSel.value;
+  // where it is calculated: on the side of the project it is made on (scope.js): the isolated group open, else every sheet
+  // that is not isolated; a toolpath kept to some sheets (made before) stays on them
+  const side = existing ? existing.sheet_group || "" : scopeOf(doc.sheet);
+  const sideIsolated = side && isIsolated(proj, side);
+  const layerChecks = proj.layers.filter(l => (sideIsolated ? l.sheet_group === side : !isIsolated(proj, l.sheet_group || "")) || (sel && sel.layers && sel.layers.includes(l.id)))
+    .map(l => ({ l, el: h("input", { type: "checkbox", checked: !!(sel && sel.layers && sel.layers.includes(l.id)) }) }));
+  const allSheets = h("input", { type: "checkbox", checked: existing ? existing.sheets == null : true });
+  const groupSel = { value: side };
+  const where = side ? (sideIsolated ? `🔒 Isolated group ${side}: this toolpath is the group's, calculated on its sheets only` : `Calculated on the sheets of the group ${side}`)
+    : existing && existing.sheets ? `Calculated on the ${existing.sheets.length} sheet(s) it was kept to`
+    : "Calculated on every sheet that is not isolated (isolate a sheet or a group in the Sheets panel to give it toolpaths of its own)";
   const follow = h("input", { type: "checkbox", checked: !existing });
   const setSelText = () => fill(selText, `Selected vectors (${vectorIds.length})`);
   setSelText();
@@ -96,10 +99,9 @@ export async function toolpathDialog(doc, opId, existing, opts = {}) {
   });
   const vecTab = h("div", { class: "vectab" },
     h("label", { class: "row check" }, rbSel, selText),
-    h("label", { class: "row check" }, rbLayers, h("span", null, "Vectors on these layers (on every sheet):")),
+    h("label", { class: "row check" }, rbLayers, h("span", null, "Vectors on these layers (on every sheet it is calculated on):")),
     h("div", { class: "checklist" }, layerChecks.map(c => h("label", { class: "row check" }, c.el, h("span", { class: "sw", style: { background: c.l.color } }), h("span", null, c.l.name)))),
-    h("label", { class: "row check" }, allSheets, h("span", null, "Calculate on every sheet")),
-    h("div", { class: "row" }, groupSel),
+    h("div", { class: "row note scope" }, where),
     h("label", { class: "row check" }, follow, h("span", null, "Follow the selection on the drawing while this window is open")));
   // -- presets
   const presetSel = h("select", { class: "grow", style: { minWidth: "110px" } });
@@ -132,7 +134,7 @@ export async function toolpathDialog(doc, opId, existing, opts = {}) {
       const t = r.toolpath;
       name.value = t.name; form.set(t.params); tool = t.tool; editor.set(tool); showToolLabel();
       ownBox.checked = t.safe_z != null || t.clearance != null; heights.set({ safe_z: t.safe_z ?? mat.safe_z, clearance: t.clearance ?? mat.clearance }); syncHeights();
-      if (t.sheet_group !== undefined) groupSel.value = t.sheet_group || "";
+      // (the group of sheets of a preset is not taken: a toolpath stays on the side of the project it is made on)
       if (r.notes && r.notes.length) alertBox(r.notes.join("\n"), "Preset");
     } catch (e) { report(e, "Preset"); }
   };

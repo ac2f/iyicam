@@ -37,9 +37,13 @@ class Layer:
     id: str = field(default_factory=new_id)
     sheet_ids: list[str] | None = None   # the layer exists on these sheets only (None: on every sheet) ...
     sheet_group: str = ""                # ... and on the sheets of this group (either one makes it appear)
+    group: str = ""                      # the folder the layer is in, in the list of layers ("" = none)
 
     def applies(self, sheet: "Sheet") -> bool:
-        """Whether the layer is there on ``sheet``: a layer of one sheet or of one group of sheets is not shown on the others."""
+        """Whether the layer is there on ``sheet``: a layer of one sheet or of one group of sheets is not shown on the others,
+        and on an isolated group of sheets only its own layers are (core.scope)."""
+        if getattr(sheet, "isolated", False) and sheet.group:
+            return self.sheet_group == sheet.group or (self.sheet_ids is not None and sheet.id in self.sheet_ids)
         if self.sheet_ids is None and not self.sheet_group:
             return True
         return (self.sheet_ids is not None and sheet.id in self.sheet_ids) or (bool(self.sheet_group) and sheet.group == self.sheet_group)
@@ -117,6 +121,8 @@ class Sheet:
     # (a leftover); the sheet size is then the bounding box of the outline
     outline: list[list[Pt]] | None = None
     group: str = ""     # the sheets of one group are nested onto together and can have toolpaths of their own ("" = none)
+    isolated: bool = False   # the group of the sheet is isolated: its layers, toolpaths, nesting and G-code are its own
+                             # and nothing of the rest of the project is on it (core.scope); every sheet of the group says so
 
     def region(self) -> list[list[Pt]]:
         """Outlines of the material: the outline of a leftover, else the rectangle."""
@@ -245,6 +251,8 @@ class Project:
                   height if height is not None else (ref.height if ref else 400.0),
                   thickness=float(thickness) if thickness is not None else
                   (self.sheet_thickness(ref) if ref is not None else self.material.thickness))
+        if like is not None and like.isolated and like.group:   # (a sheet made from one of an isolated group is in it)
+            s.group, s.isolated = like.group, True
         self.sheets.append(s)
         return s
 
@@ -443,11 +451,13 @@ def project_to_dict(p: Project) -> dict:
                      **({"corner_mode": m.corner_mode} if m.corner_mode else {})},
         "layers": [{"id": l.id, "name": l.name, "color": l.color, "visible": l.visible,
                     "locked": l.locked, **({"sheets": list(l.sheet_ids)} if l.sheet_ids is not None else {}),
-                    **({"sheet_group": l.sheet_group} if l.sheet_group else {})} for l in p.layers],
+                    **({"sheet_group": l.sheet_group} if l.sheet_group else {}),
+                    **({"group": l.group} if l.group else {})} for l in p.layers],
         "sheets": [{"id": s.id, "name": s.name, "width": s.width, "height": s.height,
                     "thickness": s.thickness, "vectors": [vector_to_dict(v) for v in s.vectors],
                     "outline": [[[x, y] for x, y in poly] for poly in s.outline] if s.outline else None,
-                    **({"group": s.group} if s.group else {})}
+                    **({"group": s.group} if s.group else {}),
+                    **({"isolated": True} if s.isolated and s.group else {})}
                    for s in p.sheets],
         "stock": [it.to_dict() for it in p.stock],
         "toolpaths": [toolpath_to_dict(t) for t in p.toolpaths],
@@ -471,12 +481,14 @@ def project_from_dict(d: dict) -> Project:
         corner_mode=m.get("corner_mode") if m.get("corner_mode") in ("blend", "exact") else "")
     p.layers = [Layer(l["name"], l.get("color", "#1f77b4"), l.get("visible", True), l.get("locked", False),
                       l["id"], [str(x) for x in l["sheets"]] if isinstance(l.get("sheets"), list) else None,
-                      l["sheet_group"].strip() if isinstance(l.get("sheet_group"), str) else "")
+                      l["sheet_group"].strip() if isinstance(l.get("sheet_group"), str) else "",
+                      l["group"].strip() if isinstance(l.get("group"), str) else "")
                 for l in d.get("layers", [])] or p.layers
     p.sheets = [Sheet(s["name"], s.get("width", 600.0), s.get("height", 400.0),
                       [vector_from_dict(v) for v in s.get("vectors", [])], s.get("thickness"), s["id"],
                       [[(float(x), float(y)) for x, y in poly] for poly in s["outline"]] if s.get("outline") else None,
-                      s["group"].strip() if isinstance(s.get("group"), str) else "")
+                      s["group"].strip() if isinstance(s.get("group"), str) else "",
+                      bool(s.get("isolated")) and bool(isinstance(s.get("group"), str) and s["group"].strip()))
                 for s in d.get("sheets", [])] if isinstance(d.get("sheets"), list) else p.sheets
     for s in p.sheets:                     # (a sheet kept without a thickness of its own had the project's: it is its own now)
         if s.thickness is None:
