@@ -9,7 +9,8 @@ for await (const line of rl) {
   let out;
   try {
     const { fn, args } = JSON.parse(line);
-    out = { ok: G[fn](...args) };
+    // (hit and hitAll take the polylines of a vector as a function: the harness passes G.flatOf)
+    out = { ok: fn === "hit" || fn === "hitAll" ? G[fn](args[0], G.flatOf, ...args.slice(1)) : G[fn](...args) };
   } catch (e) {
     out = { error: String(e && e.stack || e) };
   }

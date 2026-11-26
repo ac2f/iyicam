@@ -98,24 +98,28 @@ const G = {};
   /** the nearest point of a contour to (x, y): {i (segment), u (0 to 1 along it), d, pt} */
   G.nearest = (c, x, y) => {
     let best = null, p0 = c.start;
+    const far = (s, u) => { const q = evalSeg(p0, s, u); return hyp(q[0] - x, q[1] - y); };
     c.segs.forEach((s, i) => {
-      let lo = 0, hi = 1, bu = 0, bd = Infinity;
-      const N = s[0] === "L" ? 1 : 48;
-      for (let k = 0; k <= N; k++) {
-        const q = evalSeg(p0, s, k / N), d = hyp(q[0] - x, q[1] - y);
-        if (d < bd) { bd = d; bu = k / N; }
-      }
+      let bu = 0, bd = Infinity;
       if (s[0] === "L") {
         const dx = s[1] - p0[0], dy = s[2] - p0[1], l2 = dx * dx + dy * dy;
         bu = l2 < 1e-18 ? 0 : clampN(((x - p0[0]) * dx + (y - p0[1]) * dy) / l2, 0, 1);
       } else {
-        lo = Math.max(0, bu - 1 / N); hi = Math.min(1, bu + 1 / N);
-        for (let k = 0; k < 24; k++) {               // (a ternary search between the two neighbours of the best sample)
-          const m1 = lo + (hi - lo) / 3, m2 = hi - (hi - lo) / 3;
-          const d1 = hyp(...sub(evalSeg(p0, s, m1), [x, y])), d2 = hyp(...sub(evalSeg(p0, s, m2), [x, y]));
-          if (d1 < d2) hi = m2; else lo = m1;
+        // every valley of the distance among 48 samples searched down (a curve may come near the point in two places:
+        // the deeper valley is not always the one around the nearest sample); the engine does the same
+        const N = 48, ds = [];
+        for (let k = 0; k <= N; k++) ds.push(far(s, k / N));
+        for (let k = 0; k <= N; k++) if (ds[k] < bd) { bd = ds[k]; bu = k / N; }
+        for (let k = 0; k <= N; k++) {
+          if ((k > 0 && ds[k - 1] < ds[k]) || (k < N && ds[k + 1] < ds[k])) continue;
+          let lo = Math.max(0, (k - 1) / N), hi = Math.min(1, (k + 1) / N);
+          for (let j = 0; j < 40; j++) {
+            const m1 = lo + (hi - lo) / 3, m2 = hi - (hi - lo) / 3;
+            if (far(s, m1) < far(s, m2)) hi = m2; else lo = m1;
+          }
+          const m = (lo + hi) / 2, dm = far(s, m);
+          if (dm < bd) { bd = dm; bu = m; }
         }
-        bu = (lo + hi) / 2;
       }
       const q = evalSeg(p0, s, bu), d = hyp(q[0] - x, q[1] - y);
       if (!best || d < best.d) best = { i, u: bu, d, pt: q };
@@ -302,21 +306,25 @@ const G = {};
     if (x0 > x1) return false;
     if (!crossing) return x0 >= r.x0 && x1 <= r.x1 && y0 >= r.y0 && y1 <= r.y1;
     if (x1 < r.x0 || x0 > r.x1 || y1 < r.y0 || y0 > r.y1) return false;
-    for (const c of flat) {                                   // (a point inside, or a piece that crosses an edge)
-      const p = c.pts;
-      for (let i = 0; i < p.length; i++) if (p[i][0] >= r.x0 && p[i][0] <= r.x1 && p[i][1] >= r.y0 && p[i][1] <= r.y1) return true;
-      const edges = [[r.x0, r.y0, r.x1, r.y0], [r.x1, r.y0, r.x1, r.y1], [r.x1, r.y1, r.x0, r.y1], [r.x0, r.y1, r.x0, r.y0]];
-      const n = c.closed ? p.length : p.length - 1;
-      for (let i = 0; i < n; i++) {
-        const a = p[i], b = p[(i + 1) % p.length];
-        for (const e of edges) if (cross(a, b, [e[0], e[1]], [e[2], e[3]])) return true;
-      }
+    for (const c of flat) {                                   // (a piece of the line that touches the rectangle)
+      const p = c.pts, n = c.closed ? p.length : p.length - 1;
+      if (p.length === 1 && touches(p[0], p[0], r)) return true;
+      for (let i = 0; i < n; i++) if (touches(p[i], p[(i + 1) % p.length], r)) return true;
     }
     return false;
   };
-  const cross = (a, b, c, d) => {
-    const o = (p, q, r) => (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]);
-    return o(a, b, c) * o(a, b, d) < 0 && o(c, d, a) * o(c, d, b) < 0;
+  /** whether the segment a-b has a point in the rectangle, its edges included (the segment clipped to it, Liang-Barsky:
+   *  a line through two corners, or along an edge, touches it too) */
+  const touches = (a, b, r) => {
+    let t0 = 0, t1 = 1;
+    const dx = b[0] - a[0], dy = b[1] - a[1];
+    for (const [q, w] of [[-dx, a[0] - r.x0], [dx, r.x1 - a[0]], [-dy, a[1] - r.y0], [dy, r.y1 - a[1]]]) {
+      if (q === 0) { if (w < 0) return false; continue; }
+      const t = w / q;
+      if (q < 0) { if (t > t1) return false; if (t > t0) t0 = t; }
+      else { if (t < t0) return false; if (t < t1) t1 = t; }
+    }
+    return t0 <= t1;
   };
 
   // ------------------------------------------------------------------------------------ shapes

@@ -733,22 +733,28 @@ class Bezier(Segment):
         return [Bezier(T.apply(self.a), T.apply(self.c1), T.apply(self.c2), T.apply(self.b))]
 
     def nearest_t(self, p: Pt) -> float:
-        n = 24
-        best_t, best_d = 0.0, math.inf
+        """The t of the nearest point: every valley of the distance among 48 samples searched down (a curve may come near
+        the point in two places; the deeper valley is not always the one around the nearest sample)."""
+        n = 48
+        ds = [dist(p, self.point_at(i / n)) for i in range(n + 1)]
+        best_t = min(range(n + 1), key=ds.__getitem__) / n
+        best_d = ds[round(best_t * n)]
         for i in range(n + 1):
-            t = i / n
-            d = dist(p, self.point_at(t))
+            if (i > 0 and ds[i - 1] < ds[i]) or (i < n and ds[i + 1] < ds[i]):
+                continue                                   # (not a valley)
+            lo, hi = max(0.0, (i - 1) / n), min(1.0, (i + 1) / n)
+            for _ in range(40):
+                m1 = lo + (hi - lo) / 3
+                m2 = hi - (hi - lo) / 3
+                if dist(p, self.point_at(m1)) < dist(p, self.point_at(m2)):
+                    hi = m2
+                else:
+                    lo = m1
+            m = (lo + hi) / 2
+            d = dist(p, self.point_at(m))
             if d < best_d:
-                best_t, best_d = t, d
-        lo, hi = max(0.0, best_t - 1.0 / n), min(1.0, best_t + 1.0 / n)
-        for _ in range(30):
-            m1 = lo + (hi - lo) / 3
-            m2 = hi - (hi - lo) / 3
-            if dist(p, self.point_at(m1)) < dist(p, self.point_at(m2)):
-                hi = m2
-            else:
-                lo = m1
-        return (lo + hi) / 2
+                best_t, best_d = m, d
+        return best_t
 
     def with_ends(self, a: Pt, b: Pt) -> "Bezier":
         da, db = sub(a, self.a), sub(b, self.b)
