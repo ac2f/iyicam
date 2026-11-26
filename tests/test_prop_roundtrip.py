@@ -44,7 +44,7 @@ def moved_on_sheet(c):
 
 @SET
 @given(st.lists(st.lists(contour().map(moved_on_sheet), min_size=1, max_size=2), min_size=1, max_size=4),
-       st.sampled_from(sorted(dxf.DXF_VERSIONS)))
+       st.sampled_from([v[0] for v in dxf.DXF_VERSIONS]))
 def test_a_dxf_reads_back_as_it_was_written(tmp_path_factory, objs, version):
     p, s, made = make_project(objs, size=(2000, 2000))
     cut = p.add_layer("Cut", "#ff0000")

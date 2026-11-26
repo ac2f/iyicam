@@ -154,10 +154,14 @@ def contour_path_data(c: Contour, height: float) -> str:
         if isinstance(s, Line):
             out.append(f"L{p(s.b)}")
         elif isinstance(s, Arc):
+            # in pieces of a quarter turn at most: the centre of an arc of half a turn or more is found again from its
+            # rounded radius and ends only roughly (0.03 mm off at 4 decimals); a quarter arc's is found to the micron
             r = s.radius
-            large = 1 if abs(s.sweep) > math.pi else 0
+            n = max(1, math.ceil(abs(s.sweep) / (math.pi / 2) - 1e-9))
             sweep = 0 if s.ccw else 1  # y is flipped in SVG
-            out.append(f"A{r:.4f},{r:.4f} 0 {large},{sweep} {p(s.b)}")
+            for k in range(1, n + 1):
+                q = s.b if k == n else s.point_at(k / n)
+                out.append(f"A{r:.4f},{r:.4f} 0 0,{sweep} {p(q)}")
         elif isinstance(s, Bezier):
             out.append(f"C{p(s.c1)} {p(s.c2)} {p(s.b)}")
     if c.closed:
