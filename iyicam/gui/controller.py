@@ -235,6 +235,9 @@ class Controller(CutControl, QObject):
         except Exception:
             self.undo_stack.rollback(self.project)
             raise
+        if self.undo_stack.unchanged(self.project):   # (nothing changed: no step that Undo would take back for nothing)
+            self.undo_stack.discard_last()
+            return
         self.dirty = True
         self._after_change(geometry)
 
@@ -483,14 +486,18 @@ class Controller(CutControl, QObject):
             raise
         result = ctx.result()
         self.last_result = result                                   # (what the command handed back: the console returns it)
+        nothing = self.undo_stack.unchanged(self.project)
+        if nothing:                                                 # (a measuring or a command that found nothing to do:
+            self.undo_stack.discard_last()                          #  no step that Undo would take back for nothing)
         # (the status bar keeps one text: every message in it, not only the last one that overwrote the others)
         said = ctx.messages + ["⚠ " + w for w in ctx.warnings]
         if said:
             self.message.emit(" · ".join(said))
-        self.dirty = True
+        if not nothing:
+            self.dirty = True
         if ctx.new_selection is not None:
             self.selection = [v.id for v in self.sheet.pick(ctx.new_selection)]
-        self._after_change(True)
+        self._after_change(not nothing)
         if result["report"] and show_report:
             self.command_result.emit((cmd, result))                 # (after the drawing is up to date: the window opens over it)
         return True

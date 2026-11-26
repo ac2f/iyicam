@@ -187,6 +187,8 @@ def isolate(project: Project, ids) -> str:
     for s in sheets:
         s.group, s.isolated = name, True
     moved = fix_layers(project, sheets)                    # (the layers come along as the group's copies)
+    if not any(l.sheet_group == name for l in project.layers) and project.layers:
+        layer_for(project, project.layers[0], sheets[0])     # (a group with nothing on it yet has a layer to draw on)
     vec_ids = {v.id for s in sheets for v in s.vectors}
     new_toolpaths = []
     for t in list(project.toolpaths):
