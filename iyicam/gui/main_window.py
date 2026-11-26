@@ -1667,6 +1667,11 @@ class MainWindow(QMainWindow):
                 if not t.selection.vector_ids:
                     QMessageBox.information(self, "Toolpath", "The vectors of this toolpath are gone: select vectors and try again.")
                     return
+            op = ctrl.registry.operations.get(t.op)
+            from . import openwarn
+            if op is not None and openwarn.needs_closed(op, t.params) and \
+                    not openwarn.ask(self, ctrl, openwarn.objects_of(ctrl, t.selection), f"this {op.label} toolpath"):
+                return
             ctrl.add_toolpath(t)
             self._report_for(ctrl, t.id)
         dlg.open_modeless(made)
@@ -1910,6 +1915,10 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Nesting", "There are no vectors to nest (vectors on locked layers "
                                                      "are not moved).")
             return
+        from . import openwarn
+        if not openwarn.ask(self, c, pool, "nesting"):     # (an open outline would be nested as a thin line)
+            return
+        pool = [o for o in (c.selected_objects() or list(c.sheet.vectors)) if c.editable(o)]   # (closed ones are new)
         extra = [o.id for g in find_duplicates(pool) for o in g[1:]]
         if extra:  # the same shape twice in the same place would be nested as two parts: it looks like a copy
             r = QMessageBox.question(

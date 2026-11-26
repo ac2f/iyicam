@@ -82,6 +82,8 @@ def test_toolpaths_panel(rwin):
     win, robot = rwin
     c, tp = win.ctrl, win.toolpaths_panel
     populate(win, select=False)
+    from iyicam.gui import openwarn
+    c.settings.remember(openwarn.MEMORY, {"off": True})     # (the drawing has open vectors: not asked about them here)
     for op in ("profile", "pocket", "engrave", "drill", "vcarve"):
         win.new_toolpath(op)
     assert len(c.project.toolpaths) == 5

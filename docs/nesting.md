@@ -172,6 +172,20 @@ its bounding box, and the convex pieces of a part are prepared once for all the 
 as before, place by place (checked), and the 543 letters of a real sign on three 156 x 305 cm sheets took 7.7 s for one
 pass instead of 26.5 s, eight attempts 17 s instead of 51 s.
 
+**Every processor.** A nesting uses all the processors of the computer (the same algorithm, its independent parts at
+once): the no-fit polygons of every pair of parts are made on all of them; the attempts that do not depend on one
+another (the plain orders: biggest first in every gravity, by side, by height ...) are laid out at once, one per
+processor, and compared as one after the other would be (the best layout is the same); the random variations of the best
+order come a round at a time, as many as there are processors; the polishing at the end runs as one search per
+processor, the first with the random numbers one processor would use, the best kept. The helpers run at a lower priority,
+so the computer stays usable. On 113 curved parts (60 kinds, gears with 120 points, L shapes, frames with holes), 30
+attempts without a time limit took 26 s on 4 processors instead of 68 s on one, with the same layout. With a *Time
+limit* the time is used as before, by that many searches at once: more is tried in the same time. A small job (a few
+seconds on one processor) is done without helpers: starting them would take longer. `IYICAM_NEST_PROCESSES` sets how
+many (0 or 1: none). The result is the same every time on the same computer; on one with another number of processors
+it may differ (as good, or better with more of them). A graphics card (GPU) would not help: the work is polygon clipping
+with whole numbers and many branches, not arithmetic on large arrays.
+
 If nesting is still slow: fewer angles (90° steps instead of 15°), fewer *Optimisation
 attempts*, fewer outline points. On the command line: `--max-points N`.
 

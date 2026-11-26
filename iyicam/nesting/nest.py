@@ -34,6 +34,7 @@ import numpy as np
 import pyclipper
 
 from ..core import clip
+from . import parallel as P
 from ..core.geom import Pt, polygon_area, simplify_polyline
 
 IntPath = list[tuple[int, int]]
@@ -706,7 +707,8 @@ def nest_processes() -> int:
             return max(0, int(raw))
         except ValueError:
             return 0
-    return max(1, min(8, (os.cpu_count() or 1) - 1))
+    # every processor: the helpers run at a lower priority (the computer stays usable) and the main process waits
+    return max(1, os.cpu_count() or 1)
 
 
 _worker_variants: dict = {}
@@ -715,16 +717,21 @@ _worker_variants: dict = {}
 def _nfp_batch(task):
     """In a helper process: the no-fit polygons of one part against a few others."""
     a, merge, (apaths, aholes), others = task
-    key = (a, merge, len(apaths), sum(len(p) for p in apaths), apaths[0][0] if apaths and apaths[0] else None)
-    VA = _worker_variants.get(key)
-    if VA is None:
-        VA = _worker_variants[key] = _Variant(apaths, aholes, merge)
-        if len(_worker_variants) > 256:
-            _worker_variants.clear()
-            _worker_variants[key] = VA
+
+    def variant(cls, rel, paths, holes):
+        # (a part's outline at an angle, split into convex pieces once per helper: it comes again in many batches; it
+        # was made again for every pair, which cost more than the no-fit polygons themselves)
+        key = (cls, rel, merge, len(paths), sum(len(p) for p in paths), tuple(paths[0][0]) if paths and paths[0] else None)
+        v = _worker_variants.get(key)
+        if v is None:
+            if len(_worker_variants) > 4096:
+                _worker_variants.clear()
+            v = _worker_variants[key] = _Variant(paths, holes, merge)
+        return v
+    VA = variant(a, 0.0, apaths, aholes)
     out = []
     for b, rel, bpaths, bholes in others:
-        out.append((b, rel, [list(map(tuple, p)) for p in nfp_of(VA, _Variant(bpaths, bholes, merge))]))
+        out.append((b, rel, [list(map(tuple, p)) for p in nfp_of(VA, variant(b, rel, bpaths, bholes))]))
     return a, out
 
 
@@ -887,18 +894,26 @@ class Nester:
                     out.append((x, y, rel))
         return out
 
-    def precompute(self, workers: int | None = None, progress: Callable[[int, int], None] | None = None) -> int:
-        """Work out the no-fit polygons of every pair of parts at once on the processors of the computer (they are what the
-        first layout spends nearly all its time on, one after the other). Only when it is worth it: a few parts are done
-        as they come. Returns how many were made; anything that goes wrong leaves the rest to the usual way."""
-        workers = nest_processes() if workers is None else workers
-        if workers < 2:
-            return 0
+    def precompute_worth(self) -> list | None:
+        """The pairs whose no-fit polygons are worth working out on the helpers at once, or None (a few parts: they are
+        done as they come)."""
         jobs = self.pair_jobs()
         if any(self._variant(a, 0.0).pieces is None or self._variant(b, r).pieces is None for a, b, r in jobs):
-            return 0
+            return None
         work = sum(len(self._variant(a, 0.0).pieces) * len(self._variant(b, r).pieces) for a, b, r in jobs)
-        if work < PARALLEL_WORK:
+        return jobs if work >= PARALLEL_WORK else None
+
+    def precompute(self, workers: int | None = None, progress: Callable[[int, int], None] | None = None,
+                   pool=None) -> int:
+        """Work out the no-fit polygons of every pair of parts at once on the processors of the computer (they are what the
+        first layout spends nearly all its time on, one after the other). Only when it is worth it: a few parts are done
+        as they come. Returns how many were made; anything that goes wrong leaves the rest to the usual way. ``pool``:
+        helper processes already started (they are used and left running), else a pool is started for this."""
+        workers = nest_processes() if workers is None else workers
+        if workers < 2 and pool is None:
+            return 0
+        jobs = self.precompute_worth()
+        if jobs is None:
             return 0
         by_first: dict[int, list] = {}
         for a, b, r in jobs:
@@ -913,10 +928,12 @@ class Nester:
         import concurrent.futures as cf
         import multiprocessing as mp
         done = 0
-        try:
-            pool = cf.ProcessPoolExecutor(max_workers=min(workers, len(tasks)), mp_context=mp.get_context("spawn"))
-        except Exception:  # noqa: BLE001  (no processes here: the usual way)
-            return 0
+        own = pool is None
+        if own:
+            try:
+                pool = cf.ProcessPoolExecutor(max_workers=min(workers, len(tasks)), mp_context=mp.get_context("spawn"))
+            except Exception:  # noqa: BLE001  (no processes here: the usual way)
+                return 0
         try:
             pending = {pool.submit(_nfp_batch, t) for t in tasks}
             while pending:
@@ -934,12 +951,15 @@ class Nester:
                             self.stats["nfp"] += 1
                             done += 1
         except NestCancelled:
-            pool.shutdown(wait=False, cancel_futures=True)
+            if own:
+                pool.shutdown(wait=False, cancel_futures=True)
             raise
         except Exception:  # noqa: BLE001  (a helper that failed: what is missing is made the usual way)
-            pool.shutdown(wait=False, cancel_futures=True)
+            if own:
+                pool.shutdown(wait=False, cancel_futures=True)
             return done
-        pool.shutdown(wait=True)
+        if own:
+            pool.shutdown(wait=True)
         return done
 
     def _room_terms(self, VA: _Variant, VB: _Variant) -> list[IntPath]:
@@ -1672,6 +1692,38 @@ class Nester:
         return kept
 
 
+
+    def search(self, best: NestResult, order, grav, gravs, rng: random.Random, deadline: float | None,
+               tries: int, share: int = 1):
+        """The best layout polished, then (until ``deadline``) its order shaken up more and more (a few parts swapped,
+        then more), laid out and polished again; kept when it is better (iterated local search). Stops at the time
+        limit, or when nothing better came for long. ``(best, order, gravity)``; ``best`` is changed in place.
+
+        ``share``: this is one of that many searches at once (on the helpers): the patience (how long nothing better may
+        come) is shared out among them, so that together they try as much as one search would, that many times sooner."""
+        self.polish(best, 12 * tries, rng, deadline)
+        shake = stale = 0
+        patience = max(8, -(-max(30, 3 * len(order)) // max(1, share)))
+        while deadline is not None and len(order) > 2 and time.perf_counter() < deadline - 0.05 \
+                and stale < patience:                       # (nothing better for long: it is as good as it gets)
+            self._check()
+            shake += 1
+            stale += 1
+            cand = list(order)
+            for _ in range(1 + (shake % max(2, len(cand) // 3))):
+                i = rng.randrange(len(cand))
+                j = rng.randrange(len(cand)) if rng.random() < 0.3 else min(len(cand) - 1, i + rng.randint(1, 4))
+                cand[i], cand[j] = cand[j], cand[i]
+            g = grav if rng.random() < 0.6 else rng.choice(gravs)
+            r = self.run_order(cand, None, self.cancel, gravity=g)
+            if self.quality(r)[:3] > self.quality(best)[:3]:
+                continue
+            self.polish(r, 20, rng, deadline, patience=max(40, 2 * len(cand)))
+            if self.quality(r) < self.quality(best):
+                best, order, grav, stale = r, cand, g, 0
+        return best, order, grav
+
+
 def alt_order(best, order):
     """(the order of the free-form layout stays the one the squeeze below starts from)"""
     return order
@@ -1706,6 +1758,17 @@ def point_budget(shapes: Sequence[NestShape], settings: NestSettings) -> int:
 
 def nest(shapes: Sequence[NestShape], settings: NestSettings, progress: Callable | None = None,
          cancel: Callable[[], bool] | None = None) -> NestResult:
+    """:func:`_nest`, the helper processes it starts always ended."""
+    opened: list = []
+    try:
+        return _nest(shapes, settings, progress, cancel, opened)
+    finally:
+        for h in opened:
+            h.close()
+
+
+def _nest(shapes: Sequence[NestShape], settings: NestSettings, progress: Callable | None,
+          cancel: Callable[[], bool] | None, opened: list) -> NestResult:
     """Nest the shapes; ``cancel()`` is asked all the time and ``NestCancelled`` raised when it says yes.
 
     ``settings.iterations`` layouts are made and the one that uses the least material is kept: first the
@@ -1747,8 +1810,21 @@ def nest(shapes: Sequence[NestShape], settings: NestSettings, progress: Callable
 
     n = Nester(shapes, settings)
     n.cancel = checking
-    # (many curved parts: their no-fit polygons on every processor at once; most of the first layout, as progress)
-    n.precompute(progress=lambda d, t: report(int(0.9 * count * d / max(1, t))))
+    workers = nest_processes()
+    first_took = 0.0
+    # (many curved parts: their no-fit polygons on every processor at once; most of the first layout, as progress). When
+    # that is worth it, the helpers started for it stay for the layouts after it (they get the nester with them all).
+    helpers = None
+    if workers >= 2 and n.precompute_worth() is not None:
+        try:
+            helpers = P.Helpers(workers)
+            opened.append(helpers)
+        except Exception:  # noqa: BLE001  (no helper processes here: one processor, the same layouts)
+            helpers = None
+    n.precompute(workers, progress=lambda d, t: report(int(0.9 * count * d / max(1, t))),
+                 pool=helpers.pool if helpers is not None else None)
+    if helpers is not None:
+        helpers.publish(n)
     plan = n.candidates(tries)
 
     def share(i: int):
@@ -1763,47 +1839,73 @@ def nest(shapes: Sequence[NestShape], settings: NestSettings, progress: Callable
 
     def out_of_time() -> bool:
         return settings.time_limit > 0 and time.perf_counter() - t0 > settings.time_limit
-    for i in range(tries):
+
+    def swapped(order_):
+        """A few swaps in the best order so far (the random variations after the plain orders)."""
+        cand = list(order_)
+        for _ in range(max(1, len(cand) // 4)):
+            a = rng.randrange(len(cand))
+            j = min(len(cand) - 1, a + rng.randint(1, 3))
+            cand[a], cand[j] = cand[j], cand[a]
+        return cand
+
+    i = 0
+    while i < tries:
         n._check()
         if best is not None and out_of_time():
             break   # the layouts so far are what the time allowed
+        if helpers is None and best is not None and i == 1 and P.worth_it(first_took, tries - 1, workers):
+            try:
+                helpers = P.Helpers(workers)
+                opened.append(helpers)
+                helpers.publish(n)
+            except Exception:  # noqa: BLE001  (no helper processes here: one processor, the same layouts)
+                helpers = None
+        if helpers is None:
+            if i < len(plan):
+                cand, g = plan[i]
+            else:
+                if len(order) < 2:
+                    break   # one part (or none) cannot be ordered any other way
+                cand, g = swapped(order), grav
+            began = time.perf_counter()
+            r = n.run_order(cand, share(i), checking, gravity=g)
+            if i == 0:
+                first_took = time.perf_counter() - began
+            if best is None or n.quality(r) < n.quality(best):
+                best, order, grav = r, cand, g
+            i += 1
+            continue
+        # a round on the helpers: the plain orders left (they do not depend on one another), else as many random
+        # variations of the best order as there are helpers; compared in the order one processor would make them
         if i < len(plan):
-            cand, g = plan[i]
-        else:  # a few swaps in the best order so far
-            cand, g = list(order), grav
-            if len(cand) < 2:
-                break   # one part (or none) cannot be ordered any other way
-            for _ in range(max(1, len(cand) // 4)):
-                a = rng.randrange(len(cand))
-                j = min(len(cand) - 1, a + rng.randint(1, 3))
-                cand[a], cand[j] = cand[j], cand[a]
-        r = n.run_order(cand, share(i), checking, gravity=g)
-        if best is None or n.quality(r) < n.quality(best):
-            best, order, grav = r, cand, g
+            batch = plan[i:min(tries, len(plan))]
+        else:
+            if best is None or len(order) < 2:
+                break
+            batch = [(swapped(order), grav) for _ in range(min(helpers.workers, tries - i))]
+        base = i
+        outs = helpers.map(P._run, batch, n._check, lambda k: report((base + k + 1) * count))
+        for (cand, g), r in zip(batch, outs):
+            if best is None or n.quality(r) < n.quality(best):
+                best, order, grav = r, cand, g
+        i += len(batch)
     if tries > 1 and settings.arrange == "free" and not out_of_time():     # (strips are tidy: nothing to polish)
         deadline = None if settings.time_limit <= 0 else t0 + settings.time_limit
-        n.polish(best, 12 * tries, rng, deadline)
-        # the time that is left: the best order shaken up more and more (a few parts swapped, then more), laid out and
-        # polished again; kept when it is better (iterated local search). Stops at the time limit.
         gravs = sorted({g for _, g in plan}) or [grav]
-        shake = stale = 0
-        while deadline is not None and len(order) > 2 and time.perf_counter() < deadline - 0.05 \
-                and stale < max(30, 3 * len(order)):        # (nothing better for long: it is as good as it gets)
-            n._check()
-            shake += 1
-            stale += 1
-            cand = list(order)
-            for _ in range(1 + (shake % max(2, len(cand) // 3))):
-                i = rng.randrange(len(cand))
-                j = rng.randrange(len(cand)) if rng.random() < 0.3 else min(len(cand) - 1, i + rng.randint(1, 4))
-                cand[i], cand[j] = cand[j], cand[i]
-            g = grav if rng.random() < 0.6 else rng.choice(gravs)
-            r = n.run_order(cand, None, checking, gravity=g)
-            if n.quality(r)[:3] > n.quality(best)[:3]:
-                continue
-            n.polish(r, 20, rng, deadline, patience=max(40, 2 * len(cand)))
-            if n.quality(r) < n.quality(best):
-                best, order, grav, stale = r, cand, g, 0
+        if helpers is not None:
+            # one search per helper, the first with the random numbers one processor would use; the best wins (the
+            # first when they are as good: what one processor finds)
+            left = None if deadline is None else max(0.0, deadline - time.perf_counter())
+            seeds = [rng.getstate()] + [settings.seed * 1_000_003 + k for k in range(1, helpers.workers)]
+            outs = helpers.map(P._search, [(best, order, grav, gravs, sd, left, tries, helpers.workers) for sd in seeds], n._check)
+            pick = outs[0]
+            for o in outs[1:]:
+                if n.quality(o[0]) < n.quality(pick[0]):
+                    pick = o
+            best, order, grav = pick
+        else:
+            best, order, grav = n.search(best, order, grav, gravs, rng, deadline, tries)
     if settings.arrange == "free" and not squeezing and (best.unplaced or best.sheets > 1 or len(shapes) > 1):
         # rectangles on rectangular plates: a rectangle packer, taken when it does better than the free-form layout
         from . import rects
