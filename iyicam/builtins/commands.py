@@ -351,15 +351,19 @@ def _scale(ctx, v):
     _apply(ctx, Transform.scale(sx, sy, _pivot(ctx, v)), v["copy"])
 
 
+SIZE_EPS = 1e-6                 # mm: a selection narrower than this has no width (or height) to set
+
+
 def _size(ctx, v):
     bb = _sel_bbox(ctx)
-    if bb.width <= 0 and bb.height <= 0:
+    wide, tall = bb.width > SIZE_EPS, bb.height > SIZE_EPS      # (a straight up line of 1e-300 width has no width to scale)
+    if not wide and not tall:
         raise CommandError("Selection has no size")
     if v["uniform"]:
-        sx = sy = v["width"] / bb.width if bb.width > 0 else v["height"] / bb.height
+        sx = sy = v["width"] / bb.width if wide else v["height"] / bb.height
     else:
-        sx = v["width"] / bb.width if bb.width > 0 else 1.0
-        sy = v["height"] / bb.height if bb.height > 0 else 1.0
+        sx = v["width"] / bb.width if wide else 1.0
+        sy = v["height"] / bb.height if tall else 1.0
     _apply(ctx, Transform.scale(sx, sy, bb.center))
 
 

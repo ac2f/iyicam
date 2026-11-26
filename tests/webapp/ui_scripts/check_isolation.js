@@ -39,8 +39,9 @@ const ok = (name, cond, extra = "") => { results.push(cond); console.log(cond ? 
 
   // its layers: none of the rest's (the current layer is one of its own: made for it)
   await page.click(".panel.project .subtab:has-text('Layers')");
-  const lay = await ev(() => { const d = window.__iyicam.app.cur; return { rows: [...document.querySelectorAll(".panel.layers tbody tr:not(.lgroup)")].length, rest: d.project.layers.filter(l => !l.sheet_group).length }; });
-  ok("an isolated sheet shows none of the layers of the rest", lay.rows === 0 && lay.rest > 0, JSON.stringify(lay));
+  // (an empty group is given a layer of its own when it is isolated: what is drawn on it is seen)
+  const lay = await ev(() => { const d = window.__iyicam.app.cur; return { rows: [...document.querySelectorAll(".panel.layers tbody tr:not(.lgroup)")].length, own: d.project.layers.filter(l => l.sheet_group === d.project.sheets.find(s => s.id === "s_Two").group).length, rest: d.project.layers.filter(l => !l.sheet_group).length }; });
+  ok("an isolated sheet shows none of the layers of the rest", lay.rows === lay.own && lay.own >= 1 && lay.rest > 0, JSON.stringify(lay));
   await ev(() => window.__iyicam.A.layerOps.add());
   const own = await ev(() => { const d = window.__iyicam.app.cur; return d.project.layers.find(l => l.id === d.layerId).sheet_group; });
   ok("a layer added on it is the group's", own === g[0], own);

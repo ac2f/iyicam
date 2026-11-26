@@ -61,7 +61,7 @@ def _alarm(*_):
 def test_a_command_works_or_says_why(cid):
     cmd = REGISTRY.commands[cid]
 
-    @settings(max_examples=40, deadline=None, database=None, suppress_health_check=list(HealthCheck))
+    @settings(max_examples=int(__import__("os").environ.get("CMD_N", 40)), deadline=None, database=None, suppress_health_check=list(HealthCheck))
     @given(st.lists(st.lists(shape, min_size=1, max_size=2), min_size=0, max_size=4), st.data())
     def run(objs, data):
         p, s, made = make_project(objs, size=(600, 400))
