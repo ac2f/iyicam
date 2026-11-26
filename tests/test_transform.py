@@ -6,7 +6,7 @@ import pytest
 
 pytest.importorskip("PySide6.QtWidgets")
 
-from gui_robot import process, rwin_gen  # noqa: E402
+from gui_robot import process, release_keys, rwin_gen  # noqa: E402
 from PySide6.QtCore import QPoint, Qt  # noqa: E402
 from PySide6.QtGui import QContextMenuEvent, QGuiApplication  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
@@ -417,6 +417,7 @@ def test_the_function_keys_open_the_pages(rwin):
         process()
         assert win.transform_panel.page.currentData() == page, page
         assert win.transform_dock.isVisible(), page
+    release_keys(win)                     # (Alt would stay held for the tests after this one: nothing would snap)
 
 
 def test_the_commands_for_the_menus_turn_slant_and_flip(rwin):
