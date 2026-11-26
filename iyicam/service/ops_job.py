@@ -18,7 +18,7 @@ import io
 import json
 import traceback
 
-from .errors import JobCancelled, ServiceError
+from .errors import JobCancelled, ServiceError, as_dict, as_list
 from .jobs import JobControl
 
 __all__ = ["op_job_report", "op_backplot", "op_packages", "op_package_save", "op_package_delete", "op_package_from_toolpaths",
@@ -162,7 +162,7 @@ def op_package_from_toolpaths(payload: dict) -> dict:
     from ..cam import tp_packages as P
     from ..core.registry import REGISTRY
     project = ops.load_project(payload.get("project"))
-    ids = [str(i) for i in payload.get("toolpaths") or []]
+    ids = [str(i) for i in as_list(payload, "toolpaths")]
     tps = [t for t in project.toolpaths if t.id in ids] or list(project.toolpaths)
     try:
         pkg = P.save(P.from_toolpaths(str(payload.get("name") or "").strip(), tps, REGISTRY, project))
@@ -202,14 +202,14 @@ def op_package_items(payload: dict) -> dict:
     from ..core.registry import REGISTRY
     from .wire import jsonable
     project = ops.load_project(payload.get("project"))
-    ids = [str(i) for i in payload.get("toolpaths") or []]
+    ids = [str(i) for i in as_list(payload, "toolpaths")]
     tps = [t for t in project.toolpaths if t.id in ids] or list(project.toolpaths)
     if not tps:
         raise ServiceError("no_toolpaths", "the project has no toolpaths yet")
     try:
         items = [P.item_from_toolpath(t, payload.get("tool"), op.params() if (op := REGISTRY.operations.get(t.op)) else None, project)
                  for t in tps]
-    except (TypeError, ValueError, KeyError) as exc:
+    except (TypeError, ValueError, KeyError, AttributeError) as exc:      # (a tool of the wrong shape)
         raise ServiceError("bad_request", f"the tool of the package cannot be read: {exc}", field="tool") from exc
     return {"items": jsonable(items)}
 
@@ -231,7 +231,7 @@ def op_package_apply(payload: dict) -> dict:
     pkg = _package_of(payload)
     project = ops.load_project(payload.get("project"))
     sheet = ops._sheet_of(project, payload.get("sheet"))
-    s = payload.get("selection") or {}
+    s = as_dict(payload, "selection")
     sel = Selection("layers" if s.get("mode") == "layers" else "vectors", [str(v) for v in s.get("vectors") or []],
                     [str(v) for v in s.get("layers") or []])
     if sel.mode == "vectors" and not sel.vector_ids:
@@ -243,7 +243,7 @@ def op_package_apply(payload: dict) -> dict:
         tps, group = P.build(
             pkg, project, sheet, sel, REGISTRY, tool=Tool.from_dict(payload["tool"]) if payload.get("tool") else None,
             values=keyed(payload.get("values")), names=keyed(payload.get("names"), str),
-            skip={int(i) for i in payload.get("skip") or []},
+            skip={int(i) for i in as_list(payload, "skip")},
             make_group=payload.get("make_group") if isinstance(payload.get("make_group"), bool) else None,
             group_template=payload.get("group_template") or None,
             this_sheet=payload.get("this_sheet") if isinstance(payload.get("this_sheet"), bool) else None,
@@ -348,7 +348,7 @@ def op_stock_from_vectors(payload: dict) -> dict:
     from ..nesting.stock import stock_from_vectors
     project = ops.load_project(payload.get("project"))
     sheet = ops._sheet_of(project, payload.get("sheet"))
-    objs = sheet.pick([str(i) for i in payload.get("selection") or []])
+    objs = sheet.pick([str(i) for i in as_list(payload, "selection")])
     items = stock_from_vectors(objs, int(payload.get("quantity", 1)), payload.get("leftover", True) is not False)
     return {"plates": [it.to_dict() for it in items]}
 
@@ -524,13 +524,13 @@ def op_cut_edit(payload: dict, ctl: JobControl | None = None) -> dict:
         _calc(project, {tid}, {tid}, ctl)
     elif action == "manual_order":
         res = _compute_one(project, tid, ctl=ctl).get((tid, sheet.id))
-        picked = [str(k) for k in payload.get("keys") or []]
+        picked = [str(k) for k in as_list(payload, "keys")]
         ok = bool(picked) and cutedit.manual_order(project, tid, sheet, res, int(payload.get("index") or 0), picked,
                                                    str(payload.get("mode") or "from"))
     elif action == "move_start":
         ok = cutedit.move_start(project, key, float(payload.get("delta") or 0.0))
     elif action == "place":
-        keys = [str(k) for k in payload.get("keys") or ([key] if key else [])]
+        keys = [str(k) for k in as_list(payload, "keys") or ([key] if key else [])]
         ok = any([cutedit.start_at_place(project, k, str(payload.get("place") or "")) for k in keys])
     elif action == "start_at":
         got = cutedit.contour_of(project, key)
@@ -549,7 +549,7 @@ def op_cut_edit(payload: dict, ctl: JobControl | None = None) -> dict:
         if key:
             cutedit.release_starts(project, key=key)
         else:
-            ids = [str(v) for v in payload.get("vectors") or []] or [o.id for o in project.vectors_for(t, sheet)]
+            ids = [str(v) for v in as_list(payload, "vectors")] or [o.id for o in project.vectors_for(t, sheet)]
             cutedit.release_starts(project, ids)
     else:
         raise ServiceError("bad_request", f"unknown action '{action}'", field="action")
@@ -576,7 +576,7 @@ def op_sim_timeline(payload: dict, ctl: JobControl | None = None) -> dict:
     sheet = ops._sheet_of(project, payload.get("sheet"))
     project.sheets = [sheet]
     res, _ = _calc(project, ctl=ctl)
-    want = {str(i) for i in payload.get("toolpaths") or []}
+    want = {str(i) for i in as_list(payload, "toolpaths")}
     tps = sheet_toolpaths(project, res, sheet, enabled_only=not want)
     tps = [tp for tp in tps if not want or tp.def_id in want]
     if payload.get("backplot"):
@@ -720,7 +720,7 @@ def op_console_run(payload: dict) -> dict:
     project = ops.load_project(payload.get("project"))
     sheet = ops._sheet_of(project, payload.get("sheet"))
     layer = str(payload.get("layer") or (project.layers[0].id if project.layers else ""))
-    con.cur = _Ctx(project, sheet, [str(i) for i in payload.get("selection") or []], layer)
+    con.cur = _Ctx(project, sheet, [str(i) for i in as_list(payload, "selection")], layer)
     con.ns["project"] = project
     con.ns["ctrl"] = con.cur
     before = json.dumps(project.to_dict(), sort_keys=True)

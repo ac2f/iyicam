@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import math
 
-from .errors import ServiceError
+from .errors import ServiceError, as_dict, as_list
 from .wire import b64d
 
 __all__: list[str] = ["op_vector_edit", "op_start_points", "op_start_probe", "op_trim", "op_text", "op_fonts",
@@ -93,7 +93,7 @@ def _add_vector(project, sheet, contours, layer, name: str, label: str):
 def _vectors(payload: dict) -> list:
     from ..core.document import vector_from_dict
     out = []
-    for d in payload.get("vectors") or []:
+    for d in as_list(payload, "vectors"):
         try:
             out.append(vector_from_dict(d))
         except (KeyError, TypeError, ValueError, IndexError) as exc:
@@ -149,7 +149,7 @@ def op_vector_edit(payload: dict) -> dict:
 
     def nodes():
         out = []
-        for n in payload.get("nodes") or []:
+        for n in as_list(payload, "nodes"):
             vid, ci, ni = str(n[0]), _int(n[1], "nodes"), _int(n[2], "nodes")
             o = objs.get(vid)
             if o is None or not 0 <= ci < len(o.contours) or not 0 <= ni < len(o.contours[ci].nodes()):
@@ -238,7 +238,7 @@ def op_start_points(payload: dict) -> dict:
     from ..core import startplace
     from ..core.registry import REGISTRY
     project, sheet = _setup(payload)
-    objs = sheet.pick([str(i) for i in payload.get("selection") or []])
+    objs = sheet.pick([str(i) for i in as_list(payload, "selection")])
     keys = startplace.cut_keys(objs)
     if payload.get("contours") is not None:                     # (only these contours: [[vector id, contour], ...], what the tool's keys mean)
         want = {(str(a), _int(b, "contours")) for a, b in payload["contours"]}
@@ -272,7 +272,7 @@ def op_start_points(payload: dict) -> dict:
         msg = f"{moved} start point(s) given back to smart start points" if moved else "No start point was set by hand"
     elif act == "set":
         items = []
-        for it in payload.get("items") or []:
+        for it in as_list(payload, "items"):
             o = sheet.vector(str(it[0]))
             if o is not None:
                 items.append((o, _int(it[1], "items"), _pt(it[2], "items")))
@@ -413,7 +413,7 @@ def op_text_on_curve(payload: dict) -> dict:
     the vector), ``align`` (start, center, end), ``reverse``, ``bold``, ``italic``.  Answers ``{project, selection}``."""
     from ..core import textgeom
     project, sheet = _setup(payload)
-    sel = sheet.pick([str(i) for i in payload.get("selection") or []])
+    sel = sheet.pick([str(i) for i in as_list(payload, "selection")])
     if len(sel) != 1 or not sel[0].contours:
         raise ServiceError("bad_selection", "Select one vector to put the text on.")
     text = str(payload.get("text") or "")
@@ -450,7 +450,7 @@ def op_trace_bitmap(payload: dict) -> dict:
     if w < 2 or h < 2 or w * h > 40_000_000 or len(raw) != w * h:
         raise ServiceError("bad_request", "the picture must be width x height grey bytes (at most 40 million pixels)")
     gray = np.frombuffer(raw, dtype=np.uint8).reshape(h, w).astype(float)
-    o = payload.get("options") or {}
+    o = as_dict(payload, "options")
     threshold = _num(o.get("threshold"), "threshold", 128.0, lo=1, hi=254)
     invert, smoothing = bool(o.get("invert")), _num(o.get("smoothing"), "smoothing", 0.6, lo=0.05, hi=10.0)
     min_area = _num(o.get("min_area"), "min_area", 8.0, lo=0.0)
@@ -518,7 +518,7 @@ def op_veclib(payload: dict) -> dict:
             out["id"] = str(payload.get("id")); changed = True
         elif act == "add_item":
             project, sheet = _setup(payload)
-            objs = sheet.pick([str(i) for i in payload.get("selection") or []])
+            objs = sheet.pick([str(i) for i in as_list(payload, "selection")])
             if not objs:
                 raise LibraryError("Select the vectors to keep in the library first.")
             name = str(payload.get("name") or "") or objs[0].name or "Drawing"
@@ -587,7 +587,7 @@ def op_sheet_outline(payload: dict) -> dict:
         sheet.outline = None
         return {"ok": True, "project": project.to_dict() if had else None, "changed": had,
                 "message": "The sheet is a rectangle again" if had else "The sheet has no outline"}
-    objs = [o for o in sheet.pick([str(i) for i in payload.get("selection") or []]) if any(c.closed for c in o.contours)]
+    objs = [o for o in sheet.pick([str(i) for i in as_list(payload, "selection")]) if any(c.closed for c in o.contours)]
     polys = clip.normalize([p for o in objs for p in vectorops.region([c for c in o.contours if c.closed])])
     if not polys:
         raise ServiceError("bad_selection", "Select the closed vectors that outline the plate (and the closed vectors inside them that are holes) first.")
@@ -614,7 +614,7 @@ def op_sheet_scope(payload: dict) -> dict:
     from ..core import scope
     project = _ops().load_project(payload.get("project"))
     act = str(payload.get("action") or "")
-    ids = [str(x) for x in payload.get("sheets") or []]
+    ids = [str(x) for x in as_list(payload, "sheets")]
     name = payload.get("name")
     group = ""
     if act == "group":
@@ -622,10 +622,10 @@ def op_sheet_scope(payload: dict) -> dict:
         scope.set_group(project, ids, group)
     elif act == "arrange":
         by = {s.id: s for s in project.sheets}
-        order = [str(x) for x in payload.get("order") or []]
+        order = [str(x) for x in as_list(payload, "order")]
         project.sheets = [by[i] for i in order if i in by] + [s for s in project.sheets if s.id not in set(order)]
         per: dict[str, list[str]] = {}
-        for sid, g in (payload.get("groups") or {}).items():
+        for sid, g in as_dict(payload, "groups").items():
             if str(sid) in by:
                 per.setdefault(str(g or "").strip(), []).append(str(sid))
         for g, sids in per.items():

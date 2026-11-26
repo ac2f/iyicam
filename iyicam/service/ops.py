@@ -37,7 +37,7 @@ from ..core.tooling import Tool, ToolLibrary
 from ..formats.cdr import CdrError
 from ..formats.report import ImportReport, run_importer
 from ..plugins.manager import PluginManager
-from .errors import JobCancelled, ServiceError
+from .errors import JobCancelled, ServiceError, as_dict, as_list
 from .jobs import JobControl
 from .png import encode_png
 from .preview import toolpath_preview
@@ -291,7 +291,7 @@ def op_tools_save(payload: dict) -> dict:
         tools = [Tool.from_dict(d) for d in raw]
     except Exception as exc:  # noqa: BLE001
         raise ServiceError("bad_request", f"a tool cannot be read: {exc}", field="tools") from exc
-    groups = [str(g) for g in payload.get("groups") or [] if isinstance(g, str)]
+    groups = [str(g) for g in as_list(payload, "groups") if isinstance(g, str)]
     lib = ToolLibrary(tools, paths.tools_file(), groups)
     lib.save()
     return {"tools": [t.to_dict() for t in lib.tools], "groups": lib.groups()}
@@ -349,7 +349,7 @@ def op_tp_preset_apply(payload: dict) -> dict:
     if pre is None:
         raise ServiceError("not_found", "there is no such preset", id=str(payload.get("id")))
     t = _tp_of(project, payload.get("toolpath"))
-    if pre.get("op") and not payload.get("toolpath", {}).get("op"):
+    if pre.get("op") and not as_dict(payload, "toolpath").get("op"):
         t.op = pre["op"]
     sheet = _sheet_of(project, payload.get("sheet")) if payload.get("sheet") else project.sheets[0]
     op = REGISTRY.operations.get(t.op)
@@ -426,7 +426,7 @@ def op_import(payload: dict) -> dict:
         accepted = set(inspect.signature(imp.func).parameters)
     except (TypeError, ValueError):
         accepted = set()
-    options = {k: v for k, v in (payload.get("options") or {}).items()
+    options = {k: v for k, v in as_dict(payload, "options").items()
                if k in accepted and k not in ("path", "project", "sheet", "report")}
     with tempfile.TemporaryDirectory(prefix="iyicam-import-") as tmp:
         src = Path(tmp) / f"import.{ext}"
@@ -465,8 +465,8 @@ def op_export(payload: dict) -> dict:
     which = payload.get("sheet", "all" if len(project.sheets) > 1 else None)
     sheets = list(project.sheets) if which == "all" else [_sheet_of(project, which)]
     names = {p.name for p in exp.params}
-    options = {k: v for k, v in resolve(exp.params, payload.get("options")).items() if k in names}
-    selection = payload.get("selection")
+    options = {k: v for k, v in resolve(exp.params, as_dict(payload, "options")).items() if k in names}
+    selection = [str(i) for i in as_list(payload, "selection")]
     files = []
     with tempfile.TemporaryDirectory(prefix="iyicam-export-") as tmp:
         for i, s in enumerate(sheets, 1):
@@ -493,10 +493,10 @@ def op_command(payload: dict) -> dict:
     cmd = REGISTRY.commands.get(str(payload.get("command")))
     if cmd is None:
         raise ServiceError("unknown_command", "there is no such command", command=str(payload.get("command")))
-    selection = [str(i) for i in (payload.get("selection") or [])]
+    selection = [str(i) for i in as_list(payload, "selection")]
     ctx = CommandContext(project, sheet, selection, payload.get("active_layer") or None)
     try:
-        run_command(cmd, ctx, tool_values(cmd.params, payload.get("values")))
+        run_command(cmd, ctx, tool_values(cmd.params, as_dict(payload, "values")))
     except CommandError as exc:       # nothing is returned: the caller's project stays as it was
         raise ServiceError("command_failed", str(exc), command=cmd.id) from exc
     except (ValueError, TypeError, KeyError, ArithmeticError) as exc:
@@ -636,8 +636,8 @@ def op_compute(payload: dict, ctl: JobControl | None = None) -> dict:
     project = load_project(payload.get("project"))
     _only_sheets(project, payload.get("sheets"))
     cancel, prog = _ctl_hooks(ctl, "Calculating")
-    only = {str(i) for i in payload["toolpaths"]} if payload.get("toolpaths") else None
-    force = {str(i) for i in payload.get("optimise_starts") or []}
+    only = {str(i) for i in as_list(payload, "toolpaths")} if payload.get("toolpaths") else None
+    force = {str(i) for i in as_list(payload, "optimise_starts")}
     t0 = time.perf_counter()
     try:
         res, changed = calculate(project, cancel, (lambda k, n, name: prog(k, n, name)) if prog else None, only, force)
@@ -976,10 +976,10 @@ def op_nest(payload: dict, ctl: JobControl | None = None) -> dict:
     from ..nesting.parts import nest_objects, parse_angles, parse_rule, squeeze_lines
     from ..nesting.stock import use_up
     p = load_project(payload.get("project"))
-    s = payload.get("settings") or {}
+    s = as_dict(payload, "settings")
     if not isinstance(s, dict):
         raise ServiceError("bad_request", "'settings' must be an object")
-    ids = payload.get("objects")
+    ids = as_list(payload, "objects")
     from ..core.scope import scope_of, sheets_with
     here = next((x for x in p.sheets if x.id == str(payload.get("sheet") or "")), None)
     side = sheets_with(p, here) if here is not None else list(p.sheets)      # (an isolated group nests on its own)
@@ -1060,7 +1060,7 @@ def op_nest(payload: dict, ctl: JobControl | None = None) -> dict:
     plates = bool(stock) or no_new or bool(on_sheets)
     qty = int(_num(s, "quantity", 1, 1, 10000))
     quantities = {o.id: qty for o in objs}
-    quantities.update({str(k): int(v) for k, v in (payload.get("quantities") or {}).items() if str(k) in quantities})
+    quantities.update({str(k): int(v) for k, v in as_dict(payload, "quantities").items() if str(k) in quantities})
     cancel = ctl.cancelled if ctl else None
     progress = (lambda k, n: ctl.progress(k, n, "Nesting")) if ctl else None
     try:
