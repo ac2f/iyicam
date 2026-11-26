@@ -35,7 +35,7 @@ def test_a_failing_check_is_reported_and_the_others_still_run(capsys, monkeypatc
     assert selftest.run(gui=False) == 1
     cap = capsys.readouterr()
     assert "FAIL  built-in features" in cap.out and "the post-processors are missing" in cap.out
-    assert "ok    nesting" in cap.out and "1 of 7 checks failed" in cap.out
+    assert "ok    nesting" in cap.out and "1 of 8 checks failed" in cap.out
 
 
 def test_the_self_test_leaves_the_settings_of_the_user_alone(tmp_path, monkeypatch):
@@ -116,3 +116,18 @@ def test_an_error_nothing_caught_is_logged_and_shown(tmp_path, monkeypatch):
     assert shown == [("ZeroDivisionError: division by zero", str(tmp_path / "home" / "error.log"))]
     text = (tmp_path / "home" / "error.log").read_text(encoding="utf-8")
     assert "ZeroDivisionError" in text and "test_an_error_nothing_caught" in text
+
+
+def test_a_window_that_shows_an_error_fails_the_check_and_does_not_wait(tmp_path, monkeypatch):
+    """A plugin's window that went wrong showed an error box in the middle of a build and waited for a click (6438 s)."""
+    pytest.importorskip("PySide6.QtWidgets")
+    import time
+    from iyicam.core.registry import REGISTRY
+
+    def broken(win):
+        raise ModuleNotFoundError("No module named 'logging.handlers'")
+    monkeypatch.setattr(REGISTRY, "gui_extensions", list(REGISTRY.gui_extensions) + [("broken", broken)])
+    t = time.time()
+    with pytest.raises(RuntimeError, match="logging.handlers"):
+        selftest.SelfTest(tmp_path, True).window()
+    assert time.time() - t < 60

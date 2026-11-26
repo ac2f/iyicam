@@ -23,6 +23,10 @@ datas = collect_data_files("iyicam")
 datas += [(str(ROOT / "docs"), "docs"), (str(ROOT / "examples"), "examples"), (str(ROOT / "README.md"), ".")]
 # modules that are only imported by name (plugins, commands, post-processors) or inside functions
 hidden = collect_submodules("iyicam") + collect_submodules("ezdxf") + ["svgelements", "pyclipper", "numpy"]
+# the whole standard library: a plugin from the user folder imports what it needs (logging.handlers, http.server ...)
+sys.path.insert(0, str(ROOT / "packaging"))
+import stdlib_modules  # noqa: E402
+hidden += stdlib_modules.modules()
 excludes = ["tkinter", "matplotlib", "scipy", "pandas", "IPython", "pytest", "PIL", "lxml", "PyQt5", "PyQt6", "PySide2",
             "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.QtQml", "PySide6.QtQuick",
             "PySide6.Qt3DCore", "PySide6.QtMultimedia", "PySide6.QtPdf", "PySide6.QtSql", "PySide6.QtCharts"]

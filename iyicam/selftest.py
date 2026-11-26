@@ -19,7 +19,8 @@ class SelfTest:
         self.results: list[tuple[str, str]] = []      # (name, "" when it worked, else what went wrong)
 
     def run(self) -> int:
-        checks = [("libraries", self.libraries), ("built-in features", self.registry), ("project file", self.project),
+        checks = [("libraries", self.libraries), ("standard library for plugins", self.stdlib),
+                  ("built-in features", self.registry), ("project file", self.project),
                   ("toolpaths and every post-processor", self.toolpaths), ("DXF export and import", self.dxf),
                   ("SVG import", self.svg), ("nesting", self.nesting)]
         if self.gui:
@@ -42,6 +43,24 @@ class SelfTest:
         return 1 if failed else 0
 
     # -- the checks ------------------------------------------------------------------------------------
+    def stdlib(self) -> str:
+        """What plugins import that the program itself may not (a package that left it out: "No module named
+        'logging.handlers'" when the iyi ext pack's work panel was opened)."""
+        import importlib
+        names = ["logging.handlers", "logging.config", "http.server", "http.client", "socketserver", "ipaddress",
+                 "csv", "sqlite3", "urllib.request", "email.mime.text", "smtplib", "xml.etree.ElementTree", "zipfile",
+                 "concurrent.futures", "multiprocessing.pool", "ssl", "hashlib", "uuid", "decimal", "statistics"]
+        missing = []
+        for n in names:
+            try:
+                importlib.import_module(n)
+            except ImportError as exc:
+                missing.append(f"{n} ({exc})")
+        if missing:
+            raise RuntimeError("missing from the package: " + ", ".join(missing))
+        return f"{len(names)} modules"
+
+
     def libraries(self) -> str:
         import ezdxf
         import numpy
@@ -178,8 +197,27 @@ class SelfTest:
     def window(self) -> str:
         from PySide6.QtWidgets import QApplication
 
+        from PySide6.QtWidgets import QMessageBox
+
         from .gui.app import create_window
-        app, win = create_window(["iyicam"], load_plugins=False)
+        # a message box would wait for a click (a build would stand still for hours): what it says is kept and is a
+        # failure. Before the window is made: what goes wrong while it is built shows a box too.
+        said: list[str] = []
+        saved = {k: getattr(QMessageBox, k) for k in ("critical", "warning", "information", "question")}
+
+        def note(kind):
+            def box(*a, **k):
+                said.append(f"{kind}: {a[2] if len(a) > 2 else k.get('text', '')}")
+                return QMessageBox.No if kind == "question" else QMessageBox.Ok
+            return box
+        for k in saved:
+            setattr(QMessageBox, k, staticmethod(note(k)))
+        try:
+            app, win = create_window(["iyicam"], load_plugins=False)
+        except BaseException:
+            for k, v in saved.items():
+                setattr(QMessageBox, k, v)
+            raise
         try:
             win.resize(1100, 700)
             win.show()
@@ -201,7 +239,12 @@ class SelfTest:
                 c.dirty = False
             win.close()
             QApplication.processEvents()
+            errors = [m for m in said if m.startswith(("critical", "warning"))]
+            if errors:
+                raise RuntimeError("the window showed: " + " | ".join(errors))
         finally:
+            for k, v in saved.items():
+                setattr(QMessageBox, k, v)
             for c in list(app.topLevelWidgets()):
                 c.deleteLater()
         return "2 tabs, light and dark theme"

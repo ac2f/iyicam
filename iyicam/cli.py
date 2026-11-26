@@ -445,7 +445,9 @@ def main(argv: list[str] | None = None) -> int:
                    help="take the squeezed layout when it is better (else it is only suggested)")
     a = ap.parse_args(argv)
     if a.cmd not in ("serve", "agent"):        # (serve and agent do no CAM)
-        _setup(not a.no_plugins)
+        # (the self test checks the program as it is installed: the plugins of the user are theirs, not part of it; a
+        # plugin that fails there showed an error window in the middle of a build and waited for a click)
+        _setup(not a.no_plugins and a.cmd != "selftest")
     try:
         return {"posts": cmd_posts, "plugins": cmd_plugins, "info": cmd_info, "gcode": cmd_gcode,
                 "import": cmd_import, "export": cmd_export, "nest": cmd_nest, "selftest": cmd_selftest,
