@@ -399,7 +399,13 @@ def convert_segment(c: Contour, seg: int, kind: str) -> Contour:
         if isinstance(s, Arc):
             return c
         if isinstance(s, Bezier):
-            new = [Arc.through(s.a, s.point_at(0.5), s.b)]
+            try:
+                new = [Arc.through(s.a, s.point_at(0.5), s.b)]
+            except ValueError:                     # (a loop whose ends meet: a full circle is two arcs, one a half)
+                try:
+                    new = [Arc.through(h.a, h.point_at(0.5), h.b) for h in s.split(0.5)]
+                except ValueError:                 # (a loop too small to tell: it stays as it is)
+                    return c
         else:
             m = lerp(s.a, s.b, 0.5)
             h = dist(s.a, s.b) * 0.2

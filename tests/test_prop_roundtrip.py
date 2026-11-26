@@ -12,7 +12,7 @@ from iyicam.formats.report import ImportReport
 
 from test_prop_geom import contour
 
-SET = settings(max_examples=60, deadline=None, suppress_health_check=list(HealthCheck))
+SET = settings(max_examples=int(__import__("os").environ.get("RT_N", 60)), deadline=None, suppress_health_check=list(HealthCheck))
 
 
 def points(objs, tol=0.01):
