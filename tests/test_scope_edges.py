@@ -188,3 +188,35 @@ def test_a_broken_mini_chain_says_so():
     with pytest.raises(CfbError):
         CompoundFile(bytes(data)).read("a")
     assert cf.read("b") == b"r" * 5000
+
+
+@pytest.mark.parametrize("sector", [512, 4096])
+def test_big_files_and_version_4_files_are_read(sector):
+    """A file whose allocation table is longer than the header can list (more than 109 sectors: DIFAT sectors), and a file of
+    version 4 (4096-byte sectors, as an ArtCAM 2018 project)."""
+    import random
+    from artcam_builder import compound_file
+    from iyicam.formats.cfb import CompoundFile
+    rnd = random.Random(7)
+    streams = {"big": bytes(rnd.getrandbits(8) for _ in range(7_400_000 if sector == 512 else 300_000)), "a/small": b"s" * 70,
+               "a/mid": b"m" * 5000}
+    data = compound_file(streams, sector=sector)
+    cf = CompoundFile(data)
+    assert cf.sector == sector
+    if sector == 512:
+        import struct
+        assert struct.unpack_from("<I", data, 0x48)[0] >= 1           # (DIFAT sectors are used)
+    for p, v in streams.items():
+        assert cf.read(p) == v
+
+
+def test_an_artcam_project_of_version_4_opens(tmp_path):
+    from artcam_builder import compound_file, model_streams, rect_line
+    from iyicam.formats import artcam
+    s = model_streams([{"name": "k1", "contours": [(1, rect_line(10, 10, 100, 50, 2.5))]}], version=2018,
+                      root="Project/Models/M1XXXXXXXXXXXXXXXXXXXXXXXX/")
+    s["ProjectInfo"] = b"\x02\0\0\0"
+    f = tmp_path / "p.3dp"
+    f.write_bytes(compound_file(s, sector=4096))
+    (m,) = artcam.read_file(f)
+    assert [t.name for t in m.toolpaths] == ["k1"] and not m.toolpaths[0].problems

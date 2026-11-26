@@ -15,9 +15,11 @@ BIG = b"\xa6\x9b\xc4\xc0\x7f\x84\x2e\x41"
 
 # -- a compound file ------------------------------------------------------------------------------------------------
 
-def compound_file(streams: dict[str, bytes], cutoff: int = 4096) -> bytes:
+def compound_file(streams: dict[str, bytes], cutoff: int = 4096, sector: int = 512) -> bytes:
     """A compound file of ``{"a/b/c": bytes}``.  ``cutoff`` 0: every stream in big sectors; 4096 (as real files): the streams
-    smaller than it are kept in the mini stream, in sectors of 64 bytes."""
+    smaller than it are kept in the mini stream, in sectors of 64 bytes.  ``sector`` 512 (version 3) or 4096 (version 4, as
+    ArtCAM 2018 writes a project); a file needing more than 109 sectors of its allocation table lists the rest in DIFAT
+    sectors."""
     tree: dict = {}
     for path, data in streams.items():
         node = tree
@@ -57,55 +59,66 @@ def compound_file(streams: dict[str, bytes], cutoff: int = 4096) -> bytes:
                 minifat.append(first + k + 1 if k < n - 1 else END)
             mini += d.ljust(n * 64, b"\0")
             e[5], e[6], e[7] = first, len(d), None   # (written in the mini stream)
-    sectors: list[tuple[str, bytes]] = []        # (what, the bytes of one sector)
+    S = sector
+    q = S // 4                                    # (numbers in a sector of a table)
     big: list[tuple[list, bytes]] = [(e, e[7]) for e in entries if e[1] == 2 and e[7]]
     data_sectors: list[bytes] = []
     for e, d in big:
         e[5] = len(data_sectors)
         e[6] = len(d)
-        for k in range(0, len(d), SECTOR):
-            data_sectors.append(d[k:k + SECTOR].ljust(SECTOR, b"\0"))
+        for k in range(0, len(d), S):
+            data_sectors.append(d[k:k + S].ljust(S, b"\0"))
     mini_start = len(data_sectors)
-    for k in range(0, len(mini), SECTOR):
-        data_sectors.append(bytes(mini[k:k + SECTOR]).ljust(SECTOR, b"\0"))
+    for k in range(0, len(mini), S):
+        data_sectors.append(bytes(mini[k:k + S]).ljust(S, b"\0"))
     minifat_start = len(data_sectors)
-    mf = list(minifat) + [FREE] * (-len(minifat) % 128)
-    for k in range(0, len(mf), 128):
-        data_sectors.append(struct.pack("<128I", *mf[k:k + 128]))
+    mf = list(minifat) + [FREE] * (-len(minifat) % q)
+    for k in range(0, len(mf), q):
+        data_sectors.append(struct.pack(f"<{q}I", *mf[k:k + q]))
     n_minifat = len(data_sectors) - minifat_start
-    n_dir = math.ceil(len(entries) / 4)
-    n_fat = 1
-    while n_fat * 128 < n_fat + n_dir + len(data_sectors):
+    n_dir = math.ceil(len(entries) / (S // 128))
+    n_fat, n_difat = 1, 0
+    while True:                                   # (the FAT holds itself, the DIFAT, the directory and the data)
+        n_difat = math.ceil(max(0, n_fat - 109) / (q - 1))
+        if n_fat * q >= n_fat + n_difat + n_dir + len(data_sectors):
+            break
         n_fat += 1
-    fat = [FREE] * (n_fat * 128)
+    fat = [FREE] * (n_fat * q)
     for k in range(n_fat):
         fat[k] = FATSECT
-    dir0 = n_fat
+    for k in range(n_difat):
+        fat[n_fat + k] = 0xFFFFFFFC               # (DIFSECT)
+    dir0 = n_fat + n_difat
     for k in range(n_dir):
         fat[dir0 + k] = dir0 + k + 1 if k < n_dir - 1 else END
-    base = n_fat + n_dir
+    base = dir0 + n_dir
 
     def chain(first: int, n: int) -> None:
         for k in range(n):
             fat[base + first + k] = base + first + k + 1 if k < n - 1 else END
 
     for e, d in big:
-        chain(e[5], math.ceil(len(d) / SECTOR))
+        chain(e[5], math.ceil(len(d) / S))
         e[5] += base
     if mini:
-        chain(mini_start, math.ceil(len(mini) / SECTOR))
+        chain(mini_start, math.ceil(len(mini) / S))
         entries[0][5], entries[0][6] = base + mini_start, len(mini)
     if n_minifat:
         chain(minifat_start, n_minifat)
-    header = bytearray(SECTOR)
+    header = bytearray(512)
     header[0:8] = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
-    struct.pack_into("<HHHHH", header, 0x18, 0x3E, 3, 0xFFFE, 9, 6)
-    struct.pack_into("<IIIIIIIII", header, 0x28, 0, n_fat, dir0, 0, cutoff,
-                     base + minifat_start if n_minifat else END, n_minifat, END, 0)
-    difat = list(range(n_fat)) + [FREE] * (109 - n_fat)
-    struct.pack_into("<109I", header, 0x4C, *difat)
-    out = bytearray(header)
+    struct.pack_into("<HHHHH", header, 0x18, 0x3E, 3 if S == 512 else 4, 0xFFFE, 9 if S == 512 else 12, 6)
+    struct.pack_into("<IIIIIIIII", header, 0x28, n_dir if S == 4096 else 0, n_fat, dir0, 0, cutoff,
+                     base + minifat_start if n_minifat else END, n_minifat, n_fat if n_difat else END, n_difat)
+    first = list(range(min(n_fat, 109))) + [FREE] * (109 - min(n_fat, 109))
+    struct.pack_into("<109I", header, 0x4C, *first)
+    out = bytearray(header.ljust(S, b"\0"))
     out += struct.pack(f"<{len(fat)}I", *fat)
+    rest = list(range(109, n_fat))
+    for k in range(n_difat):                      # (the FAT sectors after the first 109, and the next DIFAT sector)
+        part = rest[k * (q - 1):(k + 1) * (q - 1)]
+        part += [FREE] * (q - 1 - len(part))
+        out += struct.pack(f"<{q}I", *part, n_fat + k + 1 if k < n_difat - 1 else END)
     d = bytearray()
     for name, kind, left, right, child, start, size, _ in (e[:8] for e in entries):
         e = bytearray(128)
@@ -115,9 +128,9 @@ def compound_file(streams: dict[str, bytes], cutoff: int = 4096) -> bytes:
         struct.pack_into("<III", e, 68, left, right, child)
         struct.pack_into("<IQ", e, 116, start, size)
         d += e
-    out += d.ljust(n_dir * SECTOR, b"\0")
-    for s in data_sectors:
-        out += s
+    out += d.ljust(n_dir * S, b"\0")
+    for x in data_sectors:
+        out += x
     return bytes(out)
 
 
