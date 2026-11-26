@@ -234,7 +234,8 @@ def test_the_nearest_point_is_the_engines(js, c, x, y):
        st.tuples(st.floats(-100, 100), st.floats(-100, 100)))
 def test_the_arc_through_three_points_passes_them(js, a, b, c):
     out = js("arc3", list(a), list(b), list(c))
-    if out is None:
+    if out is None:                                                      # (in line, or the end on the start)
+        assert math.dist(a, c) < 1e-6 * max(math.dist(a, b), 1) or abs((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])) < 1e-8
         return
     seg = contour_from_dict(out["contour"]).segs[0]
     if seg.kind != "arc":
@@ -279,9 +280,12 @@ def test_a_tap_takes_the_nearest_vector_and_alt_walks_through_the_rest(js, cs, x
             best = min(best, math.dist((x, y), (a[0] + t * dx, a[1] + t * dy)))
         return best
     ds = [dist(f, c.closed) for f, c in zip(flat, cs)]
-    want = sorted((i for i in range(len(vs)) if ds[i] < tol), key=lambda i: (ds[i], -i))
     allv = js("hitAll", vs, x, y, tol)
-    assert allv == [f"v{i}" for i in want]
+    sure = {f"v{i}" for i in range(len(vs)) if ds[i] < tol - 1e-9}
+    maybe = {f"v{i}" for i in range(len(vs)) if ds[i] < tol + 1e-9}
+    assert sure <= set(allv) <= maybe                                  # (on the edge of tol: either)
+    got = [ds[int(v[1:])] for v in allv]
+    assert all(p <= q + 1e-9 for p, q in zip(got, got[1:]))             # (nearest first; equal ones in either order)
     assert js("hit", vs, x, y, tol) == (allv[0] if allv else None)
     seen, cur = [], None
     for _ in range(len(allv)):

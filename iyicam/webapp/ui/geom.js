@@ -489,6 +489,9 @@ G.pathOf = v => {
 G.arc3 = (a, b, c) => {
   const d = 2 * (a[0] * (b[1] - c[1]) + b[0] * (c[1] - a[1]) + c[0] * (a[1] - b[1]));
   if (Math.abs(d) < 1e-9) return null;
+  // (an end on the start: no one arc goes from a point round to itself, the bulge would be endless)
+  const span = Math.max(Math.hypot(b[0] - a[0], b[1] - a[1]), 1);
+  if (Math.hypot(c[0] - a[0], c[1] - a[1]) < 1e-6 * span) return null;
   const ux = ((a[0] ** 2 + a[1] ** 2) * (b[1] - c[1]) + (b[0] ** 2 + b[1] ** 2) * (c[1] - a[1]) + (c[0] ** 2 + c[1] ** 2) * (a[1] - b[1])) / d;
   const uy = ((a[0] ** 2 + a[1] ** 2) * (c[0] - b[0]) + (b[0] ** 2 + b[1] ** 2) * (a[0] - c[0]) + (c[0] ** 2 + c[1] ** 2) * (b[0] - a[0])) / d;
   const ang = p => Math.atan2(p[1] - uy, p[0] - ux);
