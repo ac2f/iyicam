@@ -130,6 +130,7 @@ def test_command_with_random_settings_and_selections(ctrl, cmd_id):
         who = f"{cmd_id} seed {seed}: values {values}, {len(pick)} selected"
         before = state(ctrl)
         before_sizes = sizes(ctrl)
+        steps = len(ctrl.undo_stack._undo)
 
         def too_slow(*_):
             raise TimeoutError(f"{who}: more than {LIMIT} s")
@@ -146,7 +147,9 @@ def test_command_with_random_settings_and_selections(ctrl, cmd_id):
         problem = broken(ctrl) or (collapsed(before_sizes, sizes(ctrl)) if ok else None)
         assert problem is None, f"{who}: {problem}"
         after = state(ctrl)
-        if ok:
+        if ok and same(after, before):            # (nothing changed: no undo step that would take back nothing)
+            assert len(ctrl.undo_stack._undo) == steps, f"{who}: an undo step for nothing"
+        elif ok:
             ctrl.undo()
             assert same(state(ctrl), before), f"{who}: undo does not restore"
             ctrl.redo()
