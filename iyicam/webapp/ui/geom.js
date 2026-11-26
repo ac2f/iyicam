@@ -384,7 +384,7 @@ const G = {};
   /** the node k left out: its two segments become one line.  null when too little would be left. */
   G.deleteNode = (c, k) => {
     const o = copyC(c), n = o.segs.length;
-    if (c.closed ? n <= 3 : n < 1) return null;
+    if (c.closed ? n <= 3 : n <= 1) return null;           // (a single line keeps its two ends, as the engine does)
     if (c.closed) {
       if (k === 0) { o.start = G.segEnd(o.segs[0]).slice(); o.segs.shift(); const p = o.segs[o.segs.length - 1]; o.segs[o.segs.length - 1] = ["L", o.start[0], o.start[1]]; return o; }
       const a = segStart(c, k - 1), b = G.segEnd(c.segs[k]);
