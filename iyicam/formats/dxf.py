@@ -310,7 +310,8 @@ def import_dxf(path: str | Path, project: Project, sheet: Sheet, layer_id: str |
     created = []
     for lname, cs in by_layer.items():
         if keep_layers and lname:
-            layer = project.layer_by_name(lname)
+            layer = project.layer_by_name(lname) or next(           # (DXF layer names are the same in any case: an R12
+                (l for l in project.layers if l.name.casefold() == lname.casefold()), None)   # file writes them in capitals)
             if layer is None:
                 color = None
                 try:

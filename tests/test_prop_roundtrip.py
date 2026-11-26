@@ -58,8 +58,9 @@ def test_a_dxf_reads_back_as_it_was_written(tmp_path_factory, objs, version):
     assert not rep.errors, rep.errors
     a, b = points(made), points(back)
     assert near_all(a, b, 0.02) and near_all(b, a, 0.02), version
-    names = {q.layer(o.layer_id).name for o in back}
-    assert names <= {"Default", "Cut", "0"} and ("Cut" in names) == bool(made[1::2])
+    names = {q.layer(o.layer_id).name.casefold() for o in back}           # (R12 keeps layer names in capitals)
+    assert names <= {"default", "cut", "0"} and ("cut" in names) == bool(made[1::2])
+    assert len([l for l in q.layers if l.name.casefold() == "default"]) == 1    # (not one Default and one DEFAULT)
 
 
 @SET
