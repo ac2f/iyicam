@@ -23,6 +23,7 @@ class ComputeResult:
     order: list[str] | None = None                          # cut order (vector contour keys)
     start_updates: dict = field(default_factory=dict)       # key -> better start point of the vector
     strategy: str | None = None                             # the order strategy used (what "auto" chose)
+    problem_vectors: list[str] = field(default_factory=list)  # vectors that kept it from being cut (cutcheck)
 
 
 class ComputeCancelled(BaseException):
@@ -73,9 +74,11 @@ def sheets_for(project: Project, tdef: ToolpathDef) -> list[Sheet]:
 def compute_toolpath(project: Project, tdef: ToolpathDef, sheet: Sheet,
                      registry: Registry = REGISTRY, tolerance: float = 0.005,
                      previous: list[Toolpath] | None = None, force_smart: bool = False,
-                     events: list | None = None) -> ComputeResult:
+                     events: list | None = None, check_cut: bool = True) -> ComputeResult:
     """Calculate one toolpath on one sheet. ``events`` (a list): the ``toolpath_computed`` hooks are not run
-    but appended to it as ``(hook, args)``, for the caller to run where it is safe (a calculation in a thread)."""
+    but appended to it as ``(hook, args)``, for the caller to run where it is safe (a calculation in a thread).
+    ``check_cut``: vectors that cannot be cut (cutcheck) are refused (False: only for tests of the strategies on any
+    input)."""
     cls = registry.operations.get(tdef.op)
     res = ComputeResult()
     if cls is None:
@@ -91,6 +94,18 @@ def compute_toolpath(project: Project, tdef: ToolpathDef, sheet: Sheet,
     if tdef.tool.diameter > reach:                       # (a cutter wider than the sheet makes the offset ask the geometry for the impossible)
         res.error = (f"The tool diameter ({tdef.tool.diameter:g} mm) is more than twice the sheet: "
                      "check the tool (millimetres, not micrometres?)")
+        return res
+    # vectors on one another, parts closer together than the tool needs, holes it does not fit in: not cut
+    from .cutcheck import Problems, check_toolpath
+    try:
+        problems = check_toolpath(cls, cls(tdef.params).values, objects, tdef.tool.diameter) if check_cut else Problems()
+    except clip.TooComplex as exc:
+        res.error = str(exc)
+        return res
+    if problems:
+        res.error = ("Not cut: " + problems.text() + ". Select them with Vectors > Select ... or fix the drawing "
+                     "(move them apart, weld or delete the copy, a smaller tool).")
+        res.problem_vectors = problems.vector_ids()
         return res
     if cls.tool_types and tdef.tool.type not in cls.tool_types:
         res.warnings.append(f"{cls.label} is not meant for a {tdef.tool.type.replace('_', ' ')} tool")

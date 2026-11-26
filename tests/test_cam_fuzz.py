@@ -146,6 +146,11 @@ def test_random_jobs_never_fail_and_post_cleanly(op_id, batch):
             signal.alarm(LIMIT)   # a job that takes minutes is a fault too
         try:
             res = compute_toolpath(p, t, s)
+            if res.error and res.error.startswith("Not cut:"):
+                # vectors on one another / closer together than the tool: refused with the vectors named; the strategy
+                # is still tried on them (it must not fail on any input)
+                assert res.problem_vectors and not res.toolpaths, who
+                res = compute_toolpath(p, t, s, check_cut=False)
         except TimeoutError:   # the time ran out outside the strategy (the warnings of the result)
             warnings.warn(f"slow: {who}", stacklevel=1)
             continue

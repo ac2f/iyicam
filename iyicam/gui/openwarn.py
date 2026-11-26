@@ -40,9 +40,8 @@ def nearly_closed(c, gap: float) -> bool:
 
 def needs_closed(op, values: dict) -> bool:
     """Whether a toolpath of this kind with these settings works on the inside of closed vectors."""
-    if getattr(op, "needs_closed", False):
-        return True
-    return getattr(op, "id", "") == "profile" and values.get("side", "outside") != "on"
+    from ..cam.cutcheck import needs_closed as engine_needs_closed
+    return engine_needs_closed(op, values)
 
 
 def ask(parent, ctrl, objects, what: str) -> bool:
@@ -114,3 +113,30 @@ def objects_of(ctrl, selection, sheets=None) -> list:
         return [o for s in sheets for o in s.vectors if o.layer_id in layers]
     ids = set(selection.vector_ids)
     return [o for s in sheets for o in s.vectors if o.id in ids]
+
+
+def refuse(parent, ctrl, problems) -> None:
+    """Vectors that cannot be cut (on one another, parts closer together than the tool needs, a hole the tool does not
+    fit in): the toolpath is not made. "Select them" selects the vectors to fix."""
+    box = QMessageBox(QMessageBox.Critical, "Cannot be cut", problems.text().replace("; ", ".\n\n") + ".",
+                      QMessageBox.NoButton, parent)
+    box.setInformativeText("The toolpath is not made. Move the parts apart, weld the vectors that overlap or delete "
+                           "the copy, or take a smaller tool.")
+    select_b = box.addButton("Select them", QMessageBox.ActionRole)
+    box.addButton(QMessageBox.Close)
+    box.exec()
+    if box.clickedButton() is select_b:
+        ctrl.select(problems.vector_ids())
+
+
+def cuttable(parent, ctrl, tdef) -> bool:
+    """Whether the vectors of a new / changed toolpath can be cut with its tool; if not the window says why."""
+    from ..cam.cutcheck import check_toolpath
+    op = ctrl.registry.operations.get(tdef.op)
+    if op is None:
+        return True
+    problems = check_toolpath(op, op(tdef.params).values, objects_of(ctrl, tdef.selection), tdef.tool.diameter)
+    if problems:
+        refuse(parent, ctrl, problems)
+        return False
+    return True

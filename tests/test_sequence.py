@@ -322,10 +322,11 @@ def test_manual_order_cannot_cut_a_hole_after_its_outline():
     assert any("inside others are cut first" in w for w in res.warnings)
 
 
-def test_parts_closer_than_the_tool_are_reported():
+def test_parts_closer_than_the_tool_are_not_cut():
+    """(once a warning: the cut went into the part beside it; now the toolpath is not made)"""
     p, s, objs = make_project(tight_grid(2, 1, gap=3.0), size=(150, 80))
     res = compute_toolpath(p, add_tp(p, "profile", end_mill(6), {"through": True}, objs), s)
-    assert any("run into neighbouring parts" in w for w in res.warnings)
+    assert res.error and "closer together than the tool needs" in res.error and not res.toolpaths
 
 
 def test_later_toolpath_inside_freed_parts_is_reported():

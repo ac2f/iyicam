@@ -17,13 +17,14 @@ def _run(local_server, **extra):
     node, nenv, url, key, base = local_server
     files = base / "files"
     files.mkdir(exist_ok=True)
-    if not (files / "t.dxf").exists():
+    if True:                                                     # (made again: it changed)
         doc = ezdxf.new(units=4)                                 # (INSUNITS 4: millimetres; ezdxf says metres by default and the importer believes it)
         m = doc.modelspace()
-        m.add_circle((50, 50), 20)
-        m.add_line((0, 0), (80, 10))
-        m.add_lwpolyline([(10, 10), (60, 10), (60, 40), (10, 40)], close=True)
-        m.add_arc((100, 50), 15, 0, 180)
+        # (apart from one another and from what is drawn: vectors on one another are not cut any more)
+        m.add_circle((350, 200), 20)
+        m.add_line((300, 150), (380, 160))
+        m.add_lwpolyline([(410, 160), (460, 160), (460, 190), (410, 190)], close=True)
+        m.add_arc((400, 250), 15, 0, 180)
         doc.saveas(files / "t.dxf")
     env = {**nenv, "URL": url, "KEY": key, "FILES": str(files), "FIXTURE": str(w.FIXTURES / "project.json"), **extra}
     run = subprocess.run([nenv.get("NODE", "node"), str(SCRIPT)], env=env, capture_output=True, text=True, timeout=900)
@@ -64,7 +65,7 @@ def test_undo_and_redo_walk_back_and_forth(desktop):
 
 
 def test_nesting(desktop):
-    assert "8 part(s) placed" in desktop["nestReport"]           # (9 vectors, one of them the open line: not a part)
+    assert "9 part(s) placed" in desktop["nestReport"]           # (9 vectors apart from one another: each a part)
     assert desktop["nested"]["n"] == 9
 
 

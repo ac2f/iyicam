@@ -4,7 +4,7 @@
 const { open, shot, loadFixture } = require("./lib");
 const results = [];
 const ok = (name, cond, extra = "") => { results.push(cond); console.log(cond ? "ok  " : "FAIL", name, extra); };
-const SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="50"><rect x="5" y="5" width="40" height="30" fill="none" stroke="black"/><circle cx="70" cy="25" r="15" fill="none" stroke="black"/></svg>';
+const SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="50mm" viewBox="0 0 100 50"><rect x="5" y="5" width="40" height="30" fill="none" stroke="black"/><circle cx="70" cy="25" r="15" fill="none" stroke="black"/></svg>';
 
 (async () => {
   const { browser, page, errors } = await open();

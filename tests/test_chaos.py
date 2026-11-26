@@ -260,7 +260,9 @@ def test_a_long_random_session(ctrl, seed, tmp_path):
     ctrl.recalculate()
     for tp_def in ctrl.project.toolpaths:
         for res in ctrl.results_for(tp_def):
-            assert res.error is None or "on top of each other" in res.error, f"{tp_def.name}: {res.error}\nsteps: {log}"
+            # (vectors on one another / closer together than the tool: refused, naming them; that is a right answer)
+            refused = bool(res.error) and res.error.startswith("Not cut:") and bool(res.problem_vectors) and not res.toolpaths
+            assert res.error is None or "on top of each other" in res.error or refused, f"{tp_def.name}: {res.error}\nsteps: {log}"
     end = full_state(ctrl)
     steps_back = 0
     while ctrl.undo_stack.can_undo:

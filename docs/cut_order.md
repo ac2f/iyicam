@@ -332,3 +332,19 @@ shows Auto first, then the orders that are used (columns, rows, smart, nearest).
 direction, clear-of-cuts, what is drawn and the start point of one cut are behind **More options**; in the toolpath
 dialogs the rarely changed settings (start depth, overcut, entry and lead, finish pass ...) are behind **More options**
 too, on the desktop and on the page. Nothing is removed: the button shows them.
+
+## What is not cut
+
+A toolpath on closed vectors (pocket, V-carving, profile inside / outside) is **not made** — in the window, and not when
+it is calculated (the desktop, the web page and the command line alike) — when:
+
+* **vectors lie on one another**: outlines that cross, or a copy exactly on top. What is inside them is not known. A vector
+  wholly inside another (a hole, a part in a hole) is fine;
+* **two parts are closer together than the tool needs** (profile outside): the cut is a band as wide as the tool beside
+  the part (beyond the allowance), and it would go into the part next to it. Two parts need the tool diameter plus twice
+  the allowance between them; so does a part lying in a hole of another, from the edge of that hole;
+* **a hole (cut outside) or a shape (cut inside) is narrower than the tool**: it does not fit in.
+
+The window says what and how much is needed; **Select them** selects the vectors to fix (move them apart, weld or delete
+the copy, a smaller tool). Changing a toolpath to a bigger tool that no longer fits is refused the same way. Open vectors
+are asked about first (close them, select them or go on).

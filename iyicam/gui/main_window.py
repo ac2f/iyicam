@@ -1672,6 +1672,8 @@ class MainWindow(QMainWindow):
             if op is not None and openwarn.needs_closed(op, t.params) and \
                     not openwarn.ask(self, ctrl, openwarn.objects_of(ctrl, t.selection), f"this {op.label} toolpath"):
                 return
+            if not openwarn.cuttable(self, ctrl, t):         # (on one another, too close for the tool: not made)
+                return
             ctrl.add_toolpath(t)
             self._report_for(ctrl, t.id)
         dlg.open_modeless(made)
@@ -1699,6 +1701,9 @@ class MainWindow(QMainWindow):
 
         def edited() -> None:
             new = dlg.toolpath()
+            from . import openwarn
+            if not openwarn.cuttable(self, ctrl, new):        # (a bigger tool, now too wide for the gaps: not changed)
+                return
             if dlg.keep_old.isChecked():                  # the name was changed and the original stays: a new toolpath
                 new.id = new_id()
                 new.sequence = {k: v for k, v in new.sequence.items() if k != "order"}
