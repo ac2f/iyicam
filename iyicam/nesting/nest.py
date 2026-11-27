@@ -109,6 +109,9 @@ class NestSettings:
     # strips between the cuts already made (a gap of 4.1 mm beside a cut of a 4 mm tool) and the pockets the parts close
     # in. 0 = everything is used
     min_leftover: float = 0.0
+    # how the helper processes (every processor) run: "low" (the computer stays smooth while it works), "normal", or
+    # "high" (fastest; other programs slow down meanwhile)
+    priority: str = "low"
 
 
 GRAVITIES = ("left", "bottom", "compact", "reach_x", "reach_y", "diag")
@@ -1817,7 +1820,7 @@ def _nest(shapes: Sequence[NestShape], settings: NestSettings, progress: Callabl
     helpers = None
     if workers >= 2 and n.precompute_worth() is not None:
         try:
-            helpers = P.Helpers(workers)
+            helpers = P.Helpers(workers, settings.priority)
             opened.append(helpers)
         except Exception:  # noqa: BLE001  (no helper processes here: one processor, the same layouts)
             helpers = None
@@ -1856,7 +1859,7 @@ def _nest(shapes: Sequence[NestShape], settings: NestSettings, progress: Callabl
             break   # the layouts so far are what the time allowed
         if helpers is None and best is not None and i == 1 and P.worth_it(first_took, tries - 1, workers):
             try:
-                helpers = P.Helpers(workers)
+                helpers = P.Helpers(workers, settings.priority)
                 opened.append(helpers)
                 helpers.publish(n)
             except Exception:  # noqa: BLE001  (no helper processes here: one processor, the same layouts)

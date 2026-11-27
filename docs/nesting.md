@@ -180,8 +180,10 @@ once): the no-fit polygons of every pair of parts are made on all of them; the a
 another (the plain orders: biggest first in every gravity, by side, by height ...) are laid out at once, one per
 processor, and compared as one after the other would be (the best layout is the same); the random variations of the best
 order come a round at a time, as many as there are processors; the polishing at the end runs as one search per
-processor, the first with the random numbers one processor would use, the best kept. The helpers run at a lower priority,
-so the computer stays usable. On 113 curved parts (60 kinds, gears with 120 points, L shapes, frames with holes), 30
+processor, the first with the random numbers one processor would use, the best kept. **Processor use** (Strategy)
+sets how the helpers run: *low priority* (the default: the computer stays smooth, what you do meanwhile comes first),
+*normal*, or *high* (the nesting comes first and ends soonest; other programs slow down). `--priority` on the command
+line. On 113 curved parts (60 kinds, gears with 120 points, L shapes, frames with holes), 30
 attempts without a time limit took 26 s on 4 processors instead of 68 s on one, with the same layout. With a *Time
 limit* the time is used as before, by that many searches at once: more is tried in the same time. A small job (a few
 seconds on one processor) is done without helpers: starting them would take longer. `IYICAM_NEST_PROCESSES` sets how

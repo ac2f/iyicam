@@ -262,7 +262,7 @@ def cmd_nest(a) -> int:
         from .nesting.nest import DIRECTIONS
         a.gravity, a.gravity_only = DIRECTIONS[a.direction]
     st = NestSettings(a.width, a.height, a.margin, a.spacing, rots, a.gravity, iterations=a.iterations,
-                      time_limit=a.time_limit, max_points=a.max_points, squeeze_angle=a.squeeze_angle,
+                      time_limit=a.time_limit, priority=a.priority, max_points=a.max_points, squeeze_angle=a.squeeze_angle,
                       squeeze_margin=a.squeeze_margin,
                       squeeze_step=a.squeeze_step, gravity_only=a.gravity_only, arrange=a.arrange, corner=a.corner)
     stock = [] if a.no_project_stock else list(p.stock)
@@ -404,6 +404,8 @@ def main(argv: list[str] | None = None) -> int:
                    help="layouts tried (1 = one quick pass); the one using the least material is kept")
     s.add_argument("--time-limit", type=float, default=0.0,
                    help="seconds after which no further layout is tried (0 = no limit)")
+    s.add_argument("--priority", choices=["low", "normal", "high"], default="low",
+                   help="how the helpers on every processor run: low (the computer stays smooth), normal, high (fastest)")
     s.add_argument("--group-inner", action="store_true",
                    help="inner pieces (göbek) stay with their part instead of being nested on their own")
     s.add_argument("--fill-holes", action="store_true", help="place smaller parts in the holes of parts")

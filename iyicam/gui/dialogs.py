@@ -1850,6 +1850,12 @@ class NestingDialog(RemembersSize, QDialog):
             Param("iterations", "Optimisation attempts", "int", 30, min=1, max=200, group="Strategy",
                   help="1: one quick pass. More: other orders of the parts and other directions are tried, "
                        "the best layout (fewest sheets, least area used on the last) is kept and polished"),
+            Param("priority", "Processor use", "choice", "low", group="Strategy",
+                  choices=[("low", "Every processor, low priority (the computer stays smooth)"),
+                           ("normal", "Every processor, normal priority"),
+                           ("high", "Every processor, high priority (the fastest; other programs slow down)")],
+                  help="The nesting uses every processor of the computer. Low priority: what you do meanwhile (other "
+                       "sheets, other programs) comes first. High: the nesting comes first and ends soonest."),
             Param("time_limit", "Time limit of the search (seconds)", "int", 120, min=0, max=3600, group="Strategy",
                   help="No further layout is tried after this; the best so far is kept (a small job is done long "
                        "before: the search stops when nothing better comes). Hundreds of curved parts use less "
@@ -2168,7 +2174,8 @@ class NestingDialog(RemembersSize, QDialog):
                           corner=v["corner"], stock_order=v["plate_order"], reserve_quantity=int(v["reserve_quantity"]),
                           squeeze_angle=v["squeeze_angle"] if squeezing else 0.0,
                           squeeze_margin=v["squeeze_margin"] if squeezing else 0.0,
-                          squeeze_step=v["squeeze_step"], min_leftover=v["min_leftover"])
+                          squeeze_step=v["squeeze_step"], min_leftover=v["min_leftover"],
+                          priority=v.get("priority", "low"))
         quantities = {p.root.id: sp.value() for p, sp in zip(self.parts, self.qty)}
         part_rules = {p.root.id: ed.rule() for p, ed in zip(self.parts, self.rules)
                       if ed.rule()["mode"] != "inherit"}

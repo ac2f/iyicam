@@ -11,7 +11,8 @@ orders, the best kept, then (3) polishing the best one. (1) is spread over the h
   with its own random numbers (the first with the numbers one processor would use); the best search wins.
 
 The helpers get the nester with all its no-fit polygons once (a file they load), so they do not work them out again.
-They run at a lower priority: the computer stays usable while every processor works. A GPU would not help here: the
+They run at a lower priority by default (NestSettings.priority): the computer stays usable while every processor
+works; "high" is the fastest. A GPU would not help here: the
 work is polygon clipping (Clipper, whole numbers, branches), not arithmetic on large arrays.
 """
 from __future__ import annotations
@@ -27,21 +28,33 @@ import time
 _state: dict = {}           # in a helper: the nester loaded, the cancel flag
 
 
-def _lower_priority() -> None:
+PRIORITIES = ("low", "normal", "high")
+
+
+def set_priority(level: str = "low") -> None:
+    """This process at a priority: "low" (the computer stays smooth), "normal", "high" (the fastest: other programs wait
+    for it). Raising it may not be allowed (Linux / macOS without rights): it then stays as it is."""
     try:
         if os.name == "nt":
             import ctypes
-            BELOW_NORMAL = 0x00004000
-            ctypes.windll.kernel32.SetPriorityClass(ctypes.windll.kernel32.GetCurrentProcess(), BELOW_NORMAL)
+            cls = {"low": 0x00004000, "normal": 0x00000020, "high": 0x00000080}.get(level, 0x00004000)
+            ctypes.windll.kernel32.SetPriorityClass(ctypes.windll.kernel32.GetCurrentProcess(), cls)
         else:
-            os.nice(5)
-    except Exception:  # noqa: BLE001  (a priority that cannot be lowered: the work is the same)
+            want = {"low": 5, "normal": 0, "high": -10}.get(level, 5)
+            now = os.getpriority(os.PRIO_PROCESS, 0)
+            if want != now:
+                try:
+                    os.setpriority(os.PRIO_PROCESS, 0, want)
+                except PermissionError:          # (higher than normal needs rights: normal then, if it was lower)
+                    if want < 0 < now:
+                        os.setpriority(os.PRIO_PROCESS, 0, 0)
+    except Exception:  # noqa: BLE001  (a priority that cannot be set: the work is the same)
         pass
 
 
-def _init(flag) -> None:
+def _init(flag, priority="low") -> None:
     _state["flag"] = flag
-    _lower_priority()
+    set_priority(priority)
 
 
 def _nester(path: str):
@@ -78,13 +91,14 @@ def _search(path: str, best, order, grav, gravs, seed, seconds_left, tries, shar
 class Helpers:
     """A pool of helper processes for one nesting; ``close()`` (or ``with``) ends them."""
 
-    def __init__(self, workers: int):
+    def __init__(self, workers: int, priority: str = "low"):
         ctx = mp.get_context("spawn")
         self.flag = ctx.Event()
         self.workers = workers
+        self.priority = priority if priority in PRIORITIES else "low"
         self.path: str | None = None
         self.pool = cf.ProcessPoolExecutor(max_workers=workers, mp_context=ctx, initializer=_init,
-                                           initargs=(self.flag,))
+                                           initargs=(self.flag, self.priority))
 
     def publish(self, nester) -> None:
         """The nester as it is now (with its no-fit polygons) for the helpers: written once, each helper loads it once."""

@@ -50,7 +50,7 @@ def test_the_same_best_layout_on_every_processor(monkeypatch):
     monkeypatch.setattr(P, "worth_it", lambda *a: True)          # (a small job: the helpers anyway)
     started = []
     real = P.Helpers.__init__
-    monkeypatch.setattr(P.Helpers, "__init__", lambda self, w: (started.append(w), real(self, w))[1])
+    monkeypatch.setattr(P.Helpers, "__init__", lambda self, w, *a: (started.append(w), real(self, w, *a))[1])
     many = N.nest(job(), SETTINGS)
     assert started == [3]
     n = N.Nester(job(), SETTINGS)
@@ -63,7 +63,7 @@ def test_a_cancelled_nesting_ends_its_helpers(monkeypatch):
     monkeypatch.setattr(P, "worth_it", lambda *a: True)
     made = []
     real = P.Helpers.__init__
-    monkeypatch.setattr(P.Helpers, "__init__", lambda self, w: (made.append(self), real(self, w))[1])
+    monkeypatch.setattr(P.Helpers, "__init__", lambda self, w, *a: (made.append(self), real(self, w, *a))[1])
     calls = [0]
 
     def cancel():                                                   # (once the helpers are at work)
@@ -72,3 +72,17 @@ def test_a_cancelled_nesting_ends_its_helpers(monkeypatch):
     with pytest.raises(N.NestCancelled):
         N.nest(job(), SETTINGS, cancel=cancel)
     assert made and all(h.flag.is_set() and h.path is None for h in made)
+
+
+def test_the_helpers_run_at_the_priority_asked(monkeypatch):
+    """low: the computer stays smooth (a lower priority); normal; high: as high as the system allows."""
+    import os
+    if os.name == "nt":
+        pytest.skip("priorities of Windows: checked on Windows")
+    seen = {}
+    for level in ("low", "normal"):
+        with P.Helpers(1, level) as h:
+            seen[level] = h.pool.submit(os.getpriority, os.PRIO_PROCESS, 0).result()
+    assert seen["low"] > seen["normal"] >= os.getpriority(os.PRIO_PROCESS, 0) - 0  # (low is nicer than normal)
+    st = N.NestSettings(priority="high")
+    assert st.priority == "high"
