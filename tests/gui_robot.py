@@ -95,6 +95,16 @@ class Robot:
             return QMessageBox.Ok
 
         mp.setattr(QMessageBox, "exec", msg_exec)
+        # (a box that does not stop the work, as the report of a nesting in the background: kept like the others)
+        mp.setattr(QMessageBox, "show", lambda self: robot.messages.append(("box", self.text())))
+        from iyicam.gui.main_window import MainWindow
+        nest = MainWindow.nest
+
+        def nest_and_wait(win, *a, **k):                 # (a nesting runs in the background: a test waits for its end)
+            nest(win, *a, **k)
+            win.wait_nesting(seconds=300)
+        nest_and_wait.without_waiting = nest
+        mp.setattr(MainWindow, "nest", nest_and_wait)
         mp.setattr(QMessageBox, "clickedButton", lambda self: getattr(self, "_chosen", None))
 
         def file_open(*a, **k):

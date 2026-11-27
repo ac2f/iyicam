@@ -142,9 +142,12 @@ Settings saved before *Direction* existed are read as Along X, or as the directi
 
 ## Speed, progress and cancelling
 
-Nesting runs in the background: the program stays alive, a progress window counts the
-parts placed, and **Cancel** works at once (within a fraction of a second) and changes
-nothing. What keeps it fast:
+Nesting runs in the background: once its window is closed with OK, the program is free — work on other sheets or in
+other tabs, or start a nesting of another project. The status bar shows how far it is, with **Cancel** (it stops at
+once and changes nothing). When it is over the layout goes into its project (one undo step) and a window says what was
+placed; the view goes to the nested sheet only if you are still on the sheet it was started from. If the vectors being
+nested (or the sheets nested onto) were changed meanwhile, the layout is not put in and nothing changes: nest again.
+One nesting at a time per project; closing its tab cancels it. What keeps it fast:
 
 * **Outline points per part** (default 300, 0 = no limit): a part whose outline has more
   points is simplified further before it is nested. Outlines from DXF files, text or traced

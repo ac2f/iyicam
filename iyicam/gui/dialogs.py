@@ -99,6 +99,81 @@ def run_in_thread(fn, prog: QProgressDialog, state: dict):
     return worker.result
 
 
+def nest_signature(objs, sheets) -> int:
+    """What a nesting depends on, as one number: the vectors (their outlines and layers) and the sheets (their size and
+    outline). Compared when a nesting in the background is over: was anything changed meanwhile?"""
+    def contour(c):
+        return (c.closed, tuple((type(s).__name__, s.a, s.b, getattr(s, "bulge", None), getattr(s, "c1", None),
+                                 getattr(s, "c2", None)) for s in c.segs))
+    vec = tuple((o.id, o.layer_id, tuple(contour(c) for c in o.contours)) for o in objs)
+    sh = tuple((s.id, s.width, s.height, len(s.vectors), repr(s.outline)) for s in sheets)
+    return hash((vec, sh))
+
+
+class NestJob:
+    """A nesting in the background (``NestingDialog.start``): a thread does the work (with the helper processes on every
+    processor), a timer here looks after it; when it is over the layout is put into its project, in the interface."""
+
+    def __init__(self, dialog, prep, done, show_progress=None):
+        self.dialog, self.prep, self.done, self.show_progress = dialog, prep, done, show_progress
+        self.state = prep["state"]
+        self.ctrl = dialog.ctrl
+        self.result = None
+        self.worker = _Worker(prep["compute"])
+        self.worker.start()
+        self.timer = QTimer()
+        self.timer.timeout.connect(self._tick)
+        self.timer.start(100)
+
+    @property
+    def running(self) -> bool:
+        return self.timer.isActive()
+
+    def cancel(self) -> None:
+        self.state["cancel"].set()
+
+    def progress(self) -> float:
+        return min(1.0, self.state["k"] / max(1, self.state["n"]))
+
+    def wait(self, seconds: float | None = None) -> None:
+        """(tests) The job to its end, the interface going on meanwhile."""
+        import time
+        end = None if seconds is None else time.monotonic() + seconds
+        while self.running and (end is None or time.monotonic() < end):
+            QApplication.processEvents()
+            self.worker.join(0.02)
+        QApplication.processEvents()
+
+    def _tick(self) -> None:
+        if self.show_progress is not None:
+            self.show_progress(self.state["k"], self.state["n"])
+        if self.worker.is_alive():
+            return
+        self.timer.stop()
+        out = None
+        try:
+            err = self.worker.error
+            if isinstance(err, NestCancelled) or self.state["cancel"].is_set():
+                out = None
+            elif isinstance(err, clip.TooComplex):
+                QMessageBox.warning(self.dialog.parent(), "Nesting", f"This cannot be nested:\n{err}")
+            elif err is not None:
+                QMessageBox.critical(self.dialog.parent(), "Nesting", f"{type(err).__name__}: {err}")
+            elif not self.dialog.unchanged(self.prep):
+                QMessageBox.warning(self.dialog.parent(), "Nesting",
+                                    "The vectors (or the sheets) of this nesting were changed while it ran: the layout "
+                                    "is not put in, nothing is changed. Nest again.")
+            else:
+                # (the view stays where you are working now: it goes to the nested sheet only when you are still there)
+                win = self.dialog.parent()
+                here = getattr(win, "ctrl", None) is self.ctrl and self.ctrl.sheet is self.prep["sheet"]
+                self.prep["show"] = here
+                out = self.dialog.finish(self.prep, self.worker.result)
+        finally:
+            self.result = out
+            self.done(out)
+
+
 def scroll(widget: QWidget) -> QScrollArea:
     sa = QScrollArea()
     sa.setWidgetResizable(True)
@@ -1669,11 +1744,14 @@ class RotationRuleEdit(QWidget):
 class NewSheetsGroupDialog(QDialog):
     """After a nesting: the group the new sheets go into (the group of the sheet it started on first), a new group, or none."""
 
-    def __init__(self, n: int, current: str, groups: list[str], parent=None):
+    def __init__(self, n: int, current: str, groups: list[str], parent=None, used: int = 0):
         super().__init__(parent)
         self.setWindowTitle("New sheets")
         form = QFormLayout(self)
-        form.addRow(QLabel(f"The nesting made {n} new sheet{'s' if n != 1 else ''}. Put {'them' if n != 1 else 'it'} in a group?"))
+        also = (f" A group chosen also takes the sheet{'s' if used != 1 else ''} the parts were nested on (the whole "
+                "layout is in it)." if used else "")
+        form.addRow(QLabel(f"The nesting made {n} new sheet{'s' if n != 1 else ''}. Put {'them' if n != 1 else 'it'} in a "
+                           f"group?{also}"))
         self.box = QComboBox()
         if current:
             self.box.addItem(f"The group of this sheet: {current}", ("group", current))
@@ -2046,7 +2124,40 @@ class NestingDialog(RemembersSize, QDialog):
         return box.clickedButton() is yes
 
     def run(self):
-        """Nest; the outcome, or ``None`` when cancelled (nothing is changed then)."""
+        """Nest and wait (a progress window); the outcome, or ``None`` when cancelled (nothing is changed then)."""
+        try:
+            prep = self.prepare()
+        except clip.TooComplex as exc:    # (copies piled on one spot, on the plate or among the parts)
+            QMessageBox.warning(self, "Nesting", f"This cannot be nested:\n{exc}")
+            return None
+        prog = QProgressDialog("Nesting parts...", "Cancel", 0, 100, self)
+        prog.setWindowModality(Qt.WindowModal)
+        prog.setMinimumDuration(300)
+        prog.setAutoClose(False)
+        prog.setAutoReset(False)
+        state = prep["state"]
+        try:
+            # the long part runs in a thread: the program stays alive and Cancel works at once
+            res = run_in_thread(prep["compute"], prog, state)
+        except NestCancelled:
+            return None
+        except clip.TooComplex as exc:    # (copies piled on one spot, on the plate or among the parts)
+            QMessageBox.warning(self, "Nesting", f"This cannot be nested:\n{exc}")
+            return None
+        finally:
+            prog.close()
+        return self.finish(prep, res)
+
+    def start(self, done, show_progress=None):
+        """Nest in the background: the program stays usable (other tabs, other sheets) while every processor works.
+        ``done(out)`` is called here (in the interface) when it is over: the outcome, or ``None`` (cancelled, failed,
+        or the vectors were changed meanwhile: nothing is changed then). ``show_progress(k, n)`` is called as it goes.
+        Returns the job: ``job.cancel()`` stops it."""
+        prep = self.prepare()
+        return NestJob(self, prep, done, show_progress)
+
+    def prepare(self) -> dict:
+        """Everything a nesting needs, read from the window and the project now (in the interface)."""
         from ..core.scope import sheets_with
         v = self.form.values()
         squeezing = v["squeeze"] != "off"
@@ -2063,18 +2174,10 @@ class NestingDialog(RemembersSize, QDialog):
                       if ed.rule()["mode"] != "inherit"}
         layer_rules = {lid: ed.rule() for lid, ed in zip(self.layer_ids, self.layer_rules)
                        if ed.rule()["mode"] != "default"}
-        prog = QProgressDialog("Nesting parts...", "Cancel", 0, 100, self)
-        prog.setWindowModality(Qt.WindowModal)
-        prog.setMinimumDuration(300)
-        prog.setAutoClose(False)
-        prog.setAutoReset(False)
         state = {"k": 0, "n": 1, "cancel": threading.Event()}
 
         def progress(k, n):
             state["k"], state["n"] = k, n
-
-        def choose(strict, better) -> bool:
-            return v["squeeze"] == "auto" or self._ask_squeeze(self._suggestion_text(strict, better))
 
         ctrl = self.ctrl
         table = self.stock_table
@@ -2089,31 +2192,42 @@ class NestingDialog(RemembersSize, QDialog):
         moving = {o.id for p in self.parts for o in p.objects}
         sheet = ctrl.sheet
         blank = target == "current" and not sheet.outline and all(o.id in moving for o in sheet.vectors)
-        try:
-            job = prepare_nesting(ctrl.project, self.objs, st, quantities, [], stock, use_sheets, v["new_sheets"],
-                                  part_rules, layer_rules, v["tilt_step"], v["group_inner"], v["fill_holes"])
-            # the long part runs in a thread: the program stays alive and Cancel works at once
-            res = run_in_thread(lambda: run_nesting(job, progress, state["cancel"].is_set), prog, state)
-        except NestCancelled:
-            return None
-        except clip.TooComplex as exc:    # (copies piled on one spot, on the plate or among the parts)
-            QMessageBox.warning(self, "Nesting", f"This cannot be nested:\n{exc}")
-            return None
-        finally:
-            prog.close()
+        job = prepare_nesting(ctrl.project, self.objs, st, quantities, [], stock, use_sheets, v["new_sheets"],
+                              part_rules, layer_rules, v["tilt_step"], v["group_inner"], v["fill_holes"])
+        return {"v": v, "job": job, "state": state, "sheet": sheet, "blank": blank, "squeezing": squeezing,
+                "use_sheets": list(use_sheets), "signature": nest_signature(self.objs, use_sheets),
+                "compute": lambda: run_nesting(job, progress, state["cancel"].is_set)}
+
+    def unchanged(self, prep) -> bool:
+        """Whether the vectors nested and the sheets nested onto are as they were when the nesting started (they may
+        have been changed meanwhile: the nesting ran in the background)."""
+        live = {o.id: o for s in self.ctrl.project.sheets for o in s.vectors}
+        if any(o.id not in live or live[o.id] is not o for o in self.objs):
+            return False
+        sheets = {s.id for s in self.ctrl.project.sheets}
+        if any(s.id not in sheets for s in prep["use_sheets"]):
+            return False
+        return nest_signature(self.objs, prep["use_sheets"]) == prep["signature"]
+
+    def finish(self, prep, res):
+        """The layout put into the project (one undo step); the outcome."""
+        v, job, ctrl, sheet = prep["v"], prep["job"], self.ctrl, prep["sheet"]
+
+        def choose(strict, better) -> bool:
+            return v["squeeze"] == "auto" or self._ask_squeeze(self._suggestion_text(strict, better))
         ctrl.checkpoint("Nesting")
         try:
-            if blank:
+            if prep["blank"]:
                 sheet.width, sheet.height = v["width"], v["height"]  # a blank sheet takes the size asked for
                 job.settings.sheet_width, job.settings.sheet_height = v["width"], v["height"]
-            out = apply_nesting(job, res, choose if squeezing else None)
+            out = apply_nesting(job, res, choose if prep["squeezing"] else None)
             if v["use_up"]:
                 self._use_up(out)
         except Exception:
             ctrl.undo_stack.rollback(ctrl.project)
             raise
         ctrl.notify()
-        if out.sheets:
+        if out.sheets and prep.get("show", True):
             ctrl.set_sheet(out.sheets[0].id)
         return out
 

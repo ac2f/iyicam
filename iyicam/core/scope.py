@@ -225,10 +225,15 @@ def unisolate(project: Project, group: str) -> list[Sheet]:
     return out
 
 
-def group_new_sheets(project: Project, made: list[Sheet], group, current: Sheet | None) -> str:
+def group_new_sheets(project: Project, made: list[Sheet], group, current: Sheet | None,
+                     used: list[Sheet] | None = None) -> str:
     """The group the sheets a nesting made go into (asked after the nesting): ``group`` a name (a new or an existing
     group), ``""`` none, ``None`` the default: the group of the sheet the nesting was started on.  On an isolated group the
-    new sheets are always its own (nothing leaves it).  Returns the group they are in."""
+    new sheets are always its own (nothing leaves it).  Returns the group they are in.
+
+    ``used``: the sheets that were there already and got parts (the sheet the nesting started on): a group chosen takes
+    them too, so the whole layout is in it (they stayed out, the group had only the new ones). "No group" leaves them in
+    their groups; one in an isolated group stays there."""
     if not made:
         return ""
     side = scope_of(current)
@@ -241,4 +246,9 @@ def group_new_sheets(project: Project, made: list[Sheet], group, current: Sheet 
         if is_isolated(project, name):                     # (an isolated group takes nothing from the rest)
             name = ""
     set_group(project, [s.id for s in made], name)
+    if name:
+        keep = {s.id for s in made}
+        join = [s.id for s in (used or []) if s.id not in keep and not scope_of(s) and s.group != name]
+        if join:
+            set_group(project, join, name)
     return name

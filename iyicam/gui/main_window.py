@@ -15,6 +15,7 @@ from .wheelguard import QComboBox
 
 from .. import __version__
 from ..cam.moves import PathStats, format_time
+from ..core import clip
 from ..core import vectorops
 from ..core.document import Project, VectorObject, new_id, toolpath_from_dict, toolpath_to_dict
 from ..core.geom import BBox, Transform
@@ -254,6 +255,7 @@ class MainWindow(QMainWindow):
         self.tabs.setCurrentIndex(index)
         if not self.confirm_discard(ctrl):
             return False
+        self._cancel_nesting(ctrl)                    # (its layout would go into whatever the tab shows next)
         if ctrl.project.path is not None:
             self.closed_tabs.insert(0, str(ctrl.project.path))
             del self.closed_tabs[20:]
@@ -1915,6 +1917,10 @@ class MainWindow(QMainWindow):
         if not isinstance(group, str):                   # (a menu passes its own "checked")
             group = None
         c = self.ctrl
+        if self.nesting_running(c):                      # (one at a time per project: two would move the same parts)
+            QMessageBox.information(self, "Nesting", "A nesting of this project is running (see the status bar). Wait "
+                                                     "for it or cancel it; other projects can be nested meanwhile.")
+            return
         pool = [o for o in (c.selected_objects() or list(c.sheet.vectors)) if c.editable(o)]  # locked layers stay put
         if not pool:
             QMessageBox.information(self, "Nesting", "There are no vectors to nest (vectors on locked layers "
@@ -1940,45 +1946,118 @@ class MainWindow(QMainWindow):
             w = dlg.form.widgets.get("target") if hasattr(dlg, "form") else None
             if w is not None and w.findData(f"group:{group}") >= 0:
                 w.setCurrentIndex(w.findData(f"group:{group}"))
-        if dlg.exec():
-            before = {s.id for s in c.project.sheets}
-            start = c.sheet
-            out = dlg.run()
-            if out is None:  # cancelled: nothing changed
-                return
-            made = [s for s in out.sheets if s.id not in before]
-            joined = self._group_new_sheets(made, start)
-            r = out.result
-            lines = [f"Placed {out.placed} part(s) on {r.sheets} plate(s):"]
-            for sh, u in zip(out.sheets, r.utilization):
-                lines.append(f"  {sh.name}: {u * 100:.1f}% used")
-            if out.squeezed:
-                lines += ["", "Squeezed in:"] + squeeze_lines(out.parts, out.squeezed)
-            if out.unplaced:
-                lines.append(f"\n{out.unplaced} part(s) did not fit.")
-            if made:
-                lines.append(f"\n{len(made)} new sheet(s)" + (f" in the group {joined}." if joined else ", in no group."))
-            QMessageBox.information(self, "Nesting", "\n".join(lines))
+        if not dlg.exec():
+            return
+        before = {s.id for s in c.project.sheets}
+        start = c.sheet
+        bar = self._nest_bar(c)
+        try:
+            job = dlg.start(lambda out: self._nest_done(c, dlg, out, before, start, bar), bar.show_progress)
+        except clip.TooComplex as exc:    # (copies piled on one spot, on the plate or among the parts)
+            bar.close_bar()
+            QMessageBox.warning(self, "Nesting", f"This cannot be nested:\n{exc}")
+            return
+        bar.job = job
+        self._nest_jobs[id(c)] = job
+
+    def _cancel_nesting(self, ctrl) -> None:
+        """Stop the nesting of this project in the background (nothing is put in)."""
+        job = getattr(self, "_nest_jobs", {}).get(id(ctrl))
+        if job is not None and job.running:
+            job.cancel()
+
+    def wait_nesting(self, ctrl=None, seconds: float | None = None) -> None:
+        """(tests, scripts) Wait for the nestings in the background (of this project, or all), the interface going on."""
+        for k, job in list(getattr(self, "_nest_jobs", {}).items()):
+            if ctrl is None or k == id(ctrl):
+                job.wait(seconds)
+
+    def nesting_running(self, ctrl=None) -> bool:
+        """Whether a nesting of this project (any, with None) is running in the background."""
+        jobs = getattr(self, "_nest_jobs", {})
+        return any(j.running for k, j in jobs.items() if ctrl is None or k == id(ctrl))
+
+    def _nest_bar(self, c):
+        """The progress of a nesting in the background, in the status bar: what it nests, how far, Cancel."""
+        from PySide6.QtWidgets import QHBoxLayout, QProgressBar, QToolButton, QWidget
+        if not hasattr(self, "_nest_jobs"):
+            self._nest_jobs = {}
+        w = QWidget()
+        lay = QHBoxLayout(w)
+        lay.setContentsMargins(4, 0, 4, 0)
+        label = QLabel(f"Nesting {c.title}")
+        bar = QProgressBar()
+        bar.setRange(0, 1000)
+        bar.setMaximumWidth(160)
+        bar.setTextVisible(True)
+        stop = QToolButton()
+        stop.setText("Cancel")
+        stop.setToolTip("Stop this nesting: nothing is changed")
+        lay.addWidget(label)
+        lay.addWidget(bar)
+        lay.addWidget(stop)
+        w.job = None
+
+        def show_progress(k, n):
+            bar.setValue(int(1000 * min(1.0, k / max(1, n))))
+            bar.setFormat(f"{100 * k / max(1, n):.0f} %")
+
+        def close_bar():
+            self.statusBar().removeWidget(w)
+            w.deleteLater()
+        stop.clicked.connect(lambda: w.job.cancel() if w.job is not None else None)
+        w.show_progress, w.close_bar = show_progress, close_bar
+        self.statusBar().addPermanentWidget(w)
+        w.show()
+        return w
+
+    def _nest_done(self, c, dlg, out, before, start, bar) -> None:
+        """A nesting in the background is over (it was put into its project by then, or not)."""
+        bar.close_bar()
+        self._nest_jobs.pop(id(c), None)
+        if out is None or c not in self.documents():        # (cancelled, refused, or the project was closed)
+            return
+        made = [s for s in out.sheets if s.id not in before]
+        used = [s for s in out.sheets if s.id in before]
+        joined = self._group_new_sheets(made, start, used, c)
+        r = out.result
+        lines = [f"Placed {out.placed} part(s) on {r.sheets} plate(s):"]
+        for sh, u in zip(out.sheets, r.utilization):
+            lines.append(f"  {sh.name}: {u * 100:.1f}% used")
+        if out.squeezed:
+            lines += ["", "Squeezed in:"] + squeeze_lines(out.parts, out.squeezed)
+        if out.unplaced:
+            lines.append(f"\n{out.unplaced} part(s) did not fit.")
+        if made:
+            lines.append(f"\n{len(made)} new sheet(s)" + (f" in the group {joined}" + (" (with the sheet it was nested "
+                         "on)" if used else "") + "." if joined else ", in no group."))
+        # (said in a window that does not stop the work: the nesting ran while you were working)
+        box = QMessageBox(QMessageBox.Information, f"Nesting {c.title}", "\n".join(lines), QMessageBox.Ok, self)
+        box.setModal(False)
+        box.show()
+        self._nest_report = box
+        if self.ctrl is c:
             self.canvas.zoom_extents()
 
-    def _group_new_sheets(self, made: list, start) -> str:
+    def _group_new_sheets(self, made: list, start, used: list | None = None, c=None) -> str:
         """After a nesting that made new sheets: which group they go into (asked; the group of the sheet the nesting started
-        on is offered first).  On an isolated group they are the group's, nothing is asked."""
+        on is offered first).  The sheets that were nested onto (the one it started on) go into a group chosen too.  On
+        an isolated group they are the group's, nothing is asked."""
         from ..core.scope import group_new_sheets, groups_of_scope, scope_of
-        c = self.ctrl
+        c = c or self.ctrl
         if not made:
             return ""
         if scope_of(start):
             with c.edit("Group the new sheets", geometry=False):
-                return group_new_sheets(c.project, made, None, start)
+                return group_new_sheets(c.project, made, None, start, used)
         dlg = NewSheetsGroupDialog(len(made), start.group if start is not None else "",
-                                   groups_of_scope(c.project, ""), self)
+                                   groups_of_scope(c.project, ""), self, used=len(used or []))
         if not dlg.exec():
             choice = None if start is not None and start.group else ""
         else:
             choice = dlg.choice()
         with c.edit("Group the new sheets", geometry=False):
-            name = group_new_sheets(c.project, made, choice, start)
+            name = group_new_sheets(c.project, made, choice, start, used)
         c.refresh_stale()
         c.toolpaths_changed.emit()
         c.sheet_changed.emit()
@@ -2065,6 +2144,7 @@ class MainWindow(QMainWindow):
                 return
         for c in self.documents():
             c._recalc.stop()                   # (no calculation may start in a window that is closing)
+            self._cancel_nesting(c)
         s = self.ctrl.settings
         files = [(i, str(c.project.path)) for i, c in enumerate(self.documents()) if c.project.path is not None]
         s.open_tabs = [f for _, f in files]
