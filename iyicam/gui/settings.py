@@ -50,6 +50,7 @@ class Settings:
     shortcuts: dict = field(default_factory=dict)   # keyboard shortcuts the person changed: menu path -> [keys] ([]: none)
     ask_tool: bool = True             # a new toolpath asks for its tool from the tool database first
     open_tabs: list[str] = field(default_factory=list)   # the projects that were open when the program was closed
+    experimental_gpu_nesting: bool = False   # Experimental: the nesting's layouts made on an NVIDIA graphics card (CuPy)
     active_tab: int = 0
 
     def add_recent(self, path: str) -> None:

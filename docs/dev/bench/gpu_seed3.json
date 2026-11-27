@@ -1,0 +1,40 @@
+{
+ "python": "3.14.10",
+ "platform": "Windows-10-10.0.19045-SP0",
+ "processors": 4,
+ "helpers": 4,
+ "kinds": 60,
+ "parts": 122,
+ "iterations": 30,
+ "time_limit": 0.0,
+ "seconds": 23.66,
+ "sheets": 4,
+ "placed": 122,
+ "unplaced": 0,
+ "utilisation": [
+  0.5002,
+  0.6266,
+  0.4664,
+  0.0266
+ ],
+ "quality": [
+  0.0,
+  11907200.0,
+  4.0,
+  -1.593177893360871,
+  282370.4,
+  1295.5
+ ],
+ "layout": "c87e7f4dfc1cfd03",
+ "notes": [
+  "nested on the graphics card (NVIDIA GeForce GTX 960): 128 layouts, pixel 0.9712 mm, 22.8 s"
+ ],
+ "gpu_used": true,
+ "phases": [
+  [
+   "the rest (on this process)",
+   23.66
+  ]
+ ],
+ "gpu": "NVIDIA GeForce GTX 960"
+}

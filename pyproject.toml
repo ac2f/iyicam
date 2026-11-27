@@ -19,6 +19,8 @@ dependencies = [
 gui = ["PySide6-Essentials>=6.5"]
 dev = ["pytest>=7", "PySide6-Essentials>=6.5"]
 package = ["PySide6-Essentials>=6.5", "pyinstaller>=6.6"]
+# experimental: nesting on an NVIDIA graphics card (Settings > Experimental); the CUDA libraries come as wheels
+gpu = ["cupy-cuda12x[ctk]>=13"]
 
 [project.scripts]
 iyicam = "iyicam.__main__:main"

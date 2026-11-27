@@ -112,6 +112,11 @@ class NestSettings:
     # how the helper processes (every processor) run: "low" (the computer stays smooth while it works), "normal", or
     # "high" (fastest; other programs slow down meanwhile)
     priority: str = "low"
+    # experimental: the layouts made on the graphics card (NVIDIA, CuPy; see gpu.py), many at once; what the card does not
+    # do, or a computer without one, is nested the usual way. ``gpu_pixel``: its bitmaps' pixel (mm, 0 = about 2500 along
+    # the plate)
+    gpu: bool = False
+    gpu_pixel: float = 0.0
 
 
 GRAVITIES = ("left", "bottom", "compact", "reach_x", "reach_y", "diag")
@@ -177,6 +182,7 @@ class NestResult:
     suggestion: "NestResult | None" = None                  # a better layout with parts squeezed in, if there is one
     used: list[tuple[float, float, float, float]] = field(default_factory=list)  # bounding box of the parts, per plate
     layout: list[list[tuple]] = field(default_factory=list, repr=False)  # per plate: what was placed (for polishing)
+    notes: list[str] = field(default_factory=list)          # how it was made, when that is worth saying (the graphics card)
 
 
 def is_convex(path: IntPath) -> bool:
@@ -313,9 +319,13 @@ def convex_parts(path: IntPath) -> list[IntPath] | None:
     idx = list(range(len(P)))
     tris: list[list[int]] = []
     guard = 0
+    # (whether a corner lies in the ear: all the corners left at once, in integers, the same test as _in_triangle)
+    XY = np.asarray(P, dtype=np.int64).reshape(-1, 2)
     while len(idx) > 3 and guard < 10 * len(P) + 10:
         guard += 1
         m = len(idx)
+        ia = np.asarray(idx)
+        X, Y = XY[ia, 0], XY[ia, 1]
         for k in range(m):
             i0, i1, i2 = idx[k - 1], idx[k], idx[(k + 1) % m]
             a, b, c = P[i0], P[i1], P[i2]
@@ -325,7 +335,10 @@ def convex_parts(path: IntPath) -> list[IntPath] | None:
                 break
             if cr < 0:
                 continue
-            if any(_in_triangle(P[j], a, b, c) for j in idx if j not in (i0, i1, i2) and P[j] not in (a, b, c)):
+            ins = (((b[0] - a[0]) * (Y - a[1]) - (b[1] - a[1]) * (X - a[0]) >= 0)
+                   & ((c[0] - b[0]) * (Y - b[1]) - (c[1] - b[1]) * (X - b[0]) >= 0)
+                   & ((a[0] - c[0]) * (Y - c[1]) - (a[1] - c[1]) * (X - c[0]) >= 0))
+            if ins.any() and any(j not in (i0, i1, i2) and P[j] not in (a, b, c) for j in ia[ins].tolist()):
                 continue
             tris.append([i0, i1, i2])
             idx.pop(k)
@@ -412,7 +425,8 @@ def merge_pieces(pieces: list[IntPath], tol: float) -> list[IntPath]:
 
 
 class _Variant:
-    __slots__ = ("paths", "bbox", "area", "convex", "pieces", "sig", "holes", "solid", "_prep", "_negprep", "_digest")
+    __slots__ = ("paths", "bbox", "area", "_convex", "_pieces", "_merge", "sig", "holes", "solid", "_prep", "_negprep",
+                 "_digest")
 
     def __init__(self, paths: list[IntPath], holes: list[IntPath] | None = None, merge: float = 0.0):
         self.paths = paths
@@ -427,21 +441,34 @@ class _Variant:
         self.sig = frozenset([(x - self.bbox[0], y - self.bbox[1]) for path in paths for x, y in path]
                              + [(x - self.bbox[0], y - self.bbox[1], 1) for path in self.holes for x, y in path])
         self.area = sum(abs(pyclipper.Area(p)) for p in paths)
-        # nearly convex outlines use their hull: a slightly larger, safe no-fit polygon
-        self.convex = [convex_hull(p) if is_convex(p) else None for p in paths]
-        pieces: list[IntPath] | None = []
-        for p, hull in zip(paths, self.convex):
-            parts = [hull] if hull else convex_parts(p)
-            if parts is None:
-                pieces = None
-                break
-            if merge > 0 and len(parts) > 2:
-                parts = merge_pieces(parts, merge)
-            pieces += parts
-        self.pieces = pieces
+        self._merge = merge
+        self._convex = self._pieces = None      # (made when first asked for: the graphics card needs neither)
         self._prep = None
         self._negprep = None
         self._digest = None
+
+    @property
+    def convex(self) -> list:
+        """Per outline its hull when it is convex (nearly: a slightly larger, safe no-fit polygon), else None."""
+        if self._convex is None:
+            self._convex = [convex_hull(p) if is_convex(p) else None for p in self.paths]
+        return self._convex
+
+    @property
+    def pieces(self) -> list[IntPath] | None:
+        """The outlines split into convex pieces (None: one could not be split)."""
+        if self._pieces is None:
+            pieces: list[IntPath] | None = []
+            for p, hull in zip(self.paths, self.convex):
+                parts = [hull] if hull else convex_parts(p)
+                if parts is None:
+                    pieces = None
+                    break
+                if self._merge > 0 and len(parts) > 2:
+                    parts = merge_pieces(parts, self._merge)
+                pieces += parts
+            self._pieces = pieces if pieces is not None else False
+        return self._pieces if self._pieces is not False else None
 
     def digest(self) -> bytes:
         """The outline and the holes exactly (16 bytes): what a no-fit polygon kept between nestings is found by."""
@@ -1813,6 +1840,24 @@ def _nest(shapes: Sequence[NestShape], settings: NestSettings, progress: Callabl
 
     n = Nester(shapes, settings)
     n.cancel = checking
+    if settings.gpu:
+        got, why = _on_gpu(n, settings, checking, report, count, attempts)
+        if got is not None:
+            best, order, grav = got
+            if not best.unplaced and best.sheets <= 1 and len(shapes) <= 1:
+                return best
+            from . import rects
+            if rects.eligible(n):
+                plan0 = n.candidates(1)
+                alt = rects.pack_rects(n, plan0[0][0] if plan0 else n.default_order(), tries, settings.time_limit,
+                                       settings.seed, checking)
+                if alt is not None and n.quality(alt) < n.quality(best):
+                    alt.notes = list(best.notes)
+                    best = alt
+            return best
+        gpu_note = why
+    else:
+        gpu_note = None
     workers = nest_processes()
     first_took = 0.0
     # (many curved parts: their no-fit polygons on every processor at once; most of the first layout, as progress). When
@@ -1922,4 +1967,33 @@ def _nest(shapes: Sequence[NestShape], settings: NestSettings, progress: Callabl
         r = n.run_order(order, share(attempts - 1), checking, squeeze=True, gravity=grav)
         if r.squeezed and n.quality(r)[:3] < n.quality(best)[:3]:
             best.suggestion = r
+    if gpu_note:
+        best.notes.append(gpu_note)
     return best
+
+
+# the GPU's backend: "cupy", or "numpy" (the same code on the processor: the tests)
+GPU_BACKEND = "cupy"
+
+
+def _on_gpu(n: Nester, settings: NestSettings, checking, report, count: int, attempts: int):
+    """The layouts on the graphics card: ``((best, order, gravity), None)``, or ``(None, why)`` when they are not made
+    there (no card, not what the card does, a failure): the usual way then, and ``why`` is said."""
+    from . import gpu as G
+    why = G.available() if GPU_BACKEND == "cupy" else None
+    if why is None:
+        why = G.supported(n)
+    if why is not None:
+        return None, f"not on the graphics card: {why}"
+    total = max(1, attempts * count)
+    try:
+        got = G.nest_on_gpu(n, settings, n._check, lambda k, t: report(int(total * k / max(1, t))),
+                            G.backend(GPU_BACKEND))
+    except NestCancelled:
+        raise
+    except Exception as e:  # noqa: BLE001  (out of memory on the card, a driver error ...: the usual way)
+        return None, f"the graphics card failed ({type(e).__name__}: {e}); nested the usual way"
+    if got is None:
+        return None, "no layout from the graphics card passed the exact check; nested the usual way"
+    best, order, grav, _ = got
+    return (best, order, grav), None

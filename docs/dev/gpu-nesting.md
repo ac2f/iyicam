@@ -88,6 +88,45 @@ of a correlation of a 4880 x 2440 bitmap with a part's bitmap, times the positio
 Acceptance: switched off, all tests pass and the layouts are the same as now; switched on, on the bench job, the same
 number of plates (or fewer) and a utilisation within a fraction of a percent, in clearly less time; every layout valid.
 
+## Step 1: measured (2026-11-27)
+
+The machine: Intel Core i3-6098P (2 cores, 4 threads), 16 GB, Windows 10; **NVIDIA GeForce GTX 960, 2 GB**
+(compute capability 5.2, Maxwell), driver 560.94, CUDA 12.6 (driver). About 1.6 GB of the card is free with the
+desktop open: a whole plate at 0.5 mm (4880 x 2440 float32, 48 MB) fits many times, but not hundreds of them.
+
+The environment: a virtual environment `.venv/` in the project (ignored by git; not `.venv-build/`, which is the
+package's and must not get CuPy): `python -m venv .venv`, then
+`.venv\Scripts\python -m pip install -e ".[dev]" pytest-xdist hypothesis "cupy-cuda12x[ctk]"`. The `[ctk]` extra brings
+the CUDA libraries (runtime 12.9, NVRTC, cuFFT) as wheels, so no CUDA Toolkit is needed; they run on the 12.6 driver
+(CUDA minor-version compatibility). CuPy 14.2.0; set `CUPY_CACHE_DIR=.venv\cupy-cache` to keep its compiled kernels in
+the project. CuPy warns "CUDA path could not be detected": harmless with the wheels.
+
+A first probe: one FFT correlation of a plate bitmap 4880 x 2440 with a part bitmap 400 x 400
+(`cupyx.scipy.signal.fftconvolve`, mode "valid") takes **34 ms** on this card.
+
+The bench job (`tools/bench_nesting.py`, 60 kinds, 113 parts, 30 attempts, seed as default), results in
+`docs/dev/bench/cpu.json` and `cpu1.json`:
+
+| | 4 helper processes | one processor (`--processes 0`) |
+|---|---|---|
+| no-fit polygons | 25.8 s (6924, all pairs, on the helpers) | (made as they are needed, in "the rest") |
+| layouts (18 + 3 x 4 at once) | 18.7 + 3.4 + 3.3 + 3.3 s | |
+| polishing (4 at once) | 8.8 s | |
+| the rest | 0.1 s | 83.4 s |
+| **in all** | **63.4 s** | **85.6 s** |
+| plates, placed | 3, 113 of 113 | 3, 113 of 113 |
+| utilisation | 57.1 %, 56.2 %, 16.7 % | the same |
+
+The layout is the same both ways. On this processor (2 real cores) the helpers gain only 1.35 x. A profile of one
+process (8 attempts) says where the time goes: making no-fit polygons 55 % (Minkowski sums of convex pieces 21 %, their
+union in Clipper 28 %, splitting outlines into convex pieces 11 %), the feasible areas in `_best_at_angle` most of the
+rest. One process makes nearly every pair's NFP too (6583 of 6924 in 8 attempts): they are needed, not a waste of the
+helpers. Once they are made, a layout takes about 5 s; the first one 80 s. So the GPU has to beat about 85 s for one
+process, or 63 s against all four.
+A 34 ms correlation per part per angle is too slow done naively (113 parts x several angles x 30 attempts is ~10^4
+searches: minutes); the prototype (step 2) must batch the angles and parts, correlate only the plate's window that can
+hold the part, or keep a running occupancy to make each search cheaper.
+
 ## Rules of this project (the user's)
 
 * Answer the user in **Turkish**. The code, comments, commit messages and documents are in English, in the style there
@@ -99,3 +138,50 @@ number of plates (or fewer) and a utilisation within a fraction of a percent, in
   and pass alone (`test_snap::test_the_status_bar_says_what_the_pointer_clung_to`, `test_thin`, `test_engine_parity`).
 * The Windows package is built with `packaging/build.py` (PyInstaller, `packaging/iyicam.spec`); a new optional
   library (CuPy) must not be needed to build or to run without the GPU.
+
+## Steps 2 to 5: what was done (2026-11-27)
+
+**On the processors** (the layouts are the same, checked by the layout digest that `tools/bench_nesting.py` now prints):
+`convex_parts` tests every corner against an ear at once (NumPy, the same integer test): 1.55 x on that part. The convex
+pieces of an outline are made when first asked for (`_Variant.pieces`), so the card's way never makes them. A batched
+NumPy Minkowski sum of all piece pairs was tried and taken out again: point for point the same, but no faster (the pieces
+are small, NumPy's cost per call ate the gain); the union in Clipper is the larger part anyway.
+
+**On the card** (`iyicam/nesting/gpu.py`, `NestSettings.gpu`, Settings > Preferences > Experimental, `iyicam-cli nest
+--gpu`, `tools/bench_nesting.py --gpu / --gpu-numpy / --pixel`): the raster search as proposed, with what the prototype
+showed it needs to be fast:
+
+* every attempt side by side, a part of each at every step: one search launch for all attempts and angles, one launch
+  per slide move, five launches to stamp (no CuPy array operations in the loop: they cost 0.9 ms a stamp);
+* the search goes through 8 x 8 cells in the gravity's order, a warp per 32 cells: rectangles inside the part (the
+  biggest ones from sampled rows and columns) against a summed area table of 8 x 8 blocks reject 97 % of the cells at
+  one look; the runs of the rest are read coarse to fine (the first row, the middle, the quarters ...): 7 a position
+  instead of 45 from the middle out; 32-bit index arithmetic (64-bit division on the card was most of the time);
+* a search starts where the same part at the same angle found its place last time on that plate (a plate only fills
+  up, so what was taken stays taken): the result is the same, less is looked at;
+* the slide: rays from the corners of each outline to the edges of the other (float32, relative to the moving part, 2
+  microns kept off the contact), all parts near the swept box of all attempts in one launch;
+* the best layout is checked exactly (`gpu.valid`, Clipper); if few parts are on its last plate, they are put on the
+  plates before it with `_try_sheet` (no-fit polygons, as the usual way) where they fit (`gpu.repair`).
+
+Tests (`tests/test_nesting_gpu.py`, 15, about 20 s without a card): the switch off leaves `gpu.py` unloaded and the notes
+empty; the card's way on NumPy is valid (`nest_check.verify`), holes are used, every gravity it does; what it does not do
+and a failure go the usual way with a note; a layout that fails the exact check is not taken; cancel works; a Hypothesis
+test of its layouts; with a card, the kernels give the same positions and tables as NumPy, and a layout on the card.
+
+Numbers (this machine, `docs/dev/bench/*.json`): 113 parts, 30 attempts: the processors 63 s, the card 18 s (128
+layouts); 3.5 x. See the table in `docs/nesting.md` ("Experimental: on the graphics card"): on two jobs of three the same
+number of plates and a utilisation a few points lower on the full plates, on the third a fourth plate (2.7 %). **The
+acceptance (as many plates or fewer, utilisation within a fraction of a percent) is not met yet**: it stays off.
+
+What is left, in the order to try:
+
+1. The gaps the bitmaps leave where a part is not slid: a stamp at the part's exact position (rasterised on the card from
+   its outline, not the grid bitmap grown by 1.42 px), and the search bitmap grown by less with the exact check catching
+   what it lets through. A stamp of 0.71 px instead of 1.42 px (unsafe off the grid, only to see) gave about 1 point
+   more on the first plate, not the plate saved on seed 3.
+2. A better local move than left / down: slide along the contact (the part touching on its left moves down along that
+   outline), i.e. what a vertex of the no-fit polygon is.
+3. The exact way for the final layout: the best order of the card laid out again with the no-fit polygons (the plate
+   count of the exact way, the time of making the NFPs: about 22 s here on 4 processors), or the NFPs made on the card.
+4. More attempts for the same time (the search is 60 % of it): a coarser level of cells (64 x 64) for full plates.

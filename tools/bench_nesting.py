@@ -64,6 +64,9 @@ def main(argv=None) -> int:
     ap.add_argument("--processes", type=int, default=None, help="helper processes (0: one processor; default: all)")
     ap.add_argument("--priority", choices=["low", "normal", "high"], default="normal")
     ap.add_argument("--json", help="write the numbers here")
+    ap.add_argument("--gpu", action="store_true", help="the layouts on the graphics card (experimental)")
+    ap.add_argument("--gpu-numpy", action="store_true", help="the graphics card's way on NumPy (no card needed)")
+    ap.add_argument("--pixel", type=float, default=0.0, help="the GPU's pixel (mm; 0: automatic)")
     a = ap.parse_args(argv)
     if a.processes is not None:
         os.environ["IYICAM_NEST_PROCESSES"] = str(a.processes)
@@ -92,20 +95,27 @@ def main(argv=None) -> int:
     N.Nester.precompute, P.Helpers.map = pre, hmap
     parts = shapes(a.kinds, a.seed)
     st = N.NestSettings(sheet_width=2440, sheet_height=1220, iterations=a.iterations, time_limit=a.time_limit,
-                        rotations=[0, 90, 180, 270], seed=a.seed, priority=a.priority)
+                        rotations=[0, 90, 180, 270], seed=a.seed, priority=a.priority,
+                        gpu=a.gpu or a.gpu_numpy, gpu_pixel=a.pixel)
+    if a.gpu_numpy:
+        N.GPU_BACKEND = "numpy"
     t0 = time.perf_counter()
     t_last[0] = t0
     res = N.nest(parts, st)
     total = time.perf_counter() - t0
     mark("the rest (on this process)")
     q = N.Nester(parts, st).quality(res)
+    # the layout itself, to 1/1000 mm: two runs with the same digest laid out every part in the same place
+    import hashlib
+    digest = hashlib.blake2b("\n".join(f"{p.shape} {p.copy} {p.sheet} {p.angle:.6f} {p.x:.3f} {p.y:.3f}" for p in sorted(
+        res.placements, key=lambda p: (p.shape, p.copy))).encode(), digest_size=8).hexdigest()
     info = {"python": sys.version.split()[0], "platform": platform.platform(), "processors": os.cpu_count(),
             "helpers": N.nest_processes(), "kinds": a.kinds, "parts": sum(p.quantity for p in parts),
             "iterations": a.iterations, "time_limit": a.time_limit, "seconds": round(total, 2),
             "sheets": res.sheets, "placed": len(res.placements), "unplaced": len(res.unplaced),
             "utilisation": [round(u, 4) for u in res.utilization], "quality": [float(x) if isinstance(x, (int, float))
                                                                               else str(x) for x in q],
-            "phases": [(n, round(s, 2)) for n, s in phases]}
+            "layout": digest, "notes": list(res.notes), "gpu_used": bool(a.gpu or a.gpu_numpy), "phases": [(n, round(s, 2)) for n, s in phases]}
     try:
         import cupy  # noqa: F401
         info["gpu"] = cupy.cuda.runtime.getDeviceProperties(0)["name"].decode()
@@ -115,8 +125,10 @@ def main(argv=None) -> int:
           f"{info['helpers']} helper processes of {info['processors']} processors, GPU: {info['gpu']}")
     for n, s in phases:
         print(f"  {s:8.2f} s  {n}")
+    for note in res.notes:
+        print(f"  ({note})")
     print(f"  {total:8.2f} s  in all: {res.sheets} plates, {len(res.placements)} placed, {len(res.unplaced)} not; "
-          f"utilisation {', '.join(f'{u * 100:.1f} %' for u in res.utilization)}")
+          f"utilisation {', '.join(f'{u * 100:.1f} %' for u in res.utilization)}; layout {digest}")
     if a.json:
         Path(a.json).write_text(json.dumps(info, indent=1), encoding="utf-8")
     return 0

@@ -27,7 +27,9 @@ hidden = collect_submodules("iyicam") + collect_submodules("ezdxf") + ["svgeleme
 sys.path.insert(0, str(ROOT / "packaging"))
 import stdlib_modules  # noqa: E402
 hidden += stdlib_modules.modules()
+# (cupy: the experimental nesting on the graphics card is not in the package; it needs CuPy installed beside it)
 excludes = ["tkinter", "matplotlib", "scipy", "pandas", "IPython", "pytest", "PIL", "lxml", "PyQt5", "PyQt6", "PySide2",
+            "cupy", "cupyx", "cupy_backends", "fastrlock",
             "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.QtQml", "PySide6.QtQuick",
             "PySide6.Qt3DCore", "PySide6.QtMultimedia", "PySide6.QtPdf", "PySide6.QtSql", "PySide6.QtCharts"]
 

@@ -188,11 +188,43 @@ attempts without a time limit took 26 s on 4 processors instead of 68 s on one, 
 limit* the time is used as before, by that many searches at once: more is tried in the same time. A small job (a few
 seconds on one processor) is done without helpers: starting them would take longer. `IYICAM_NEST_PROCESSES` sets how
 many (0 or 1: none). The result is the same every time on the same computer; on one with another number of processors
-it may differ (as good, or better with more of them). A graphics card (GPU) would not help: the work is polygon clipping
-with whole numbers and many branches, not arithmetic on large arrays.
+it may differ (as good, or better with more of them). On an NVIDIA graphics card there is an experimental way of its own
+(below).
 
 If nesting is still slow: fewer angles (90° steps instead of 15°), fewer *Optimisation
 attempts*, fewer outline points. On the command line: `--max-points N`.
+
+## Experimental: on the graphics card
+
+**Settings > Preferences > Experimental > Nesting on the graphics card (NVIDIA)** (off by default; `--gpu` on the command
+line). It needs an NVIDIA card and CuPy (`pip install cupy-cuda12x[ctk]`, or `pip install iyicam[gpu]`: the CUDA libraries
+come with it, no CUDA Toolkit is needed); the Windows package does not carry CuPy. Without them, or for what the card does
+not do (plates that are not rectangles, parts fixed on a plate, rows / columns, squeezing in, a least leftover, the
+directions *Smallest area* and *Towards the corner*), the nesting is the usual one, unchanged; the status bar says why.
+
+The card does not make no-fit polygons. The plate is a bitmap (about 2500 pixels along it: 1 mm on a 2440 mm plate), every
+part at every angle too, and where a part can go is looked for at every pixel of the plate at once, in the order of the
+direction (the first free place is the best); the bitmaps keep on the safe side, so a free place is free. The part is then
+slid the way the direction pulls it (left and down, or down and left) until it touches a part or the edge, worked out
+exactly from the outlines, so the parts lie against one another. Many layouts are made side by side (the plain orders,
+then rounds of 32 random changes of the best ones: 4 for every *Optimisation attempt*, at least 128), and the best one is
+checked exactly at the end (every part on its plate, no two closer than the gap, with the same geometry as the usual way);
+a layout that fails the check is never taken. When few parts are left on the last plate, they are put on the plates
+before it the exact way where they fit.
+
+Measured on an Intel Core i3-6098P (2 cores, 4 threads) with a GeForce GTX 960 (2 GB), 113 to 122 curved parts (60 kinds:
+gears, stars, L shapes, frames with holes, `tools/bench_nesting.py`), 30 attempts:
+
+| job | the processors (4) | the graphics card |
+|---|---|---|
+| seed 1 | 63 s: 3 plates, 57.1 / 56.2 / 16.7 % | 18 s: 3 plates, 52.0 / 59.4 / 18.5 % |
+| seed 2 | 70 s: 3 plates, 62.9 / 54.5 / 24.1 % | 17 s: 3 plates, 63.9 / 51.3 / 26.2 % |
+| seed 3 | 105 s (other work ran meanwhile): 3 plates, 54.3 / 61.6 / 46.1 % | 24 s: 4 plates, 50.0 / 62.7 / 46.6 / 2.7 % |
+
+So: 3 to 4 times faster, every layout valid, but not yet as good. The bitmaps keep the parts a pixel or two further apart
+than the no-fit polygons do where they are not slid together, and the exact way finds narrow places the card misses; the
+last plate is a little fuller, and on one of the three jobs a part went onto a fourth plate. That is why it is
+experimental: for the least material the usual way is still the one to use.
 
 ## Using the least material
 

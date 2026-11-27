@@ -264,7 +264,8 @@ def cmd_nest(a) -> int:
     st = NestSettings(a.width, a.height, a.margin, a.spacing, rots, a.gravity, iterations=a.iterations,
                       time_limit=a.time_limit, priority=a.priority, max_points=a.max_points, squeeze_angle=a.squeeze_angle,
                       squeeze_margin=a.squeeze_margin,
-                      squeeze_step=a.squeeze_step, gravity_only=a.gravity_only, arrange=a.arrange, corner=a.corner)
+                      squeeze_step=a.squeeze_step, gravity_only=a.gravity_only, arrange=a.arrange, corner=a.corner,
+                      gpu=a.gpu)
     stock = [] if a.no_project_stock else list(p.stock)
     if a.stock:
         stock += load_stock(a.stock)
@@ -309,6 +310,8 @@ def cmd_nest(a) -> int:
         p.stock = use_up(p.stock, out.plates)
     p.save(a.output)
     print(f"placed {out.placed}, unplaced {out.unplaced}, plates {out.result.sheets}")
+    for note in getattr(out.result, "notes", []) or []:
+        print(f"  ({note})")
     for sh, u, made in zip(out.sheets, out.result.utilization, out.plates):
         print(f"  {sh.name}: {sh.width:g} x {sh.height:g}{' (shape)' if sh.outline else ''}"
               f"{' (reserve)' if made is None else ''}, {u * 100:.1f}% used")
@@ -406,6 +409,8 @@ def main(argv: list[str] | None = None) -> int:
                    help="seconds after which no further layout is tried (0 = no limit)")
     s.add_argument("--priority", choices=["low", "normal", "high"], default="low",
                    help="how the helpers on every processor run: low (the computer stays smooth), normal, high (fastest)")
+    s.add_argument("--gpu", action="store_true",
+                   help="experimental: the layouts made on an NVIDIA graphics card (CuPy); else the usual way")
     s.add_argument("--group-inner", action="store_true",
                    help="inner pieces (göbek) stay with their part instead of being nested on their own")
     s.add_argument("--fill-holes", action="store_true", help="place smaller parts in the holes of parts")

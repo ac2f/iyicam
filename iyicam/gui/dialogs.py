@@ -169,6 +169,9 @@ class NestJob:
                 here = getattr(win, "ctrl", None) is self.ctrl and self.ctrl.sheet is self.prep["sheet"]
                 self.prep["show"] = here
                 out = self.dialog.finish(self.prep, self.worker.result)
+                notes = getattr(self.worker.result, "notes", None)
+                if notes and hasattr(win, "statusBar"):     # (the graphics card: where it was made, or why not there)
+                    win.statusBar().showMessage("Nesting: " + "; ".join(notes), 20000)
         finally:
             self.result = out
             self.done(out)
@@ -2175,7 +2178,8 @@ class NestingDialog(RemembersSize, QDialog):
                           squeeze_angle=v["squeeze_angle"] if squeezing else 0.0,
                           squeeze_margin=v["squeeze_margin"] if squeezing else 0.0,
                           squeeze_step=v["squeeze_step"], min_leftover=v["min_leftover"],
-                          priority=v.get("priority", "low"))
+                          priority=v.get("priority", "low"),
+                          gpu=bool(getattr(self.ctrl.settings, "experimental_gpu_nesting", False)))
         quantities = {p.root.id: sp.value() for p, sp in zip(self.parts, self.qty)}
         part_rules = {p.root.id: ed.rule() for p, ed in zip(self.parts, self.rules)
                       if ed.rule()["mode"] != "inherit"}
@@ -3538,6 +3542,21 @@ class ExportOptionsDialog(QDialog):
         return v
 
 
+def _gpu_missing() -> bool:
+    """Whether CuPy is not there at all (looked for, not loaded: loading it takes a second)."""
+    import importlib.util
+    try:
+        return importlib.util.find_spec("cupy") is None
+    except (ImportError, ValueError):
+        return True
+
+
+def _gpu_state() -> str:
+    if _gpu_missing():
+        return "CuPy is not installed on this computer, so this cannot be switched on."
+    return "CuPy is installed; whether the card can be used is found out at the first nesting (else the usual way)."
+
+
 class PreferencesDialog(QDialog):
     def __init__(self, ctrl, parent=None):
         super().__init__(parent)
@@ -3570,6 +3589,11 @@ class PreferencesDialog(QDialog):
             Param("ask_tool", "A new toolpath asks for its tool from the tool database first", "bool", s.ask_tool),
             Param("show_directions", "Show direction arrows", "bool", s.show_directions),
             Param("sim_resolution", "Simulation resolution (mm, 0 = auto)", "float", s.sim_resolution, min=0.0),
+            Param("experimental_gpu_nesting", "Nesting on the graphics card (NVIDIA)", "bool",
+                  s.experimental_gpu_nesting, group="Experimental",
+                  help="Experimental. The nesting makes its layouts on an NVIDIA graphics card, many at once (CuPy "
+                       "needed: pip install cupy-cuda12x). Plates that are not rectangles, parts fixed on a plate, "
+                       "rows / columns and squeezing in are nested the usual way. " + _gpu_state()),
         ]
         from ..cam import tp_defaults
         mine = tp_defaults.load()             # (kept in the user folder: the web app has the same)
@@ -3577,6 +3601,9 @@ class PreferencesDialog(QDialog):
                          help="For new toolpaths; 0: the cut stops at the bottom of the material") for k, label, _ in tp_defaults.KEYS]
         lay = QVBoxLayout(self)
         self.form = ParamForm(params, None, ctrl.units)
+        w = self.form.widgets.get("experimental_gpu_nesting")
+        if w is not None and _gpu_missing() and not s.experimental_gpu_nesting:
+            w.setEnabled(False)                     # (no CuPy here: nothing to switch on)
         lay.addWidget(self.form)
         lay.addWidget(buttons(self))
 
