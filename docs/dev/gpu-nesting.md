@@ -174,14 +174,50 @@ layouts); 3.5 x. See the table in `docs/nesting.md` ("Experimental: on the graph
 number of plates and a utilisation a few points lower on the full plates, on the third a fourth plate (2.7 %). **The
 acceptance (as many plates or fewer, utilisation within a fraction of a percent) is not met yet**: it stays off.
 
-What is left, in the order to try:
+## Step 6: faster and better than the processors (2026-11-28)
 
-1. The gaps the bitmaps leave where a part is not slid: a stamp at the part's exact position (rasterised on the card from
-   its outline, not the grid bitmap grown by 1.42 px), and the search bitmap grown by less with the exact check catching
-   what it lets through. A stamp of 0.71 px instead of 1.42 px (unsafe off the grid, only to see) gave about 1 point
-   more on the first plate, not the plate saved on seed 3.
-2. A better local move than left / down: slide along the contact (the part touching on its left moves down along that
-   outline), i.e. what a vertex of the no-fit polygon is.
-3. The exact way for the final layout: the best order of the card laid out again with the no-fit polygons (the plate
-   count of the exact way, the time of making the NFPs: about 22 s here on 4 processors), or the NFPs made on the card.
-4. More attempts for the same time (the search is 60 % of it): a coarser level of cells (64 x 64) for full plates.
+What changed (`iyicam/nesting/gpu.py`), each measured on seed 3 (122 parts) and kept only where it paid:
+
+* **A bug**: with *Along X*, a part wider than the layout so far was searched from a negative column (`lim < 0`) and on the
+  card could land off the plate; the exact check at the end hid it (2 of 16 plain layouts were invalid). Fixed; a test
+  now checks every layout the card makes, not only the one taken.
+* **Rows as distances**: per pixel, how far the next taken pixel along its row is (uint16) instead of row prefix sums: a run
+  is one read, and a stamp changes only the pixels from the taken one before it to its end (row update 2.9 s -> 0.55 s).
+* **Supercells** of 64 x 64 positions rejected at one look; no rectangle test per position (the runs are cheaper there);
+  8 rectangles a part; the run that met something at the lane's last position is read first (search 6.9 s -> 3.8 s).
+* **Exact stamps**: a part is marked where it really lies, not rounded to the grid and grown by 1.42 px: its outline grown
+  by the pixel square (Minkowski sum, once per part and angle) filled row by row on the card. A part's pixels are the ones
+  it covers some of, the same for the search: the room the bitmaps add is at most a pixel, the same everywhere. NumPy
+  fills them the same to the bit (float32, no fused multiply-add on the card).
+* **Two streams**: the attempts in two groups by turns, the jobs up and the results down through page-locked memory; the
+  Windows driver keeps queued work back until something waits, so each launch is followed by a query that sends it.
+* **Plate after plate** (`search_plates`): what decides the plates a layout takes is how full the plates before the last
+  are. The next plate of the best few layouts is filled in many ways (plain orders of the parts left, then changes of the
+  fullest), the fullest few go on; where the parts left nearly fit on one plate and a plate fewer is in reach, rounds more
+  there. Two such searches of their own (own random changes), the best of them kept: one search goes where its first
+  changes lead it. Tried and left out: a coarse plate (fully taken 8 x 8 blocks) before the search (it rejects only
+  what the rectangles already do), filling the gaps of the plates before the last with its parts (a plate's pass already
+  tried every part), re-making the best layouts from a plate on (worse for the same work), more rounds per plate (fuller
+  first plates, worse layouts).
+* The card's memory is given back after a nesting (CuPy keeps it otherwise: the next nesting in the same program ran out
+  and Windows paged it, 4 times slower); the attempts at a time follow the free memory; the exact repair at the end stops
+  after 5 s.
+
+Six jobs (`tools/bench_nesting.py --seed N`, 113 to 127 parts, 30 attempts; the processors: all 4, the card: GTX 960):
+
+| seed | the processors | the card | |
+|---|---|---|---|
+| 1 | 63 s: 57.1 / 56.2 / 16.7 % | 25 s: 55.7 / 58.1 / 16.1 % | better |
+| 2 | 70 s: 62.9 / 54.5 / 24.1 % | 23 s: 63.1 / 54.4 / 23.9 % | better |
+| 3 | 105 s (other work ran): 54.2 / 61.6 / 46.1 % | 26 s: 52.2 / 64.1 / 45.7 % | better |
+| 4 | 74 s: 53.2 / 62.5 / 24.1 % | 21 s: 53.4 / 64.1 / 22.2 % | better |
+| 5 | 86 s: 56.1 / 55.0 / 21.2 % | 23 s: 52.8 / 56.6 / 23.0 % | worse |
+| 6 | 84 s: 56.0 / 58.2 / 33.1 % | 24 s: 60.7 / 55.4 / 31.3 % | better |
+
+Every job 3 plates both ways; the card 3.4 x faster in all, its last plate smaller on 5 of 6 (better by
+`Nester.quality`: as many plates, the plates before the last fuller). With 3 searches (`attempts` 384) the same 5 of 6,
+2.8 x. One search alone (128): 3 of 6, 6 x.
+
+What is left: the slide kernel (1.8 s a search: every corner against every edge; the ones outside the band the two parts
+share could be left out), the search kernel (3.8 s), the Python of a step (half the time; the card waits for it less
+since the two streams). Seed 5 is still the processors'.

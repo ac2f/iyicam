@@ -72,6 +72,36 @@ def test_parts_go_in_the_holes_of_others(on_numpy):
     assert res.sheets == 1 and not res.unplaced          # (the small ones only fit in the frame's hole)
 
 
+@pytest.mark.parametrize("be", ["numpy", pytest.param("cupy", marks=pytest.mark.skipif(
+    G.available() is not None, reason="no NVIDIA card with CuPy here"))])
+def test_every_layout_the_card_makes_is_valid_not_only_the_one_taken(be):
+    # (a part wider than the layout so far, with the gravity Along X, was once put off the plate on the card: the check
+    # at the end hid it)
+    ps = parts() + [NestShape([[(0, 0), (160, 0), (160, 20), (20, 20), (20, 140), (0, 140)]], 3)]
+    n = N.Nester(ps, settings_(sheet_width=600, sheet_height=400))
+    g = G.GpuNester(n, G.backend(be), 1.0)
+    g.prepare()
+    plan = [(o, gr) for o, _ in G.plan_of(n, 4) for gr in G.GRAVITIES]
+    plan += [(list(reversed(o)), gr) for o, gr in plan[:len(G.GRAVITIES)]]   # (small ones first: a wide one comes late)
+    for (o, gr), r in zip(plan, g.run(plan, lambda: None)):
+        assert G.valid(n, r), gr
+        assert not r.unplaced
+
+
+def test_the_next_plate_of_a_layout_filled_from_its_first_ones():
+    n = N.Nester(parts(), settings_(sheet_width=300, sheet_height=220))
+    g = G.GpuNester(n, G.backend("numpy"), 1.0)
+    g.prepare()
+    (o, gr), = G.plan_of(n, 1)
+    whole = g.run([(o, gr)], lambda: None)[0]
+    assert whole.sheets >= 2
+    base, rest = G._prefix(n, whole, 1)
+    at, = g.fill([(rest, gr, base, 1)], lambda: None)
+    assert at.res.sheets == 2 and at.res.layout[0] == whole.layout[0]
+    assert {(it[0], it[1]) for it in at.res.layout[1]} | set(at.remaining) == set(rest)
+    assert G.valid(n, at.res)
+
+
 @pytest.mark.parametrize("gravity", ["left", "bottom", "reach_x", "reach_y"])
 def test_every_gravity_of_the_card(on_numpy, gravity):
     ps = parts()
@@ -188,9 +218,9 @@ def test_the_kernels_find_what_numpy_finds():
         keys = list(ref.masks)
         for _ in range(trial * 3):                        # some parts stamped anywhere
             k = keys[rng.integers(len(keys))]
-            i, j = int(rng.integers(0, pr.Wr)), int(rng.integers(0, pr.Hr))
-            pr.stamp(ref.masks[k], i, j)
-            dev.be.stamp([(pd, dev.masks[k], i, j)])
+            fx, fy = float(rng.uniform(-20, pr.Wr)), float(rng.uniform(-20, pr.Hr))   # (where the part's reference lies)
+            ref.be.stamp([(pr, ref.masks[k], fx, fy)], ref.GE)
+            dev.be.stamp([(pd, dev.masks[k], fx, fy)], dev.GE)
         for rm in (0, 1):
             jobs_r, jobs_d = [], []
             for k in keys:
@@ -200,7 +230,7 @@ def test_the_kernels_find_what_numpy_finds():
                     jobs_r.append((pr, a, 0, nc, nr, rm, 0))
                     jobs_d.append((pd, b, 0, nc, nr, rm, 0))
             assert ref.be.search(None, jobs_r, ref.runs, ref.cores) == dev.be.search(None, jobs_d, dev.runs, dev.cores)
-        assert np.array_equal(pr.S, pd.S.get()) and np.array_equal(pr.T, pd.T.get())
+        assert np.array_equal(pr.N, pd.N.get()) and np.array_equal(pr.T, pd.T.get())
 
 
 @card

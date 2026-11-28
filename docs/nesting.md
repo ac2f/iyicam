@@ -203,28 +203,30 @@ not do (plates that are not rectangles, parts fixed on a plate, rows / columns, 
 directions *Smallest area* and *Towards the corner*), the nesting is the usual one, unchanged; the status bar says why.
 
 The card does not make no-fit polygons. The plate is a bitmap (about 2500 pixels along it: 1 mm on a 2440 mm plate), every
-part at every angle too, and where a part can go is looked for at every pixel of the plate at once, in the order of the
-direction (the first free place is the best); the bitmaps keep on the safe side, so a free place is free. The part is then
-slid the way the direction pulls it (left and down, or down and left) until it touches a part or the edge, worked out
-exactly from the outlines, so the parts lie against one another. Many layouts are made side by side (the plain orders,
-then rounds of 32 random changes of the best ones: 4 for every *Optimisation attempt*, at least 128), and the best one is
-checked exactly at the end (every part on its plate, no two closer than the gap, with the same geometry as the usual way);
-a layout that fails the check is never taken. When few parts are left on the last plate, they are put on the plates
-before it the exact way where they fit.
+part at every angle too (the pixels it covers some of), and where a part can go is looked for at every pixel of the plate
+at once, in the order of the direction (the first free place is the best); a free place is free. The part is then slid
+the way the direction pulls it (left and down, or down and left) until it touches a part or the edge, worked out exactly
+from the outlines, and marked on the plate where it really lies, so the parts lie against one another and the room the
+pixels add is at most a pixel, the same everywhere. Many layouts are made side by side: the plain orders, then plate after
+plate the next plate of the best few layouts filled in many ways, the fullest going on (what decides the plates a layout
+takes is how full the ones before the last are). The best layout is checked exactly at the end (every part on its plate,
+no two closer than the gap, with the same geometry as the usual way); a layout that fails the check is never taken.
 
-Measured on an Intel Core i3-6098P (2 cores, 4 threads) with a GeForce GTX 960 (2 GB), 113 to 122 curved parts (60 kinds:
-gears, stars, L shapes, frames with holes, `tools/bench_nesting.py`), 30 attempts:
+Measured on an Intel Core i3-6098P (2 cores, 4 threads) with a GeForce GTX 960 (2 GB), six jobs of 113 to 127 curved parts
+(60 kinds: gears, stars, L shapes, frames with holes, `tools/bench_nesting.py --seed 1 ... 6`), 30 attempts:
 
 | job | the processors (4) | the graphics card |
 |---|---|---|
-| seed 1 | 63 s: 3 plates, 57.1 / 56.2 / 16.7 % | 18 s: 3 plates, 52.0 / 59.4 / 18.5 % |
-| seed 2 | 70 s: 3 plates, 62.9 / 54.5 / 24.1 % | 17 s: 3 plates, 63.9 / 51.3 / 26.2 % |
-| seed 3 | 105 s (other work ran meanwhile): 3 plates, 54.3 / 61.6 / 46.1 % | 24 s: 4 plates, 50.0 / 62.7 / 46.6 / 2.7 % |
+| seed 1 | 63 s: 3 plates, 57.1 / 56.2 / 16.7 % | 25 s: 3 plates, 55.7 / 58.1 / 16.1 % |
+| seed 2 | 70 s: 3 plates, 62.9 / 54.5 / 24.1 % | 23 s: 3 plates, 63.1 / 54.4 / 23.9 % |
+| seed 3 | 105 s (other work ran meanwhile): 3 plates, 54.2 / 61.6 / 46.1 % | 26 s: 3 plates, 52.2 / 64.1 / 45.7 % |
+| seed 4 | 74 s: 3 plates, 53.2 / 62.5 / 24.1 % | 21 s: 3 plates, 53.4 / 64.1 / 22.2 % |
+| seed 5 | 86 s: 3 plates, 56.1 / 55.0 / 21.2 % | 23 s: 3 plates, 52.8 / 56.6 / 23.0 % |
+| seed 6 | 84 s: 3 plates, 56.0 / 58.2 / 33.1 % | 24 s: 3 plates, 60.7 / 55.4 / 31.3 % |
 
-So: 3 to 4 times faster, every layout valid, but not yet as good. The bitmaps keep the parts a pixel or two further apart
-than the no-fit polygons do where they are not slid together, and the exact way finds narrow places the card misses; the
-last plate is a little fuller, and on one of the three jobs a part went onto a fourth plate. That is why it is
-experimental: for the least material the usual way is still the one to use.
+So: 3.4 times faster, every layout valid, as many plates, and on five of the six jobs less on the last plate (the plates
+before it fuller: what the nesting judges a layout by). It is still marked experimental until it has been used on real
+jobs; the usual way stays the default.
 
 ## Using the least material
 

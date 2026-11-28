@@ -1,0 +1,61 @@
+{
+ "python": "3.14.10",
+ "platform": "Windows-10-10.0.19045-SP0",
+ "processors": 4,
+ "helpers": 4,
+ "kinds": 60,
+ "parts": 123,
+ "iterations": 30,
+ "time_limit": 0.0,
+ "seconds": 84.19,
+ "sheets": 3,
+ "placed": 123,
+ "unplaced": 0,
+ "utilisation": [
+  0.5602,
+  0.5821,
+  0.3315
+ ],
+ "quality": [
+  0.0,
+  8930400.0,
+  3.0,
+  -1.1423443208547384,
+  2326121.1,
+  3318.6
+ ],
+ "layout": "93f43f50a8d723ed",
+ "notes": [],
+ "gpu_used": false,
+ "phases": [
+  [
+   "no-fit polygons (6945 made on the helpers)",
+   21.36
+  ],
+  [
+   "18 layouts at once",
+   24.56
+  ],
+  [
+   "4 layouts at once",
+   4.6
+  ],
+  [
+   "4 layouts at once",
+   4.17
+  ],
+  [
+   "4 layouts at once",
+   4.05
+  ],
+  [
+   "4 polishing searches at once",
+   25.33
+  ],
+  [
+   "the rest (on this process)",
+   0.11
+  ]
+ ],
+ "gpu": "NVIDIA GeForce GTX 960"
+}
