@@ -217,14 +217,14 @@ Measured on an Intel Core i3-6098P (2 cores, 4 threads) with a GeForce GTX 960 (
 
 | job | the processors (4) | the graphics card |
 |---|---|---|
-| seed 1 | 63 s: 3 plates, 57.1 / 56.2 / 16.7 % | 25 s: 3 plates, 55.7 / 58.1 / 16.1 % |
-| seed 2 | 70 s: 3 plates, 62.9 / 54.5 / 24.1 % | 23 s: 3 plates, 63.1 / 54.4 / 23.9 % |
-| seed 3 | 105 s (other work ran meanwhile): 3 plates, 54.2 / 61.6 / 46.1 % | 26 s: 3 plates, 52.2 / 64.1 / 45.7 % |
-| seed 4 | 74 s: 3 plates, 53.2 / 62.5 / 24.1 % | 21 s: 3 plates, 53.4 / 64.1 / 22.2 % |
-| seed 5 | 86 s: 3 plates, 56.1 / 55.0 / 21.2 % | 23 s: 3 plates, 52.8 / 56.6 / 23.0 % |
-| seed 6 | 84 s: 3 plates, 56.0 / 58.2 / 33.1 % | 24 s: 3 plates, 60.7 / 55.4 / 31.3 % |
+| seed 1 | 63 s: 3 plates, 57.1 / 56.2 / 16.7 % | 19 s: 3 plates, 55.7 / 58.1 / 16.1 % |
+| seed 2 | 70 s: 3 plates, 62.9 / 54.5 / 24.1 % | 17 s: 3 plates, 63.1 / 54.4 / 23.9 % |
+| seed 3 | 105 s (other work ran meanwhile): 3 plates, 54.2 / 61.6 / 46.1 % | 35 s: 3 plates, 52.2 / 64.1 / 45.7 % |
+| seed 4 | 74 s: 3 plates, 53.2 / 62.5 / 24.1 % | 17 s: 3 plates, 53.4 / 64.1 / 22.2 % |
+| seed 5 | 86 s: 3 plates, 56.1 / 55.0 / 21.2 % | 20 s: 3 plates, 52.8 / 56.6 / 23.0 % |
+| seed 6 | 84 s: 3 plates, 56.0 / 58.2 / 33.1 % | 18 s: 3 plates, 60.7 / 55.4 / 31.3 % |
 
-So: 3.4 times faster, every layout valid, as many plates, and on five of the six jobs less on the last plate (the plates
+So: 3.8 times faster, every layout valid, as many plates, and on five of the six jobs less on the last plate (the plates
 before it fuller: what the nesting judges a layout by). It is still marked experimental until it has been used on real
 jobs; the usual way stays the default.
 

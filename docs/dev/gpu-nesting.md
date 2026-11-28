@@ -207,17 +207,23 @@ Six jobs (`tools/bench_nesting.py --seed N`, 113 to 127 parts, 30 attempts; the 
 
 | seed | the processors | the card | |
 |---|---|---|---|
-| 1 | 63 s: 57.1 / 56.2 / 16.7 % | 25 s: 55.7 / 58.1 / 16.1 % | better |
-| 2 | 70 s: 62.9 / 54.5 / 24.1 % | 23 s: 63.1 / 54.4 / 23.9 % | better |
-| 3 | 105 s (other work ran): 54.2 / 61.6 / 46.1 % | 26 s: 52.2 / 64.1 / 45.7 % | better |
-| 4 | 74 s: 53.2 / 62.5 / 24.1 % | 21 s: 53.4 / 64.1 / 22.2 % | better |
-| 5 | 86 s: 56.1 / 55.0 / 21.2 % | 23 s: 52.8 / 56.6 / 23.0 % | worse |
-| 6 | 84 s: 56.0 / 58.2 / 33.1 % | 24 s: 60.7 / 55.4 / 31.3 % | better |
+| 1 | 63 s: 57.1 / 56.2 / 16.7 % | 19 s: 55.7 / 58.1 / 16.1 % | better |
+| 2 | 70 s: 62.9 / 54.5 / 24.1 % | 17 s: 63.1 / 54.4 / 23.9 % | better |
+| 3 | 105 s (other work ran): 54.2 / 61.6 / 46.1 % | 35 s: 52.2 / 64.1 / 45.7 % | better |
+| 4 | 74 s: 53.2 / 62.5 / 24.1 % | 17 s: 53.4 / 64.1 / 22.2 % | better |
+| 5 | 86 s: 56.1 / 55.0 / 21.2 % | 20 s: 52.8 / 56.6 / 23.0 % | worse |
+| 6 | 84 s: 56.0 / 58.2 / 33.1 % | 18 s: 60.7 / 55.4 / 31.3 % | better |
 
-Every job 3 plates both ways; the card 3.4 x faster in all, its last plate smaller on 5 of 6 (better by
+Every job 3 plates both ways; the card 3.8 x faster in all, its last plate smaller on 5 of 6 (better by
 `Nester.quality`: as many plates, the plates before the last fuller). With 3 searches (`attempts` 384) the same 5 of 6,
 2.8 x. One search alone (128): 3 of 6, 6 x.
 
-What is left: the slide kernel (1.8 s a search: every corner against every edge; the ones outside the band the two parts
-share could be left out), the search kernel (3.8 s), the Python of a step (half the time; the card waits for it less
-since the two streams). Seed 5 is still the processors'.
+Then (the same layouts, to the bit): the slide gathers first the corners and edges in the band across the move that both
+parts share (slide kernel about 1.6 x faster), and late on a plate (after a part that did not fit) the next 4 parts of an
+attempt are looked for in the same step, the first that fits placed as one at a time would have found it (fewer steps:
+20 s -> 17.6 s on seed 1; 8 or 16 ahead were slower). The times in the table are with these.
+
+A pixel of 0.7 mm (`--pixel 0.7`): the same 5 of 6, the last plate smaller still on four of them (seed 5: 22.1 % against
+21.2 %), 3.1 x instead of 3.8 x. More searches do not help seed 5 (3: 23.0 %, 5: 22.7 %).
+
+What is left: the search kernel, the Python of a step (half the time). Seed 5 is still the processors'.

@@ -46,6 +46,7 @@ CELL = 8           # positions per side of a cell of the search (the kernels' 8,
 GRID = 4           # thread blocks of 256 per search job
 JB = 20            # ints per search job (the kernel's JB)
 INF = 2 ** 31 - 1
+AHEAD = 4          # parts of an attempt looked for at once late on a plate (see _steps)
 SLIDES = 4         # slides of a part at most, the two ways the gravity pulls by turns
 BACKOFF = 20       # units (2 microns) kept off a contact after a slide: the rays are worked out in float32
 SEARCH = 128       # layouts per search of the plates (see nest_on_gpu)
@@ -384,30 +385,62 @@ extern "C" __global__ void table_cols(const int* si) {
 
 // One task: how far a moving part can go along an axis before it meets one other part: rays from the corners of each to
 // the edges of the other. Coordinates are relative to the moving part (float), the result the least over the tasks of a
-// job (float bits: non-negative floats compare as integers).
+// job (float bits: non-negative floats compare as integers). Only the corners and edges in the band across the move that
+// both parts share can meet (lo, hi): they are gathered first, then every corner of the one against every edge of the
+// other of them.
+#define TBS 10
+#define SCAP 1024
+__device__ __forceinline__ void gather(const float* E, int f0, int nf, float off, int ax, float lo, float hi,
+                                       int* vs, int* es, int* nv, int* ne) {
+    for (int i = threadIdx.x; i < nf; i += blockDim.x) {
+        const float* e = E + 4 * (f0 + i);
+        float pb = (ax ? e[0] : e[1]) + off, qb = (ax ? e[2] : e[3]) + off;
+        if (pb >= lo && pb <= hi) {
+            int k = atomicAdd(nv, 1);
+            if (k < SCAP) vs[k] = i;
+        }
+        if (fmaxf(pb, qb) >= lo && fminf(pb, qb) <= hi && pb != qb) {
+            int k = atomicAdd(ne, 1);
+            if (k < SCAP) es[k] = i;
+        }
+    }
+}
+
 extern "C" __global__ void slide(int* tb, int ntasks, const float* E) {
+    __shared__ int mv[SCAP], me[SCAP], ov[SCAP], oe[SCAP];
+    __shared__ int nmv, nme, nov, noe;
     int task = blockIdx.x;
-    const int* q = tb + 8 * task;
-    int* out = tb + 8 * ntasks;
+    const int* q = tb + TBS * task;
+    int* out = tb + TBS * ntasks;
     int job = q[0], m0 = q[1], nm = q[2], o0 = q[3], no = q[4], dir = q[5];
-    float ox = __int_as_float(q[6]), oy = __int_as_float(q[7]);
+    float ox = __int_as_float(q[6]), oy = __int_as_float(q[7]), lo = __int_as_float(q[8]), hi = __int_as_float(q[9]);
     // dir: 0 -x, 1 -y, 2 +x, 3 +y; along = the coordinate that moves, sg = its sign
     int ax = dir & 1;
     float sg = dir >= 2 ? 1.f : -1.f;
+    if (threadIdx.x == 0) nmv = nme = nov = noe = 0;
+    __syncthreads();
+    gather(E, m0, nm, 0.f, ax, lo, hi, mv, me, &nmv, &nme);
+    gather(E, o0, no, ax ? ox : oy, ax, lo, hi, ov, oe, &nov, &noe);
+    __syncthreads();
+    // (more than there is room for: all of them, as they are)
+    bool amv = nmv > SCAP, ame = nme > SCAP, aov = nov > SCAP, aoe = noe > SCAP;
+    int cmv = amv ? nm : nmv, cme = ame ? nm : nme, cov = aov ? no : nov, coe = aoe ? no : noe;
     float tmin = __int_as_float(out[job]);
-    long long n1 = (long long)nm * no, n = 2 * n1;
-    for (long long k = threadIdx.x; k < n; k += blockDim.x) {
+    int n1 = cmv * coe, n = n1 + cov * cme;
+    for (int k = threadIdx.x; k < n; k += blockDim.x) {
         bool first = k < n1;
-        long long kk = first ? k : k - n1;
+        int kk = first ? k : k - n1;
         int iv, ie;
         float vx, vy, px, py, qx, qy, s;
         if (first) {          // a corner of the moving part to an edge of the other, along the move
-            iv = m0 + (int)(kk / no); ie = o0 + (int)(kk % no);
+            int a = kk / coe, b = kk - a * coe;
+            iv = m0 + (amv ? a : mv[a]); ie = o0 + (aoe ? b : oe[b]);
             vx = E[4 * iv]; vy = E[4 * iv + 1];
             px = E[4 * ie] + ox; py = E[4 * ie + 1] + oy; qx = E[4 * ie + 2] + ox; qy = E[4 * ie + 3] + oy;
             s = sg;
         } else {              // a corner of the other to an edge of the moving part, against the move
-            iv = o0 + (int)(kk / nm); ie = m0 + (int)(kk % nm);
+            int a = kk / cme, b = kk - a * cme;
+            iv = o0 + (aov ? a : ov[a]); ie = m0 + (ame ? b : me[b]);
             vx = E[4 * iv] + ox; vy = E[4 * iv + 1] + oy;
             px = E[4 * ie]; py = E[4 * ie + 1]; qx = E[4 * ie + 2]; qy = E[4 * ie + 3];
             s = -sg;
@@ -549,7 +582,7 @@ class _Cupy:
         k["table_cols"]((-(-(wb + 1) // 128), n), (128,), (Q,))
 
     def slide(self, tasks, start, E):
-        """``tasks``: rows of (job, m0, nm, o0, no, dir, ox, oy); ``start``: the distance to the plate's edge per job -> the
+        """``tasks``: rows of (job, m0, nm, o0, no, dir, ox, oy, lo, hi: the band across the move both share); ``start``: the distance to the plate's edge per job -> the
         distance each job's part can go."""
         return self.slide_start(tasks, start, E)()
 
@@ -558,14 +591,14 @@ class _Cupy:
         if not len(tasks):
             return lambda: [float(v) for v in start]
         n = len(tasks)
-        buf = np.zeros(8 * n + len(start), np.int32)
-        tb = buf[:8 * n].reshape(n, 8)
+        buf = np.zeros(10 * n + len(start), np.int32)
+        tb = buf[:10 * n].reshape(n, 10)
         tb[:, :6] = tasks[:, :6]
-        tb[:, 6:8] = tasks[:, 6:8].astype(np.float32).view(np.int32)
-        buf[8 * n:] = np.asarray(start, np.float32).view(np.int32)
+        tb[:, 6:10] = tasks[:, 6:10].astype(np.float32).view(np.int32)
+        buf[10 * n:] = np.asarray(start, np.float32).view(np.int32)
         g = self._up("slide", buf)
         self.k["slide"]((n,), (256,), (g, np.int32(n), E))
-        wait = self._down("slid", g[8 * n:], len(start))
+        wait = self._down("slid", g[10 * n:], len(start))
         return lambda: wait().view(np.float32).tolist()
 
 
@@ -632,7 +665,7 @@ class _Numpy:
 
     def slide(self, tasks, start, E):
         out = list(np.asarray(start, np.float64))
-        for job, m0, nm, o0, no, d, ox, oy in tasks.tolist():
+        for job, m0, nm, o0, no, d, ox, oy in tasks[:, :8].tolist():
             job, m0, nm, o0, no, d = int(job), int(m0), int(nm), int(o0), int(no), int(d)
             ax = d & 1
             sg = 1.0 if d >= 2 else -1.0
@@ -981,6 +1014,22 @@ class _Attempt:
             self.plate = None
         self._next_plate()
 
+    def peek(self, most: int, skip) -> list:
+        """The next ``most`` parts that ``next_item`` would give after this one (one of each kind, not of the kind
+        ``skip``), the attempt as it is."""
+        n = self.n
+        out, kinds = [], {skip}
+        k = self.k
+        while k < len(self.remaining) and len(out) < most:
+            item = self.remaining[k]
+            k += 1
+            si = item[0]
+            if n.areas[si] > self.free + 1e-6 or n.skey[si] in self.dead or n.skey[si] in kinds:
+                continue
+            kinds.add(n.skey[si])
+            out.append(item)
+        return out
+
     def next_item(self):
         """The next part to place on this plate, or ``None`` when the pass is over."""
         n = self.n
@@ -1227,19 +1276,26 @@ class GpuNester:
         counts = np.array([len(at.placed) if g_ else 0 for (at, *_), g_ in zip(moves, go.tolist())], np.int64)
         self.stats["slides"] += m
         if not counts.sum():
-            return self.be.slide_start(np.zeros((0, 8)), start, self.E)
+            return self.be.slide_start(np.zeros((0, 10)), start, self.E)
         P = np.concatenate([at.info[:k] for (at, *_), k in zip(moves, counts.tolist()) if k])
         own = np.repeat(np.arange(m), counts)
         S = sweep[own]
         near = (P[:, 2] >= S[:, 0]) & (P[:, 0] <= S[:, 2]) & (P[:, 3] >= S[:, 1]) & (P[:, 1] <= S[:, 3])
         P, own = P[near], own[near]
-        tasks = np.empty((len(own), 8), np.float64)
+        tasks = np.empty((len(own), 10), np.float64)
         tasks[:, 0] = own
         tasks[:, 1:3] = M[own, 11:13]
         tasks[:, 3:5] = P[:, 4:6]
-        tasks[:, 5] = d[own]
+        dd = d[own]
+        tasks[:, 5] = dd
         tasks[:, 6] = P[:, 6] - M[own, 4]
         tasks[:, 7] = P[:, 7] - M[own, 5]
+        # (the band across the move that both lie in, from the moving part's reference, a hair wider)
+        across = (dd & 1) == 0                   # (moving along x: the band is in y)
+        lo = np.where(across, np.maximum(M[own, 1], P[:, 1]) - M[own, 5], np.maximum(M[own, 0], P[:, 0]) - M[own, 4])
+        hi = np.where(across, np.minimum(M[own, 3], P[:, 3]) - M[own, 5], np.minimum(M[own, 2], P[:, 2]) - M[own, 4])
+        tasks[:, 8] = lo - 4.0
+        tasks[:, 9] = hi + 4.0
         return self.be.slide_start(tasks, start, self.E)
 
     def run(self, plan, check: Callable[[], None], progress: Callable[[int], None] | None = None) -> list:
@@ -1301,6 +1357,8 @@ class GpuNester:
                     item = None if at.done else at.next_item()
                 if item is not None:
                     reqs.append((at, item))
+                    if at.dead:     # (late on the plate, after a part that did not fit: the next few looked for too)
+                        reqs += [(at, it) for it in at.peek(AHEAD - 1, n.skey[item[0]])]
             if not reqs:
                 active = [a for a in active if not a.done]
                 continue
@@ -1312,13 +1370,31 @@ class GpuNester:
                 found = self._search_end(reqs, started)
             # the parts that fit: slid the way the gravity pulls them, a move of all of them at a time
             go = []
+            mine: dict = {}
             for (at, item), b in zip(reqs, found):
-                if b is None:
+                mine.setdefault(id(at), (at, {}))[1][item] = b
+            for at, got in mine.values():
+                # in the order of the attempt: the first that fits is placed, the ones before it did not fit (as one at a
+                # time would have found); one looked for ahead that did not fit will not on this plate either
+                item = next(iter(got))
+                while True:
+                    b = got[item]
+                    if b is not None:
+                        _, ang, x, y = b
+                        go.append([at, item, n.cls[item[0]], ang, x, y])
+                        break
                     at.dead.add(n.skey[item[0]])
                     at.left.append(item)
-                    continue
-                _, ang, x, y = b
-                go.append([at, item, n.cls[item[0]], ang, x, y])
+                    nxt = at.next_item()
+                    if nxt is None:
+                        break
+                    if nxt not in got:
+                        at.k -= 1             # (not looked for yet: the next step)
+                        break
+                    item = nxt
+                for it, b in got.items():
+                    if b is None:
+                        at.dead.add(n.skey[it[0]])
             if go:
                 # (a part that a slide did not move after the first one is in its corner: the slide before it, the other
                 # way, already went as far as it could)
